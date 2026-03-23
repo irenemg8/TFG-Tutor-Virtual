@@ -1,0 +1,10 @@
+# Dependencias
+node_modules/
+
+# Variables de entorno (credenciales - NO subir)
+.env
+.env.local
+
+# Debug dumps del LLM
+C\:/
+C:\\

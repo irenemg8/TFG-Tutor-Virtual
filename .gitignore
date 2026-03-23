@@ -1,0 +1,18 @@
+# Dependencias
+node_modules/
+
+# Variables de entorno (credenciales - NO subir)
+.env
+.env.local
+.env.*.local
+
+# Debug dumps del LLM (paths Windows/Linux)
+backend/C\:/
+backend/C:\\
+
+# SDD / herramientas de desarrollo
+.atl/
+
+# OS
+.DS_Store
+Thumbs.db
