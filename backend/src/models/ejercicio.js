@@ -31,6 +31,14 @@ const ejercicioSchema = new mongoose.Schema({
   // Si lo estabas usando para otra cosa, déjalo; si no, puedes eliminarlo más adelante.
   // IMPORTANTE: required en String puede fallar con "" en mongoose.
   CA: { type: String, default: "" },
+
+  concepciones_alternativas: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ConcepcionAlternativa",
+      default: [],
+    },
+  ],
 },
   { timestamps: true }
 );

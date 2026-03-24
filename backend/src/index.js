@@ -10,9 +10,9 @@ const MongoStore = require("connect-mongo");
 const fs = require("fs");
 
 // Rutas
-
-
-
+const adminConceptosRoutes = require("./routes/admin/conceptos");
+const adminConcepcionesRoutes = require("./routes/admin/concepciones");
+const adminEjerciciosRoutes = require("./routes/admin/ejercicios");
 
 const userRoutes = require("./routes/usuarios");
 const ejerciciosRoutes = require("./routes/ejercicios");
@@ -22,7 +22,7 @@ const resultadoRoutes = require("./routes/resultados");
 const progresoRoutes = require("./routes/progresoRoutes");
 
 // Auth (CAS + demo)
-const { router: authRouter, requireAuth } = require("./authRoutes");
+const { router: authRouter, requireAuth, requireProfesor } = require("./authRoutes");
 
 const app = express();
 console.log("✅ BACKEND INDEX CARGADO:", __filename);
@@ -105,6 +105,11 @@ app.use("/api/resultados", resultadoRoutes);
 app.post("/api/llm/query", requireAuth, (req, res) => {
   res.json({ ok: true, user: req.session.user });
 });
+
+// ====== Admin (solo profesores) ======
+app.use("/api/admin/conceptos", requireProfesor, adminConceptosRoutes);
+app.use("/api/admin/concepciones", requireProfesor, adminConcepcionesRoutes);
+app.use("/api/admin/ejercicios", requireProfesor, adminEjerciciosRoutes);
 
 // ====== Servir FRONTEND (React build) ======
 const frontendDist = path.join(__dirname, "..", "..", "frontend", "dist");

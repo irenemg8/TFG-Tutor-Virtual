@@ -227,6 +227,16 @@ function requireAuth(req, res, next) {
   next();
 }
 
+function requireProfesor(req, res, next) {
+  if (!req.session?.user) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  if (req.session.user.rol !== "profesor") {
+    return res.status(403).json({ error: "Acceso restringido a profesores" });
+  }
+  next();
+}
+
 /* ===================================================================
  * 5. MODO DEMO (sin CAS) → POST /api/auth/dev-login
  * =================================================================== */
@@ -273,6 +283,43 @@ router.post("/api/auth/dev-login", async (req, res) => {
   }
 });
 
+/* ===================================================================
+ * 6. MODO DEMO PROFESOR → POST /api/auth/dev-login-profesor
+ *    Solo disponible cuando DEV_BYPASS_AUTH=true
+ * =================================================================== */
+if (DEV_BYPASS_AUTH === "true") {
+  router.post("/api/auth/dev-login-profesor", async (req, res) => {
+    try {
+      const usuario = await Usuario.findOneAndUpdate(
+        { upvLogin: "demo_profesor" },
+        {
+          upvLogin: "demo_profesor",
+          email: "demo_profesor@upv.es",
+          nombre: "Demo",
+          apellidos: "Profesor",
+          rol: "profesor",
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      req.session.user = {
+        id: usuario._id.toString(),
+        upvLogin: usuario.upvLogin,
+        nombre: usuario.nombre,
+        apellidos: usuario.apellidos,
+        email: usuario.email,
+        rol: usuario.rol,
+        mode: "demo",
+      };
+
+      return res.json({ user: req.session.user });
+    } catch (err) {
+      console.error("[DEV LOGIN PROFESOR ERROR]", err);
+      return res.status(500).json({ error: "Error interno" });
+    }
+  });
+}
+
 router.post("/api/auth/dev-logout", (req, res) => {
   if (DEV_BYPASS_AUTH !== "true") {
     return res
@@ -285,4 +332,5 @@ router.post("/api/auth/dev-logout", (req, res) => {
 module.exports = {
   router,
   requireAuth,
+  requireProfesor,
 };

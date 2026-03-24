@@ -18,3 +18,27 @@ api.interceptors.response.use(
   }
 );
 
+// Admin API — requiere rol profesor en sesión
+export const adminApi = {
+  // Ejercicios
+  getEjercicios: () => api.get("/api/admin/ejercicios"),
+  getEjercicio: (id) => api.get(`/api/admin/ejercicios/${id}`),
+  createEjercicio: (data) => api.post("/api/admin/ejercicios", data),
+  updateEjercicio: (id, data) => api.put(`/api/admin/ejercicios/${id}`, data),
+  deleteEjercicio: (id) => api.delete(`/api/admin/ejercicios/${id}`),
+  uploadImagen: (id, formData) =>
+    api.post(`/api/admin/ejercicios/${id}/imagen`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
+  // Conceptos
+  getConceptos: () => api.get("/api/admin/conceptos"),
+  createConcepto: (data) => api.post("/api/admin/conceptos", data),
+  updateConcepto: (id, data) => api.put(`/api/admin/conceptos/${id}`, data),
+  deleteConcepto: (id) => api.delete(`/api/admin/conceptos/${id}`),
+  // Concepciones
+  getConcepciones: () => api.get("/api/admin/concepciones"),
+  createConcepcion: (data) => api.post("/api/admin/concepciones", data),
+  updateConcepcion: (id, data) => api.put(`/api/admin/concepciones/${id}`, data),
+  deleteConcepcion: (id) => api.delete(`/api/admin/concepciones/${id}`),
+};
+

@@ -12,7 +12,9 @@ import {
   ChatBubbleLeftRightIcon,
   ChartBarIcon,
   BookOpenIcon,
+  Cog6ToothIcon,
 } from '@heroicons/react/24/outline';
+import { useAuth } from '../context/AuthContext';
 
 
 
@@ -30,6 +32,14 @@ function classNames(...classes) {
 
 export default function Navbar() {
   const location = useLocation();
+  const { user } = useAuth();
+
+  const allNavigation = [
+    ...navigation,
+    ...(user?.rol === 'profesor'
+      ? [{ name: 'Admin', to: '/admin', icon: Cog6ToothIcon }]
+      : []),
+  ];
 
   return (
     <Disclosure as="nav" className="navbar">
@@ -60,7 +70,7 @@ export default function Navbar() {
 
               <div className="navbar-menu hidden sm:block ml-auto">
                 <div className="navbar-links">
-                  {navigation.map((item) => {
+                  {allNavigation.map((item) => {
                     const isActive = location.pathname === item.to;
                     return (
                       <Link
@@ -87,7 +97,7 @@ export default function Navbar() {
           </div>
 
           <DisclosurePanel className="navbar-panel sm:hidden">
-            {navigation.map((item) => {
+            {allNavigation.map((item) => {
               const isActive = location.pathname === item.to;
               return (
                 <Link
