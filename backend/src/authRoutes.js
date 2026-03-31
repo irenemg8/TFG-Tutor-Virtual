@@ -1,5 +1,5 @@
 // backend/authRoutes.js
-// ✅ CAS OAuth2 + modo DEMO
+// ✅ CAS OAuth2
 // ✅ Compatible con Node 18+ (fetch nativo) y con CAS_BASE_URL que incluye /cas
 
 const { Router } = require("express");
@@ -16,7 +16,6 @@ const {
   OAUTH_REDIRECT_URI,
   OAUTH_SCOPES = "profile email",
   FRONTEND_BASE_URL,
-  DEV_BYPASS_AUTH,
 } = process.env;
 
 // ✅ Validación mínima de configuración (evita client_id=undefined)
@@ -236,98 +235,6 @@ function requireProfesor(req, res, next) {
   }
   next();
 }
-
-/* ===================================================================
- * 5. MODO DEMO (sin CAS) → POST /api/auth/dev-login
- * =================================================================== */
-router.post("/api/auth/dev-login", async (req, res) => {
-  try {
-    if (DEV_BYPASS_AUTH !== "true") {
-      return res
-        .status(403)
-        .json({ error: "DEV_BYPASS_AUTH deshabilitado en el servidor" });
-    }
-
-    // Si ya hay sesión, devolvemos la misma
-    if (req.session?.user?.id) {
-      return res.json({ ok: true, user: req.session.user });
-    }
-
-    const demoKey = crypto.randomBytes(16).toString("hex");
-    const upvLogin = `demo_${demoKey}`;
-
-    const usuario = await Usuario.create({
-      upvLogin,
-      nombre: "Usuario",
-      apellidos: "Demo",
-      email: `${upvLogin}@demo.local`,
-    });
-
-    usuario.lastLoginAt = new Date();
-    await usuario.save();
-
-    req.session.user = {
-      id: usuario._id.toString(),
-      upvLogin: usuario.upvLogin,
-      nombre: usuario.nombre,
-      apellidos: usuario.apellidos,
-      email: usuario.email,
-      rol: usuario.rol || "alumno",
-      mode: "demo",
-    };
-
-    return res.json({ ok: true, user: req.session.user });
-  } catch (err) {
-    console.error("[DEV LOGIN ERROR]", err);
-    return res.status(500).json({ error: "Error creando sesión demo" });
-  }
-});
-
-/* ===================================================================
- * 6. MODO DEMO PROFESOR → POST /api/auth/dev-login-profesor
- *    Solo disponible cuando DEV_BYPASS_AUTH=true
- * =================================================================== */
-if (DEV_BYPASS_AUTH === "true") {
-  router.post("/api/auth/dev-login-profesor", async (req, res) => {
-    try {
-      const usuario = await Usuario.findOneAndUpdate(
-        { upvLogin: "demo_profesor" },
-        {
-          upvLogin: "demo_profesor",
-          email: "demo_profesor@upv.es",
-          nombre: "Demo",
-          apellidos: "Profesor",
-          rol: "profesor",
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
-
-      req.session.user = {
-        id: usuario._id.toString(),
-        upvLogin: usuario.upvLogin,
-        nombre: usuario.nombre,
-        apellidos: usuario.apellidos,
-        email: usuario.email,
-        rol: usuario.rol,
-        mode: "demo",
-      };
-
-      return res.json({ user: req.session.user });
-    } catch (err) {
-      console.error("[DEV LOGIN PROFESOR ERROR]", err);
-      return res.status(500).json({ error: "Error interno" });
-    }
-  });
-}
-
-router.post("/api/auth/dev-logout", (req, res) => {
-  if (DEV_BYPASS_AUTH !== "true") {
-    return res
-      .status(403)
-      .json({ error: "DEV_BYPASS_AUTH deshabilitado en el servidor" });
-  }
-  req.session.destroy(() => res.json({ ok: true }));
-});
 
 module.exports = {
   router,

@@ -80,9 +80,7 @@ app.use(
     store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }),
     cookie: {
       httpOnly: true,
-      // En producción (HTTPS + Nginx) secure debe ser true.
-      // En dev local (HTTP) debe ser false o el navegador descarta la cookie.
-      secure: process.env.DEV_BYPASS_AUTH !== "true",
+      secure: true,
       sameSite: "lax",
     },
   })

@@ -11,13 +11,7 @@ export async function getCurrentUser() {
   }
 }
 
-/** Login en modo demo (sin clave: 1 usuario demo por sesión) */
-export async function demoLogin() {
-  const res = await api.post("/api/auth/dev-login"); // ✅ sin body
-  return res.data;
-}
-
-/** Logout (demo o CAS) */
+/** Logout */
 export async function logout() {
   await api.get("/api/auth/logout");
 }
