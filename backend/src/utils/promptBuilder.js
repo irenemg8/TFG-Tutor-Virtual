@@ -43,7 +43,12 @@ function buildTutorSystemPrompt(ejercicio) {
   const modoExperto = pickFirstStr(tc, ["modoExperto"]);
   const version = tc?.version != null ? String(tc.version) : "";
 
-  // IDs de AC relevantes (solo IDs, no el objeto entero)
+  // Concepciones alternativas populadas (objetos completos)
+  const acDocs = Array.isArray(ejercicio?.concepciones_alternativas)
+    ? ejercicio.concepciones_alternativas.filter(Boolean)
+    : [];
+
+  // Fallback: si no hay objetos populados, usar los IDs del tutorContext
   const acRefs = Array.isArray(tc?.ac_refs) ? tc.ac_refs.map(normId).filter(Boolean) : [];
 
   // ✅ Respuesta correcta (lista cerrada para este ejercicio)
@@ -66,6 +71,23 @@ CRITERIO DE FIN (MUY IMPORTANTE):
 - Da por finalizado el ejercicio en el momento que el estudiante da la respuesta correcta, aunque haya errores previos en la conversación.
 `.trim();
 
+  const acSection = (() => {
+    if (acDocs.length > 0) {
+      return acDocs.map((ac) => {
+        const lineas = [`[${ac.codigo}] ${ac.descripcion}`];
+        if (Array.isArray(ac.ejemplosError) && ac.ejemplosError.length > 0) {
+          lineas.push(`  Ejemplos de error: ${ac.ejemplosError.filter(Boolean).join("; ")}`);
+        }
+        if (ac.estrategiaSocratica?.trim()) {
+          lineas.push(`  Estrategia socrática: ${ac.estrategiaSocratica.trim()}`);
+        }
+        return lineas.join("\n");
+      }).join("\n\n");
+    }
+    if (acRefs.length > 0) return `(solo IDs disponibles: ${formatList(acRefs)})`;
+    return "(ninguna)";
+  })();
+
   const contexto = `
 OBJETIVO:
 ${objetivo || "(no definido)"}
@@ -76,8 +98,8 @@ ${netlist || "(no definido)"}
 MODO DE PENSAR EXPERTO:
 ${modoExperto || "(no definido)"}
 
-ACs RELEVANTES (IDs):
-${acRefs.length ? formatList(acRefs) : "(ninguna)"}
+CONCEPCIONES ALTERNATIVAS DE LOS ESTUDIANTES:
+${acSection}
 
 RESPUESTA CORRECTA (RESISTENCIAS):
 ${respuestaCorrecta.length ? formatList(respuestaCorrecta) : "(no definida)"}

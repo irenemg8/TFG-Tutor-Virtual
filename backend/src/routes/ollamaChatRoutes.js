@@ -333,7 +333,7 @@ router.post("/chat/stream", async (req, res) => {
 
     // Ejercicio
     const tDb0 = nowMs();
-    const ejercicio = await Ejercicio.findById(exerciseId).lean();
+    const ejercicio = await Ejercicio.findById(exerciseId).populate('concepciones_alternativas').lean();
     dlog(reqId, "🗄️ ejercicio", { found: !!ejercicio, ms: nowMs() - tDb0 });
     if (!ejercicio) {
       sseSend(res, { error: "Ejercicio no encontrado." });
@@ -527,7 +527,7 @@ router.post("/chat/start-exercise", async (req, res) => {
         ? userMessage.trim()
         : DEFAULT_START_MESSAGE;
 
-    const ejercicio = await Ejercicio.findById(exerciseId).lean();
+    const ejercicio = await Ejercicio.findById(exerciseId).populate('concepciones_alternativas').lean();
     if (!ejercicio) return res.status(404).json({ message: "Ejercicio no encontrado." });
 
     const systemPrompt = buildSystemPrompt(ejercicio);

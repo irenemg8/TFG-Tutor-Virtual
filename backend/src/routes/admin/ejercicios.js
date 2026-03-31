@@ -77,7 +77,7 @@ function validateEjercicioBody(body, requireAll) {
 router.get("/", async (req, res) => {
   try {
     const ejercicios = await Ejercicio.find()
-      .populate("concepciones_alternativas", "codigo descripcion");
+      .populate("concepciones_alternativas", "codigo titulo descripcion");
     return res.status(200).json({ ejercicios });
   } catch (err) {
     console.error("[ADMIN EJERCICIOS] GET /", err);
@@ -93,7 +93,7 @@ router.get("/:id", async (req, res) => {
   }
   try {
     const ejercicio = await Ejercicio.findById(id)
-      .populate("concepciones_alternativas", "codigo descripcion");
+      .populate("concepciones_alternativas", "codigo titulo descripcion");
     if (!ejercicio) {
       return res.status(404).json({ error: "Ejercicio no encontrado" });
     }
@@ -146,7 +146,7 @@ router.post("/", async (req, res) => {
       },
     });
 
-    const populated = await ejercicio.populate("concepciones_alternativas", "codigo descripcion");
+    const populated = await ejercicio.populate("concepciones_alternativas", "codigo titulo descripcion");
     return res.status(201).json({ ejercicio: populated });
   } catch (err) {
     if (err.name === "ValidationError") {
@@ -210,7 +210,7 @@ router.put("/:id", async (req, res) => {
         $inc: { "tutorContext.version": 1 },
       },
       { new: true, runValidators: true }
-    ).populate("concepciones_alternativas", "codigo descripcion");
+    ).populate("concepciones_alternativas", "codigo titulo descripcion");
 
     if (!ejercicio) {
       return res.status(404).json({ error: "Ejercicio no encontrado" });

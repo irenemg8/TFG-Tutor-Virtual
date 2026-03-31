@@ -42,7 +42,7 @@ router.get("/:id", async (req, res) => {
 
 // POST / — Crear una concepción alternativa
 router.post("/", async (req, res) => {
-  let { descripcion, codigo, ejemplosError, estrategiaSocratica, conceptos } = req.body;
+  let { descripcion, titulo, codigo, ejemplosError, estrategiaSocratica, conceptos } = req.body;
 
   // If ejemplosError is provided, filter empty strings
   if (Array.isArray(ejemplosError)) {
@@ -73,6 +73,7 @@ router.post("/", async (req, res) => {
   try {
     const concepcion = await ConcepcionAlternativa.create({
       descripcion: descripcion.trim(),
+      titulo: titulo || "",
       codigo: codigo.trim(),
       ejemplosError: ejemplosError || [],
       estrategiaSocratica: estrategiaSocratica || "",
@@ -103,7 +104,7 @@ router.put("/:id", async (req, res) => {
     return res.status(400).json({ error: "ID inválido" });
   }
 
-  let { descripcion, codigo, ejemplosError, estrategiaSocratica, conceptos } = req.body;
+  let { descripcion, titulo, codigo, ejemplosError, estrategiaSocratica, conceptos } = req.body;
 
   // If ejemplosError is provided, filter empty strings
   if (Array.isArray(ejemplosError)) {
@@ -122,6 +123,7 @@ router.put("/:id", async (req, res) => {
 
   const updateData = {};
   if (descripcion !== undefined) updateData.descripcion = descripcion;
+  if (titulo !== undefined) updateData.titulo = titulo;
   if (codigo !== undefined) updateData.codigo = codigo;
   if (ejemplosError !== undefined) updateData.ejemplosError = ejemplosError;
   if (estrategiaSocratica !== undefined) updateData.estrategiaSocratica = estrategiaSocratica;

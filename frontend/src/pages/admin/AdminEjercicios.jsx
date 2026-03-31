@@ -15,8 +15,7 @@ const EMPTY_FORM = {
   tutorContext: {
     objetivo: "",
     netlist: "",
-    modoExperto: false,
-    ac_refs: "",
+    modoExperto: "",
     respuestaCorrecta: "",
   },
 };
@@ -33,6 +32,7 @@ export default function AdminEjercicios() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [acSearch, setAcSearch] = useState("");
 
   // Image upload
   const [uploadError, setUploadError] = useState(null);
@@ -89,9 +89,10 @@ export default function AdminEjercicios() {
       tutorContext: {
         objetivo: ejercicio.tutorContext?.objetivo ?? "",
         netlist: ejercicio.tutorContext?.netlist ?? "",
-        modoExperto: ejercicio.tutorContext?.modoExperto ?? false,
-        ac_refs: ejercicio.tutorContext?.ac_refs ?? "",
-        respuestaCorrecta: ejercicio.tutorContext?.respuestaCorrecta ?? "",
+        modoExperto: ejercicio.tutorContext?.modoExperto ?? "",
+        respuestaCorrecta: Array.isArray(ejercicio.tutorContext?.respuestaCorrecta)
+          ? ejercicio.tutorContext.respuestaCorrecta.join(", ")
+          : (ejercicio.tutorContext?.respuestaCorrecta ?? ""),
       },
     });
     setFormError(null);
@@ -104,6 +105,7 @@ export default function AdminEjercicios() {
     setEditing(null);
     setFormError(null);
     setUploadError(null);
+    setAcSearch("");
   }
 
   function updateTutorContext(field, value) {
@@ -130,10 +132,19 @@ export default function AdminEjercicios() {
     setFormError(null);
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        tutorContext: {
+          ...form.tutorContext,
+          respuestaCorrecta: form.tutorContext.respuestaCorrecta
+            ? form.tutorContext.respuestaCorrecta.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
+            : [],
+        },
+      };
       if (editing) {
-        await adminApi.updateEjercicio(editing._id, form);
+        await adminApi.updateEjercicio(editing._id, payload);
       } else {
-        await adminApi.createEjercicio(form);
+        await adminApi.createEjercicio(payload);
       }
       closeModal();
       await fetchData();
@@ -421,32 +432,25 @@ export default function AdminEjercicios() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">AC Refs</label>
-                    <input
-                      type="text"
-                      value={form.tutorContext.ac_refs}
-                      onChange={(e) => updateTutorContext("ac_refs", e.target.value)}
-                      className="w-full border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-azul"
-                    />
-                  </div>
-                  <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">Respuesta Correcta</label>
                     <textarea
                       value={form.tutorContext.respuestaCorrecta}
                       onChange={(e) => updateTutorContext("respuestaCorrecta", e.target.value)}
                       rows={2}
+                      placeholder="Ej: R1, R2, R4"
                       className="w-full border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-azul resize-none"
                     />
+                    <p className="text-xs text-gray-400 mt-1">Resistencias de la respuesta correcta, separadas por comas (mayúsculas).</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="modoExperto"
-                      type="checkbox"
-                      checked={form.tutorContext.modoExperto}
-                      onChange={(e) => updateTutorContext("modoExperto", e.target.checked)}
-                      className="h-4 w-4 text-azul rounded"
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Forma de pensar del experto</label>
+                    <textarea
+                      value={form.tutorContext.modoExperto}
+                      onChange={(e) => updateTutorContext("modoExperto", e.target.value)}
+                      rows={4}
+                      className="w-full border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-azul resize-none"
                     />
-                    <label htmlFor="modoExperto" className="text-xs text-gray-600">Modo Experto</label>
+                    <p className="text-xs text-gray-400 mt-1">Describe cómo un experto aborda este ejercicio. Se usa como guía interna del tutor socrático.</p>
                   </div>
                 </div>
               </details>
@@ -497,25 +501,47 @@ export default function AdminEjercicios() {
                 {allConcepciones.length === 0 && (
                   <p className="text-sm text-gray-400">No hay concepciones disponibles.</p>
                 )}
-                <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto border border-gray-200 rounded-lg p-2">
-                  {allConcepciones.map((c) => {
-                    const selected = form.concepciones_alternativas.includes(c._id);
-                    return (
-                      <button
-                        key={c._id}
-                        type="button"
-                        onClick={() => toggleConcepcion(c._id)}
-                        className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-                          selected
-                            ? "bg-[#E72621] text-white border-[#E72621]"
-                            : "bg-white text-gray-600 border-gray-300 hover:border-[#E72621]"
-                        }`}
-                      >
-                        {c.codigo}
-                      </button>
-                    );
-                  })}
-                </div>
+                {allConcepciones.length > 0 && (() => {
+                  const filteredConcepciones = allConcepciones.filter((c) => {
+                    if (!acSearch.trim()) return true;
+                    const q = acSearch.toLowerCase();
+                    return c.codigo.toLowerCase().includes(q) || c.titulo?.toLowerCase().includes(q);
+                  });
+                  return (
+                    <>
+                      <input
+                        type="text"
+                        placeholder="Buscar por código o descripción..."
+                        value={acSearch}
+                        onChange={(e) => setAcSearch(e.target.value)}
+                        className="w-full border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-azul mb-2"
+                      />
+                      <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                        {filteredConcepciones.length === 0 && acSearch.trim() ? (
+                          <p className="text-xs text-gray-400">Sin resultados.</p>
+                        ) : (
+                          filteredConcepciones.map((c) => {
+                            const selected = form.concepciones_alternativas.includes(c._id);
+                            return (
+                              <button
+                                key={c._id}
+                                type="button"
+                                onClick={() => toggleConcepcion(c._id)}
+                                className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                                  selected
+                                    ? "bg-[#E72621] text-white border-[#E72621]"
+                                    : "bg-white text-gray-600 border-gray-300 hover:border-[#E72621]"
+                                }`}
+                              >
+                                {c.codigo}{c.titulo ? ` — ${c.titulo}` : ""}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="flex justify-end gap-3 pt-2">

@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const concepcionAlternativaSchema = new mongoose.Schema(
   {
     descripcion:         { type: String, required: true },
+    titulo:              { type: String, default: "" },
     codigo:              { type: String, required: true, unique: true, trim: true },
     ejemplosError:       { type: [String], default: [] },
     estrategiaSocratica: { type: String, default: "" },

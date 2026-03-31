@@ -5,6 +5,7 @@ import { adminApi } from "../../services/api";
 
 const EMPTY_FORM = {
   codigo: "",
+  titulo: "",
   descripcion: "",
   estrategiaSocratica: "",
   ejemplosError: [],
@@ -63,6 +64,7 @@ export default function AdminConcepciones() {
     setEditing(concepcion);
     setForm({
       codigo: concepcion.codigo,
+      titulo: concepcion.titulo ?? "",
       descripcion: concepcion.descripcion,
       estrategiaSocratica: concepcion.estrategiaSocratica ?? "",
       ejemplosError: [...(concepcion.ejemplosError ?? [])],
@@ -189,6 +191,7 @@ export default function AdminConcepciones() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Código</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Título</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Descripción</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Conceptos</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Errores</th>
@@ -198,7 +201,7 @@ export default function AdminConcepciones() {
             <tbody className="bg-white divide-y divide-gray-100">
               {concepciones.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
                     No hay concepciones alternativas todavía.
                   </td>
                 </tr>
@@ -206,6 +209,7 @@ export default function AdminConcepciones() {
               {concepciones.map((c) => (
                 <tr key={c._id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-mono text-sm text-gray-800 font-medium">{c.codigo}</td>
+                  <td className="px-4 py-3 text-gray-700 text-sm">{c.titulo || "—"}</td>
                   <td className="px-4 py-3 text-gray-600 text-sm max-w-xs truncate">{c.descripcion}</td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
@@ -276,6 +280,17 @@ export default function AdminConcepciones() {
                   onChange={(e) => setForm({ ...form, codigo: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-azul"
                   required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Título</label>
+                <input
+                  type="text"
+                  value={form.titulo}
+                  onChange={(e) => setForm({ ...form, titulo: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-azul"
+                  placeholder="Nombre corto de la concepción"
                 />
               </div>
 
