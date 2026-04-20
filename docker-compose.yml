@@ -28,12 +28,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.tutor-virtual.rule=Host(`${DOMAIN}`)"
-      - "traefik.http.routers.tutor-virtual.entrypoints=websecure"
-      - "traefik.http.routers.tutor-virtual.tls.certresolver=letsencrypt"
-      - "traefik.http.services.tutor-virtual.loadbalancer.server.port=3000"
+
 
   # ---------------------------------------------------------------------------
   # MongoDB
