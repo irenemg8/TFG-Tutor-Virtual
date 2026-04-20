@@ -1,0 +1,39 @@
+# Dependencies
+**/node_modules
+
+# Git
+.git
+.gitignore
+
+# Environment files (never bake secrets into the image)
+**/.env
+**/*.env
+
+# Frontend — the build artifact is copied in the Dockerfile; sources not needed at runtime
+frontend/src
+frontend/public
+frontend/index.html
+frontend/vite.config.js
+frontend/tailwind.config.js
+frontend/postcss.config.js
+frontend/eslint.config.js
+frontend/README.md
+
+# Docs / evaluation / extra material
+docs/
+evaluation/
+material-complementario/
+workflow/
+
+# Dev / test artefacts
+backend/test_conversations/
+backend/testchat*.js
+backend/requests.http
+**/*.sqlite3
+**/*.jsonl
+
+# Build outputs
+**/dist
+
+# PowerShell scripts
+*.ps1
