@@ -9,14 +9,7 @@
 **/.env
 **/*.env
 
-# Frontend — the build artifact is copied in the Dockerfile; sources not needed at runtime
-frontend/src
-frontend/public
-frontend/index.html
-frontend/vite.config.js
-frontend/tailwind.config.js
-frontend/postcss.config.js
-frontend/eslint.config.js
+# Frontend — only exclude files not needed for the build
 frontend/README.md
 
 # Docs / evaluation / extra material
