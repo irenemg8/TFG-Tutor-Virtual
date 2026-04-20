@@ -6,6 +6,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        VITE_BASE_PATH: ${VITE_BASE_PATH:-}
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-}
+        VITE_DEV_BYPASS_AUTH: ${VITE_DEV_BYPASS_AUTH:-false}
     expose:
       - "3000"
     env_file: .env

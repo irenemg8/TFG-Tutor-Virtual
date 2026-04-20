@@ -3,6 +3,15 @@
 # =============================================================================
 FROM node:20-alpine AS frontend-builder
 
+# Build-time variables (baked into the JS bundle by Vite)
+ARG VITE_BASE_PATH=""
+ARG VITE_BACKEND_URL=""
+ARG VITE_DEV_BYPASS_AUTH=false
+
+ENV VITE_BASE_PATH=$VITE_BASE_PATH
+ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
+ENV VITE_DEV_BYPASS_AUTH=$VITE_DEV_BYPASS_AUTH
+
 WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
