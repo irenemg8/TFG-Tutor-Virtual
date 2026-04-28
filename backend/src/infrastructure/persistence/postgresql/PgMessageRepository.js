@@ -45,6 +45,9 @@ class PgMessageRepository extends IMessageRepository {
 
   async appendMessage(interaccionId, message) {
     const meta = message.metadata;
+    // Cast explícito $1::text para que PostgreSQL pueda deducir el tipo del
+    // parámetro cuando se usa en dos sitios (columna interaccion_id + WHERE
+    // del subselect). Sin el cast, PG da error 42P08 "inconsistent types".
     await this.pool.query(
       `INSERT INTO messages (
         interaccion_id, sequence_num, role, content, timestamp,
@@ -53,8 +56,8 @@ class PgMessageRepository extends IMessageRepository {
         guardrail_premature_confirmation, guardrail_state_reveal,
         timing_pipeline_ms, timing_ollama_ms, timing_total_ms
       ) VALUES (
-        $1,
-        COALESCE((SELECT MAX(sequence_num) + 1 FROM messages WHERE interaccion_id = $1), 0),
+        $1::text,
+        COALESCE((SELECT MAX(sequence_num) + 1 FROM messages WHERE interaccion_id = $1::text), 0),
         $2, $3, $4,
         $5, $6, $7, $8, $9,
         $10, $11, $12, $13,

@@ -43,14 +43,18 @@ class PgUsuarioRepository extends IUsuarioRepository {
   }
 
   async upsertByUpvLogin(upvLogin, updateFields, insertFields) {
+    // Cast explícito (::text/text[]) en el INSERT para que cuando los mismos
+    // $N se usen en el UPDATE dentro de COALESCE, PostgreSQL pueda deducir
+    // los tipos. Sin esto, queries con $N reutilizado dan error 42P08
+    // "inconsistent types deduced for parameter".
     const { rows } = await this.pool.query(
       `INSERT INTO usuarios (upv_login, email, nombre, apellidos, dni, grupos, rol)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text[], $7::text)
        ON CONFLICT (upv_login) DO UPDATE SET
-         email = COALESCE($2, usuarios.email),
-         nombre = COALESCE($3, usuarios.nombre),
-         apellidos = COALESCE($4, usuarios.apellidos),
-         dni = COALESCE($5, usuarios.dni),
+         email = COALESCE($2::text, usuarios.email),
+         nombre = COALESCE($3::text, usuarios.nombre),
+         apellidos = COALESCE($4::text, usuarios.apellidos),
+         dni = COALESCE($5::text, usuarios.dni),
          updated_at = NOW()
        RETURNING *`,
       [
@@ -113,7 +117,7 @@ class PgUsuarioRepository extends IUsuarioRepository {
   async findByIds(ids) {
     if (!ids.length) return [];
     const { rows } = await this.pool.query(
-      "SELECT * FROM usuarios WHERE id = ANY($1::uuid[])",
+      "SELECT * FROM usuarios WHERE id = ANY($1::text[])",
       [ids]
     );
     return rows.map(rowToDomain);

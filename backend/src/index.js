@@ -3,10 +3,9 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const express = require("express");
-const mongoose = require("mongoose");
 const cors = require("cors");
 const session = require("express-session");
-const MongoStore = require("connect-mongo");
+const PgSession = require("connect-pg-simple")(session);
 const fs = require("fs");
 
 // Rutas
@@ -18,8 +17,10 @@ const userRoutes = require("./interfaces/http/routes/usuarios");
 const ejerciciosRoutes = require("./interfaces/http/routes/ejercicios");
 const interaccionesRoutes = require("./interfaces/http/routes/interacciones");
 const ollamaChatRoutes = require("./interfaces/http/routes/ollamaChatRoutes");
+const orchestratorMiddleware = require("./interfaces/http/middleware/orchestratorMiddleware");
 const ragMiddleware = require("./interfaces/http/middleware/ragMiddleware");
 const { setupWorkflowSocket } = require("./interfaces/sse/workflowSocket");
+const container = require("./container");
 const resultadoRoutes = require("./interfaces/http/routes/resultados");
 const progresoRoutes = require("./interfaces/http/routes/progresoRoutes");
 const exportRoutes = require("./interfaces/http/routes/exportRoutes");
@@ -85,24 +86,30 @@ app.get("/api/debug/static", (_req, res) => {
 // Servido real de estáticos
 app.use("/static", express.static(staticDir, { fallthrough: false }));
 
-// ====== Mongo ======
-mongoose
-  .connect(process.env.MONGODB_URI)
-  .then(() => console.log("Conectado a MongoDB Atlas"))
-  .catch((error) => console.error("Error al conectar a MongoDB:", error));
+// (La conexión a PostgreSQL la gestiona container.initialize() en el callback de listen.)
 
-// ====== Sesión ======
+// ====== Sesión (PostgreSQL) ======
+// La tabla `sessions` es creada por la migración 006_create_sessions.sql.
+// connect-pg-simple gestiona su propio pool interno usando PG_CONNECTION_STRING.
+const pgStore = new PgSession({
+  conString: process.env.PG_CONNECTION_STRING,
+  tableName: "sessions",
+  createTableIfMissing: false,
+  // Emit errors visibly so we can diagnose session store failures (before this,
+  // a failing store could silently hang CAS login — errors must not be silent).
+  errorLog: function (msg) { console.error("[SESSION STORE]", msg); },
+});
 app.use(
   session({
     name: "sid_irene",
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }),
+    store: pgStore,
     cookie: {
       httpOnly: true,
-      // ✅ secure=true en producción (HTTPS/Nginx).
-      // En desarrollo local (DEV_BYPASS_AUTH=true), secure=false para que HTTP funcione.
+      // secure=true en producción (HTTPS/Nginx). En dev local (DEV_BYPASS_AUTH=true),
+      // secure=false para que HTTP funcione.
       secure: process.env.DEV_BYPASS_AUTH !== "true",
       sameSite: "lax",
     },
@@ -124,6 +131,9 @@ app.use("/api", globalAuth);
 app.use("/api/usuarios", userRoutes);
 app.use("/api/ejercicios", ejerciciosRoutes);
 app.use("/api/interacciones", interaccionesRoutes);
+// Orchestrator takes priority when USE_ORCHESTRATOR=1 (Phase 5 refactor).
+// If disabled or unready it calls next() and ragMiddleware handles the request.
+app.use("/api/ollama", orchestratorMiddleware);
 app.use("/api/ollama", ragMiddleware);
 app.use("/api/ollama", ollamaChatRoutes);
 app.use("/api/progreso", progresoRoutes);
@@ -138,28 +148,53 @@ app.post("/api/llm/query", requireAuth, (req, res) => {
 const frontendDist = path.join(__dirname, "..", "..", "frontend", "dist");
 console.log("FRONTEND DIST =", frontendDist);
 
-// Assets con caché largo; index.html sin caché
+// Assets con caché largo (fingerprinted por Vite); index.html SIN caché.
+// Los headers anti-caché son agresivos para evitar que nginx, navegadores o
+// proxies sirvan un index.html viejo que referencie hashes que ya no existen.
 app.use(
   express.static(frontendDist, {
     immutable: true,
     maxAge: "365d",
     setHeaders: (res, filePath) => {
       if (filePath.endsWith("index.html")) {
-        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+        res.setHeader("Surrogate-Control", "no-store");
       }
     },
   })
 );
 
-// SPA fallback: NO capturar /api ni /static
-app.get(/^\/(?!api\/|static\/).*/, (req, res) => {
-  res.setHeader("Cache-Control", "no-store");
+// SPA fallback: solo devolver index.html para rutas de NAVEGACIÓN (sin extensión).
+// Requests a archivos con extensión (.js, .css, .png, .map...) que no se encuentren
+// deben devolver 404, NO el index.html (evita el error "MIME type text/html" en módulos
+// ES cuando el navegador tiene cacheado un hash antiguo de Vite que ya no existe).
+app.get(/^\/(?!api\/|static\/).*/, (req, res, next) => {
+  if (path.extname(req.path)) {
+    // Es una petición a un archivo concreto que no encontró express.static → 404 honesto
+    return res.status(404).type("text/plain").send("Not found");
+  }
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
   res.sendFile(path.join(frontendDist, "index.html"));
 });
 
 // ====== Arranque servidor HTTP interno (Nginx hará HTTPS fuera) ======
 const server = app.listen(port, "0.0.0.0", () => {
   console.log(`✅ Backend (HTTP interno) escuchando en puerto ${port}`);
+
+  // Initialize DI container for hex architecture (USE_ORCHESTRATOR=1 route)
+  // Non-blocking: if it fails, the legacy ragMiddleware still serves requests.
+  container.initialize()
+    .then(() => {
+      console.log("[Startup] Hex container ready. USE_ORCHESTRATOR=" + (process.env.USE_ORCHESTRATOR === "1" ? "ON" : "OFF"));
+    })
+    .catch((err) => {
+      console.error("[Startup] Container initialization FAILED — orchestrator route disabled:", err.message);
+    });
 
   // Warmup Ollama (no bloquea)
   const axios = require("axios");

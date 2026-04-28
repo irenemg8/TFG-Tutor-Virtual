@@ -90,6 +90,9 @@ class ContextAgent extends AgentInterface {
 
     const tutorRepeating = this._detectRepetition(lastAssistantMessages);
     const studentFrustrated = this._detectFrustration(context.userMessage);
+    const lastClassificationStreak = await this._lastClassificationStreak(
+      context.interaccionId
+    );
 
     context.loopState = {
       prevCorrectTurns,
@@ -97,20 +100,51 @@ class ContextAgent extends AgentInterface {
       totalAssistantTurns,
       tutorRepeating,
       studentFrustrated,
+      // { type, streak } — how many consecutive prior assistant turns shared
+      // the same classification. Used by TutorAgent to escalate strategy
+      // when the same situation repeats (e.g. correct_no_reasoning x3).
+      lastClassification: lastClassificationStreak.type,
+      sameClassificationStreak: lastClassificationStreak.streak,
     };
   }
 
-  _resolveLanguage(history) {
-    // Simple heuristic: check last few messages for Valencian/English indicators
-    const text = history
-      .slice(-4)
-      .map((m) => m.content)
-      .join(" ")
-      .toLowerCase();
+  /**
+   * Count how many of the most recent assistant messages share the SAME
+   * metadata.classification value, walking backwards from the end of the
+   * conversation. Returns { type, streak }. If there are no assistant
+   * messages with classification metadata, returns { type: null, streak: 0 }.
+   */
+  async _lastClassificationStreak(interaccionId) {
+    const all = await this.messageRepo.getAllMessages(interaccionId);
+    let last = null;
+    let streak = 0;
+    for (let i = all.length - 1; i >= 0; i--) {
+      const m = all[i];
+      if (!m.isAssistant() || !m.metadata || !m.metadata.classification) continue;
+      const cls = m.metadata.classification;
+      if (last === null) {
+        last = cls;
+        streak = 1;
+        continue;
+      }
+      if (cls === last) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+    return { type: last, streak };
+  }
 
-    if (/\b(the|is|are|how|what|why|because)\b/.test(text)) return "en";
-    if (/\b(és|però|perquè|resistènci|aquest)\b/.test(text)) return "val";
-    return "es";
+  _resolveLanguage(history) {
+    // Delegate to the conservative resolver: only USER messages are inspected,
+    // and the switch must be EXPLICIT (e.g. "parla en valencià", "speak in
+    // english"). This prevents the previous bug where the tutor accidentally
+    // emitting one Catalan word ("però") permanently flipped the conversation
+    // to Valencian — which would also swap the system prompt to Valencian and
+    // make the LLM keep responding in Valencian.
+    const { resolveLanguage } = require("../services/languageManager");
+    return resolveLanguage(history);
   }
 
   async _countClassifications(interaccionId, types) {

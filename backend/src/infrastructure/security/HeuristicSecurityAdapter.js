@@ -1,6 +1,7 @@
 "use strict";
 
 const ISecurityService = require("../../domain/ports/services/ISecurityService");
+const debugLogger = require("../events/pipelineDebugLogger");
 
 /**
  * Deterministic first-line defense against prompt injection and off-topic
@@ -78,7 +79,9 @@ class HeuristicSecurityAdapter extends ISecurityService {
     const text = (userMessage || "").trim();
 
     if (!text) {
-      return { safe: true, category: "safe" };
+      const safeResult = { safe: true, category: "safe" };
+      debugLogger.logSecurity(userMessage, safeResult);
+      return safeResult;
     }
 
     // 1) Prompt injection (highest priority)
@@ -86,12 +89,14 @@ class HeuristicSecurityAdapter extends ISecurityService {
       if (p.re.test(text)) {
         const msg = REDIRECT.injection[lang] || REDIRECT.injection.es;
         this.logger("security.block", { category: "injection", patternId: p.id });
-        return {
+        const blockedResult = {
           safe: false,
           category: "injection",
           matchedPattern: p.id,
           redirectMessage: msg,
         };
+        debugLogger.logSecurity(userMessage, blockedResult);
+        return blockedResult;
       }
     }
 
@@ -102,17 +107,21 @@ class HeuristicSecurityAdapter extends ISecurityService {
         if (p.re.test(text)) {
           const msg = REDIRECT.off_topic[lang] || REDIRECT.off_topic.es;
           this.logger("security.block", { category: "off_topic", patternId: p.id });
-          return {
+          const blockedResult = {
             safe: false,
             category: "off_topic",
             matchedPattern: p.id,
             redirectMessage: msg,
           };
+          debugLogger.logSecurity(userMessage, blockedResult);
+          return blockedResult;
         }
       }
     }
 
-    return { safe: true, category: "safe" };
+    const safeResult = { safe: true, category: "safe" };
+    debugLogger.logSecurity(userMessage, safeResult);
+    return safeResult;
   }
 }
 

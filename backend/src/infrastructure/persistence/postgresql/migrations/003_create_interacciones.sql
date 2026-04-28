@@ -2,9 +2,9 @@
 -- Replaces MongoDB Interaccion model (without embedded conversacion[] array)
 
 CREATE TABLE IF NOT EXISTS interacciones (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    usuario_id   UUID NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
-    ejercicio_id UUID NOT NULL REFERENCES ejercicios(id) ON DELETE CASCADE,
+    id           VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    usuario_id   VARCHAR(50) NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    ejercicio_id VARCHAR(50) NOT NULL REFERENCES ejercicios(id) ON DELETE CASCADE,
     inicio       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     fin          TIMESTAMPTZ DEFAULT NOW(),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()

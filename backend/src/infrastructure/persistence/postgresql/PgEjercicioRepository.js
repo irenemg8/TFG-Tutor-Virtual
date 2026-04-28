@@ -163,7 +163,7 @@ class PgEjercicioRepository extends IEjercicioRepository {
               tc.respuesta_correcta, tc.elementos_evaluables, tc.version AS tc_version
        FROM ejercicios e
        LEFT JOIN tutor_contexts tc ON tc.ejercicio_id = e.id
-       WHERE e.id = ANY($1::uuid[])`,
+       WHERE e.id = ANY($1::text[])`,
       [ids]
     );
     return rows.map((row) => {

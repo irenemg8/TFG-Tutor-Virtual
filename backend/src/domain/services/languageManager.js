@@ -122,6 +122,53 @@ function getFinishMessages(lang) {
 }
 
 // =====================
+// Deterministic greeting responses (used to handle "hola"/"hi" without an LLM
+// call, which avoids leaking the answer through the legacy fallback handler).
+// =====================
+
+const greetingResponses = {
+  es: {
+    first: [
+      "¡Hola! ¿Por dónde te gustaría empezar a analizar este circuito?",
+      "¡Hola! Cuéntame con tus palabras qué ves en el circuito y por dónde quieres empezar.",
+      "¡Hola! Para empezar, ¿qué identificas en el enunciado y qué crees que se te pide?",
+    ],
+    repeat: [
+      "¡Hola de nuevo! ¿Quieres retomar por donde lo dejaste o probar otro enfoque?",
+      "¡Hola! ¿Qué parte del circuito quieres revisar?",
+    ],
+  },
+  val: {
+    first: [
+      "Hola! Per on t'agradaria començar a analitzar aquest circuit?",
+      "Hola! Conta'm amb les teues paraules què veus al circuit i per on vols començar.",
+      "Hola! Per a començar, què identifiques a l'enunciat i què creus que es demana?",
+    ],
+    repeat: [
+      "Hola de nou! Vols reprendre on ho deixares o provar un altre enfocament?",
+      "Hola! Quina part del circuit vols revisar?",
+    ],
+  },
+  en: {
+    first: [
+      "Hi! Where would you like to start analyzing this circuit?",
+      "Hi! Tell me in your own words what you see in the circuit and where you'd like to start.",
+      "Hi! To get started, what do you identify in the problem statement and what do you think is being asked?",
+    ],
+    repeat: [
+      "Hi again! Want to pick up where you left off, or try a different angle?",
+      "Hi! Which part of the circuit do you want to revisit?",
+    ],
+  },
+};
+
+function getGreetingResponse(lang, isFirstTurn) {
+  const pool = greetingResponses[lang] || greetingResponses.es;
+  const list = isFirstTurn ? pool.first : pool.repeat;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+// =====================
 // Multi-language pattern dictionaries
 // =====================
 
@@ -250,6 +297,17 @@ const confirmPhrases = {
     "estás en el camino correcto", "en el camino correcto",
     "eso es correcto", "bien razonado", "buen análisis",
     "justo", "lo has entendido", "has comprendido",
+    // Superlative confirmations seen in production tutor responses.
+    // ONLY pure praise — never things that could appear in legitimate
+    // Socratic questions ("¿Has considerado X?") or corrective phrases
+    // ("hay que pulir unos detalles", "eso no es así", "no del todo").
+    "genial", "estupendo", "fenomenal", "fantástico", "magnífico",
+    "maravilloso", "excelente",
+    // Bare affirmative openers that validate a wrong answer when the tutor
+    // starts with them. Word-boundary match prevents matching inside other
+    // words (e.g. "siempre" is not "sí"). NegationDetector still skips them
+    // when preceded by "no" / "tampoco".
+    "sí", "si", "claro", "obvio",
   ],
   val: [
     "perfecte", "correcte", "exacte", "exactament", "molt bé",
@@ -262,6 +320,9 @@ const confirmPhrases = {
     "estàs en el camí correcte", "en el camí correcte",
     "això és correcte", "ben raonat", "bona anàlisi",
     "ho has entés", "has comprés",
+    "genial", "estupend", "fenomenal", "fantàstic", "magnífic",
+    "meravellós", "excel·lent",
+    "sí", "si", "clar", "obvi",
   ],
   en: [
     "perfect", "correct", "exactly", "very good", "well done",
@@ -273,6 +334,8 @@ const confirmPhrases = {
     "you're on the right track", "on the right track", "right track",
     "that is correct", "well reasoned", "good analysis",
     "you've got it", "you understand",
+    "fantastic", "awesome", "amazing", "wonderful", "excellent",
+    "yes", "sure", "clear",
   ],
 };
 
@@ -287,6 +350,19 @@ const stateRevealPatterns = {
     "tiene diferencia de potencial cero",
     "no tiene caída de tensión",
     "ambos terminales", "mismo nudo", "mismo punto",
+    // Variants the LLM produces in real tutor responses (caught by diagnose.js).
+    "está en corto", "queda en corto", "queda cortocircuitad",
+    "se cortocircuita", "se cortocircuit",
+    "interruptor abierto", "interruptor cerrado",
+    "switch abierto", "switch cerrado",
+    "está abierto entre", "está cerrado entre",
+    // Bare "está abierto"/"está cerrado" only fires when the surrounding
+    // sentence also names an element (StateRevealGuardrail requires it),
+    // so this avoids false positives on conceptual questions like
+    // "¿qué pasa si el camino está abierto?".
+    "está abierto", "está cerrado",
+    "los dos terminales unidos", "terminales unidos",
+    "no opone resistencia",
   ],
   val: [
     "està curtcircuitad", "està en curtcircuit",
@@ -298,6 +374,12 @@ const stateRevealPatterns = {
     "té diferència de potencial zero",
     "no té caiguda de tensió",
     "ambdós terminals", "mateix nus", "mateix punt",
+    "està en curt", "queda en curt", "queda curtcircuitad",
+    "es curtcircuita",
+    "interruptor obert", "interruptor tancat",
+    "està obert entre", "està tancat entre",
+    "els dos terminals units", "terminals units",
+    "no oposa resistència",
   ],
   en: [
     "is short circuited", "is shorted", "is short-circuited",
@@ -309,6 +391,11 @@ const stateRevealPatterns = {
     "has zero potential difference",
     "has no voltage drop",
     "both terminals", "same node", "same point",
+    "is short", "becomes short", "gets shorted",
+    "switch is open", "switch is closed",
+    "is open between", "is closed between",
+    "terminals tied", "terminals connected together",
+    "offers no resistance",
   ],
 };
 
@@ -420,6 +507,37 @@ function getPartialConfirmationInstruction(lang, classificationType) {
     "NO debes decir 'Perfecto', 'Correcto', 'Muy bien' ni nada que valide su razonamiento. " +
     "Reconoce que va encaminado pero cuestiona el concepto erróneo con una pregunta socrática."
   );
+}
+
+// Instruction when the LLM affirms a wrong proposal or wrongly-negated correct
+// element. Different from FalseConfirmation because it carries the SPECIFIC
+// elements the student got wrong, so the retry prompt can be more pointed.
+function getCompleteSolutionInstruction(lang, wronglyNegated, wronglyProposed) {
+  var negList = Array.isArray(wronglyNegated) && wronglyNegated.length > 0 ? wronglyNegated.join(", ") : "";
+  var propList = Array.isArray(wronglyProposed) && wronglyProposed.length > 0 ? wronglyProposed.join(", ") : "";
+
+  if (lang === "val") {
+    var msg = "\n\nCRÍTIC: La teua resposta anterior va validar una part de la resposta de l'alumne que és INCORRECTA. ";
+    if (negList) msg += "L'alumne ha dit que [" + negList + "] NO contribueix(en), però en realitat sí que ho fa(n). ";
+    if (propList) msg += "L'alumne ha proposat [" + propList + "] però eixos elements NO formen part de la solució. ";
+    msg += "NO has de dir 'Genial', 'Has tingut en compte', 'Perfecte', 'Correcte' ni res semblant sobre eixos elements. ";
+    msg += "Reformula la teua resposta amb una pregunta socràtica que ajude l'alumne a reconsiderar eixe element concret SENSE revelar la resposta.";
+    return msg;
+  }
+  if (lang === "en") {
+    var msg = "\n\nCRITICAL: Your previous response validated a part of the student's answer that is INCORRECT. ";
+    if (negList) msg += "The student said [" + negList + "] does NOT contribute, but it actually DOES. ";
+    if (propList) msg += "The student proposed [" + propList + "] but those elements are NOT part of the solution. ";
+    msg += "Do NOT say 'Great', 'You've taken into account', 'Perfect', 'Correct' or anything similar about those elements. ";
+    msg += "Rephrase with a Socratic question that helps the student reconsider that specific element WITHOUT revealing the answer.";
+    return msg;
+  }
+  var msg = "\n\nCRÍTICO: Tu respuesta anterior validó una parte de la respuesta del alumno que es INCORRECTA. ";
+  if (negList) msg += "El alumno ha dicho que [" + negList + "] NO contribuye(n), pero en realidad sí lo hace(n). ";
+  if (propList) msg += "El alumno ha propuesto [" + propList + "] pero esos elementos NO forman parte de la solución. ";
+  msg += "NO debes decir 'Genial', 'Has tenido en cuenta', 'Perfecto', 'Correcto' ni nada similar sobre esos elementos. ";
+  msg += "Reformula tu respuesta con una pregunta socrática que ayude al alumno a reconsiderar ese elemento concreto SIN revelar la respuesta.";
+  return msg;
 }
 
 function getStateRevealInstruction(lang) {
@@ -535,28 +653,61 @@ function getRandomIntermediatePhrase(type, lang) {
 // Element naming guardrail instruction (generic, not resistance-specific)
 // =====================
 
+// Pool of CONCEPT-LEVEL example questions used inside the element_naming
+// retry hint. Rotated every call so the LLM cannot just copy the same example
+// verbatim into its next response (which is what produced the visible
+// infinite loop with gemma3:27b in the original conversations).
+const _conceptExamplesByLang = {
+  es: [
+    "el recorrido de la corriente desde la fuente hasta tierra",
+    "qué pasa cuando dos puntos están al mismo potencial",
+    "cómo se distribuye la tensión en una rama con varios componentes",
+    "qué efecto tiene un camino sin resistencia entre dos nodos",
+    "qué condición debe cumplirse para que una rama no transporte corriente",
+  ],
+  val: [
+    "el recorregut del corrent des de la font fins a terra",
+    "què passa quan dos punts estan al mateix potencial",
+    "com es distribueix la tensió en una branca amb diversos components",
+    "quin efecte té un camí sense resistència entre dos nodes",
+    "quina condició s'ha de complir perquè una branca no transporte corrent",
+  ],
+  en: [
+    "the path of current from the source to ground",
+    "what happens when two points share the same potential",
+    "how voltage is distributed across a branch with several components",
+    "the effect of a path with no resistance between two nodes",
+    "what condition must hold for a branch to carry no current",
+  ],
+};
+
+function _pickConceptExample(lang) {
+  const pool = _conceptExamplesByLang[lang] || _conceptExamplesByLang.es;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function getElementNamingInstruction(lang) {
   if (lang === "val") {
     return (
       "\n\nCRÍTIC: La teua resposta anterior NOMENA un element concret en una pregunta o directiva. " +
       "MAI has de senyalar un element específic perquè l'alumne l'analitze (ex: '¿Què passa amb R5?', 'Observa R3'). " +
-      "En el seu lloc, fes preguntes sobre CONCEPTES generals: el recorregut del corrent, " +
-      "quines condicions es necessiten perquè circule corrent per una branca, etc."
+      "En el seu lloc, fes una pregunta sobre un CONCEPTE general (per exemple: " + _pickConceptExample("val") + "). " +
+      "Reformula la teua frase usant aquest concepte i NO copies l'exemple textualment."
     );
   }
   if (lang === "en") {
     return (
       "\n\nCRITICAL: Your previous response NAMES a specific element in a question or directive. " +
       "NEVER point to a specific element for the student to analyze (e.g., 'What about R5?', 'Look at R3'). " +
-      "Instead, ask questions about general CONCEPTS: the path of current, " +
-      "what conditions are needed for current to flow through a branch, etc."
+      "Instead, ask a question about a general CONCEPT (for example: " + _pickConceptExample("en") + "). " +
+      "Rephrase using this concept and DO NOT copy the example verbatim."
     );
   }
   return (
     "\n\nCRÍTICO: Tu respuesta anterior NOMBRA un elemento concreto en una pregunta o directiva. " +
     "NUNCA debes señalar un elemento específico para que el alumno lo analice (ej: '¿Qué pasa con R5?', 'Observa R3'). " +
-    "En su lugar, haz preguntas sobre CONCEPTOS generales: el recorrido de la corriente, " +
-    "qué condiciones se necesitan para que circule corriente por una rama, etc."
+    "En su lugar, haz una pregunta sobre un CONCEPTO general (por ejemplo: " + _pickConceptExample("es") + "). " +
+    "Reformula tu frase usando ese concepto y NO copies el ejemplo literalmente."
   );
 }
 
@@ -644,9 +795,11 @@ module.exports = {
   resolveLanguage,
   getLanguageRules,
   getFinishMessages,
+  getGreetingResponse,
   getStrongerInstruction,
   getFalseConfirmationInstruction,
   getPartialConfirmationInstruction,
+  getCompleteSolutionInstruction,
   getStateRevealInstruction,
   getElementNamingInstruction,
   getIntermediateFeedback,

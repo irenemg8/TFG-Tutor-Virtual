@@ -18,6 +18,8 @@ class AgentContext {
     this.exerciseId = request.exerciseId;
     this.userMessage = request.userMessage;
     this.interaccionId = request.interaccionId || null;
+    this.budgetMs = request.budgetMs || null;           // optional time budget
+    this.reqId = request.reqId || null;                  // optional trace id
 
     // --- Populated by ContextAgent ---
     this.ejercicio = null;
@@ -51,6 +53,10 @@ class AgentContext {
 
     // --- Populated by TutorAgent ---
     this.llmResponse = null;
+    this.llmMessages = [];                // messages array actually sent to LLM (needed for consolidated retry)
+
+    // --- Shared config snapshot (for guardrails that need KG patterns) ---
+    this.kgConceptPatterns = [];
 
     // --- Populated by GuardrailAgent ---
     this.finalResponse = null;
@@ -59,7 +65,13 @@ class AgentContext {
       falseConfirmation: false,
       prematureConfirmation: false,
       stateReveal: false,
+      elementNaming: false,
+      didacticExplanation: false,
+      datasetStyle: false,
     };
+    this.guardrailPath = null;            // e.g. "primary_ok", "surgical_ok", "llm_retry_ok"
+    this.guardrailLlmRetries = 0;         // number of LLM retries (0 or 1 with new pipeline)
+    this.guardrailSurgicalFixes = [];     // ids of surgical fixes that applied
 
     // --- Timing ---
     this.timing = {

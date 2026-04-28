@@ -2,7 +2,7 @@
 -- Replaces MongoDB Ejercicio model (embedded tutorContext → separate table)
 
 CREATE TABLE IF NOT EXISTS ejercicios (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id          VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     titulo      VARCHAR(500) NOT NULL,
     enunciado   TEXT NOT NULL,
     imagen      VARCHAR(1000) DEFAULT '',
@@ -20,8 +20,8 @@ CREATE INDEX IF NOT EXISTS idx_ejercicios_nivel ON ejercicios(nivel);
 
 -- TutorContext: 1:1 with ejercicios (was embedded sub-document)
 CREATE TABLE IF NOT EXISTS tutor_contexts (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    ejercicio_id         UUID NOT NULL UNIQUE REFERENCES ejercicios(id) ON DELETE CASCADE,
+    id                   VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    ejercicio_id         VARCHAR(50) NOT NULL UNIQUE REFERENCES ejercicios(id) ON DELETE CASCADE,
     objetivo             TEXT DEFAULT '',
     netlist              TEXT DEFAULT '',
     modo_experto         TEXT DEFAULT '',

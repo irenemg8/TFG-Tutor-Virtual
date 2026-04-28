@@ -1,29 +1,31 @@
 "use strict";
 
 const AgentInterface = require("./base/AgentInterface");
+const trace = require("../../infrastructure/events/pipelineDebugLogger");
 
 /**
- * GuardrailAgent: Validates LLM responses against educational safety rules.
- * Checks for solution leak, false confirmation, premature confirmation,
- * state reveal, and element naming violations. Retries with stronger
- * instructions when violations are detected.
+ * GuardrailAgent (refactored): delegates to the new GuardrailPipeline.
  *
- * Extracted from ragMiddleware.js lines 585-703.
+ * Old behavior (replaced): sequential checks with up to 11 LLM retries.
+ * New behavior: parallel checks → surgical-first → at most ONE consolidated
+ * LLM retry → final surgical fallback. Enforces time budget.
+ *
+ * Worst case LLM calls: 2 (primary from tutorAgent + 1 consolidated retry here).
  */
 class GuardrailAgent extends AgentInterface {
   /**
    * @param {object} deps
-   * @param {import('../ports/services/ILlmService')} deps.llmService
-   * @param {object} deps.guardrails - The guardrails module (guardrails.js)
-   * @param {Function} deps.buildSystemPrompt
-   * @param {object} deps.config
+   * @param {import('../services/GuardrailPipeline')} deps.guardrailPipeline
    */
   constructor(deps) {
     super("guardrailAgent");
-    this.llmService = deps.llmService;
-    this.guardrails = deps.guardrails;
-    this.buildSystemPrompt = deps.buildSystemPrompt;
-    this.config = deps.config;
+    if (!deps || !deps.guardrailPipeline) {
+      throw new Error("GuardrailAgent requires a guardrailPipeline dependency");
+    }
+    this.pipeline = deps.guardrailPipeline;
+    // Static, loaded once at boot. Passed to each guardrail ctx so StateReveal
+    // adapter can flag KG-derived concept terms.
+    this.kgConceptPatterns = deps.kgConceptPatterns || [];
   }
 
   canSkip(context) {
@@ -31,107 +33,54 @@ class GuardrailAgent extends AgentInterface {
   }
 
   async execute(context) {
-    let response = context.llmResponse;
-    const g = this.guardrails;
-    const triggered = {
-      solutionLeak: false,
-      falseConfirmation: false,
-      prematureConfirmation: false,
-      stateReveal: false,
+    if (!context.llmResponse) {
+      context.finalResponse = "";
+      return;
+    }
+
+    const guardrailCtx = {
+      classification: context.classification && context.classification.type,
+      correctAnswer: context.correctAnswer,
+      evaluableElements: context.evaluableElements,
+      kgConceptPatterns: this.kgConceptPatterns,
+      lang: context.lang,
+      mentionedElements: context.classification && context.classification.resistances,
+      // CompleteSolutionGuardrail needs proposed/negated separately to detect
+      // partial-wrong answers (e.g. "R4 no contribuye" when R4 IS correct).
+      proposed: (context.classification && context.classification.proposed) || [],
+      negated: (context.classification && context.classification.negated) || [],
     };
 
-    // 1. Solution Leak Check
-    if (g.checkSolutionLeak(response, context.correctAnswer)) {
-      triggered.solutionLeak = true;
-      response = await this._retry(
-        context,
-        g.getStrongerInstruction(context.lang)
-      );
-    }
-
-    // 2. False Confirmation Check
-    if (
-      g.checkFalseConfirmation(response, context.classification?.type)
-    ) {
-      triggered.falseConfirmation = true;
-      response = await this._retry(
-        context,
-        g.getFalseConfirmationInstruction(context.lang)
-      );
-    }
-
-    // 3. Premature Confirmation Check
-    if (
-      g.checkPrematureConfirmation(response, context.classification?.type)
-    ) {
-      triggered.prematureConfirmation = true;
-      response = await this._retry(
-        context,
-        g.getPartialConfirmationInstruction(
-          context.lang,
-          context.classification?.type
-        )
-      );
-    }
-
-    // 4. State Reveal Check — generic over evaluableElements + KG-derived
-    // concept patterns. If LLM retries can't fix it, surgical redaction.
-    var stateCheck = g.checkStateReveal(
-      response,
-      context.evaluableElements,
-      context.kgConceptPatterns || []
-    );
-    for (var stateAttempt = 1; stateAttempt <= 2 && stateCheck.revealed; stateAttempt++) {
-      triggered.stateReveal = true;
-      response = await this._retry(
-        context,
-        g.getStateRevealInstruction(context.lang)
-      );
-      stateCheck = g.checkStateReveal(
-        response,
-        context.evaluableElements,
-        context.kgConceptPatterns || []
-      );
-    }
-    if (stateCheck.revealed && typeof g.redactStateRevealSentence === "function") {
-      var redact = g.redactStateRevealSentence(
-        response,
-        context.evaluableElements,
-        stateCheck.pattern,
-        context.lang
-      );
-      if (redact.redacted) {
-        triggered.stateReveal = true;
-        response = redact.text;
-      }
-    }
-
-    context.finalResponse = response;
-    context.guardrailsTriggered = triggered;
-  }
-
-  async _retry(context, additionalInstruction) {
-    const basePrompt = this.buildSystemPrompt(
-      context.ejercicio,
-      context.lang
-    );
-    const augmented =
-      basePrompt +
-      "\n\n" +
-      additionalInstruction +
-      "\n\n" +
-      (context.ragResult.augmentation || "");
-
-    const messages = [
-      { role: "system", content: augmented },
-      ...context.history,
-    ];
-
-    return this.llmService.chatCompletion(messages, {
-      temperature: this.config.OLLAMA_TEMPERATURE,
-      numPredict: this.config.OLLAMA_NUM_PREDICT,
-      numCtx: this.config.OLLAMA_NUM_CTX,
+    const result = await this.pipeline.validate(context.llmResponse, guardrailCtx, {
+      messages: context.llmMessages,
+      reqId: context.reqId || "",
+      startMs: context.timing.pipelineStartMs,
     });
+
+    context.finalResponse = result.response;
+    context.guardrailPath = result.path;
+    context.guardrailLlmRetries = result.llmRetryCount;
+    context.guardrailSurgicalFixes = result.surgicalFixesApplied || [];
+
+    // Map pipeline violations/fixes to the legacy triggered-flags object so that
+    // PersistenceAgent keeps writing the SAME Interaccion metadata shape. This
+    // preserves the contract that other parts of the codebase read.
+    const fixed = new Set(result.surgicalFixesApplied || []);
+    const residual = (result.residualViolations || []).map(v => v.id);
+    const anyFor = (id) => fixed.has(id) || residual.indexOf(id) >= 0;
+
+    context.guardrailsTriggered = {
+      solutionLeak: anyFor("solution_leak"),
+      falseConfirmation: anyFor("false_confirmation"),
+      prematureConfirmation: anyFor("premature_confirmation"),
+      completeSolution: anyFor("complete_solution"),
+      stateReveal: anyFor("state_reveal"),
+      elementNaming: anyFor("element_naming"),
+      didacticExplanation: anyFor("didactic_explanation"),
+      datasetStyle: anyFor("dataset_style"),
+    };
+
+    trace.logGuardrail && trace.logGuardrail(context.guardrailsTriggered, context.finalResponse);
   }
 }
 

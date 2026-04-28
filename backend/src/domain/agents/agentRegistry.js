@@ -10,22 +10,19 @@ const PersistenceAgent = require("./persistenceAgent");
 
 /**
  * Creates and returns the default agent registry.
- * All agents receive their dependencies via constructor injection.
+ * Dependencies are injected via constructor. The GuardrailAgent now uses
+ * the new GuardrailPipeline (parallel, surgical-first, single consolidated
+ * retry) instead of the old sequential LLM retry loop.
  *
- * To add a new agent:
- * 1. Create the agent class extending AgentInterface
- * 2. Add it here with its dependencies
- * 3. Add the corresponding stage call in orchestrator.js
- *
- * @param {object} deps - All injectable dependencies
+ * @param {object} deps
  * @param {object} deps.ejercicioRepo
  * @param {object} deps.interaccionRepo
  * @param {object} deps.messageRepo
- * @param {object} deps.llmService
+ * @param {object} deps.llmService                  — ILlmService adapter
+ * @param {object} deps.guardrailPipeline           — GuardrailPipeline instance
  * @param {Function} deps.classifyQuery
  * @param {Function} deps.runFullPipeline
- * @param {object} deps.guardrails
- * @param {object} deps.securityService - ISecurityService adapter
+ * @param {object} deps.securityService
  * @param {Function} deps.buildSystemPrompt
  * @param {Function} [deps.logInteraction]
  * @param {Function} [deps.emitEvent]
@@ -46,6 +43,7 @@ function createAgentRegistry(deps) {
 
     classifier: new ClassifierAgent({
       classifyQuery: deps.classifyQuery,
+      debugLogger: deps.debugLogger,
     }),
 
     retrieval: new RetrievalAgent({
@@ -56,13 +54,12 @@ function createAgentRegistry(deps) {
       llmService: deps.llmService,
       buildSystemPrompt: deps.buildSystemPrompt,
       config: deps.config,
+      debugLogger: deps.debugLogger,
     }),
 
     guardrail: new GuardrailAgent({
-      llmService: deps.llmService,
-      guardrails: deps.guardrails,
-      buildSystemPrompt: deps.buildSystemPrompt,
-      config: deps.config,
+      guardrailPipeline: deps.guardrailPipeline,
+      kgConceptPatterns: deps.kgConceptPatterns || [],
     }),
 
     persistence: new PersistenceAgent({

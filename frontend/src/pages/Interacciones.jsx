@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { TrashIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { getCurrentUser } from "../services/auth";
 import { api } from "../services/api";
+import MessageRenderer from "../components/MessageRenderer";
 
 const FIN_TOKEN = "<FIN_EJERCICIO>";
 
@@ -959,7 +960,9 @@ export default function Interacciones() {
             {currentChatMessages.length > 0 ? (
               currentChatMessages.map((m, i) => (
                 <div key={i} className={`msg ${m.role === "user" ? "msg-user" : "msg-assistant"}`}>
-                  {m.content}
+                  {m.role === "user"
+                    ? m.content
+                    : <MessageRenderer content={m.content} />}
                 </div>
               ))
             ) : (

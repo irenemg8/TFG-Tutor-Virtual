@@ -3308,3 +3308,40 @@ input:focus, textarea:focus, select:focus {
   .split-panel:not(.cursor-not-allowed):hover { width: 55%; }
   .split-panel:not(.cursor-not-allowed):hover + .split-panel { width: 45%; }
 }
+/* ============================================================================
+ * Markdown + KaTeX (chat assistant) — añadido 2026-04-27
+ * Antes el chat renderizaba <div>{m.content}</div> plano y mostraba LaTeX
+ * literal "\( V(N2,0) \)". Ahora pasa por MessageRenderer (react-markdown +
+ * remark-math + rehype-katex). Estos estilos resetean el pre-wrap heredado
+ * de .msg para que los párrafos markdown no tengan doble espaciado.
+ * ========================================================================== */
+.msg .md { white-space: normal; }
+.msg .md p { margin: 0 0 0.5rem 0; }
+.msg .md p:last-child { margin-bottom: 0; }
+.msg .md ul, .msg .md ol { margin: 0.4rem 0 0.4rem 1.2rem; padding: 0; }
+.msg .md li { margin: 0.15rem 0; }
+.msg .md strong { font-weight: 600; }
+.msg .md code {
+  background: rgba(0,0,0,0.06);
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.msg .md pre {
+  background: rgba(0,0,0,0.06);
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.45rem;
+  overflow-x: auto;
+  margin: 0.4rem 0;
+}
+.msg .md pre code { background: none; padding: 0; }
+.msg .md blockquote {
+  border-left: 3px solid rgba(0,0,0,0.18);
+  padding-left: 0.7rem;
+  margin: 0.4rem 0;
+  color: var(--color-text-muted, #555);
+}
+/* KaTeX inline alineado con el texto base; display más generoso */
+.msg .md .katex { font-size: 1em; }
+.msg .md .katex-display { margin: 0.4rem 0; overflow-x: auto; overflow-y: hidden; }

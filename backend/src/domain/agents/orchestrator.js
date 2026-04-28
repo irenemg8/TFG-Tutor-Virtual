@@ -46,6 +46,17 @@ class TutoringOrchestrator {
   async process(request) {
     const ctx = new AgentContext(request);
 
+    // P1c — Budget split per stage. Without this, if retrieval is slow (BM25 +
+    // semantic + KG) it eats the whole budget and tutorAgent gets <0ms left,
+    // returning a fallback message. Distribution: retrieval ≤30%, tutor ≤60%,
+    // guardrails ≤10%. Each agent that supports a budget reads its slice; the
+    // ones that don't (retrieval today) just log when they exceed it.
+    if (typeof ctx.budgetMs === "number" && ctx.budgetMs > 0) {
+      ctx.retrievalBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.30));
+      ctx.tutorBudgetMs     = Math.max(5000, Math.floor(ctx.budgetMs * 0.60));
+      ctx.guardrailBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.10));
+    }
+
     try {
       // Stage 1: Load context
       this.emitEvent("agent_start", "context", { agent: "contextAgent" });
@@ -91,14 +102,27 @@ class TutoringOrchestrator {
       // Stage 3: Retrieve
       this.emitEvent("agent_start", "retrieve", {
         agent: "retrievalAgent",
+        budgetMs: ctx.retrievalBudgetMs,
       });
+      const retrievalStart = Date.now();
       if (!this.agents.retrieval.canSkip(ctx)) {
         await this.agents.retrieval.execute(ctx);
+      }
+      const retrievalElapsed = Date.now() - retrievalStart;
+      const retrievalOverBudget =
+        ctx.retrievalBudgetMs && retrievalElapsed > ctx.retrievalBudgetMs;
+      if (retrievalOverBudget) {
+        console.warn(
+          "[Orchestrator] retrieval exceeded budget: elapsed=" + retrievalElapsed +
+          "ms slice=" + ctx.retrievalBudgetMs + "ms reqId=" + (ctx.reqId || "")
+        );
       }
       this.emitEvent("agent_end", "retrieve", {
         agent: "retrievalAgent",
         decision: ctx.ragResult?.decision,
         sourcesCount: ctx.ragResult?.sources?.length || 0,
+        elapsedMs: retrievalElapsed,
+        overBudget: retrievalOverBudget || false,
       });
 
       // Check for deterministic finish
@@ -140,8 +164,30 @@ class TutoringOrchestrator {
     } catch (error) {
       console.error("[Orchestrator] Pipeline error:", error.message);
       ctx.error = error;
+      // Always set a friendly fallback so the SSE handler has something to
+      // send. The previous behavior left ctx.finalResponse empty on LLM
+      // timeouts, which made the chat stay blank with no signal to the user.
+      if (!ctx.finalResponse) {
+        ctx.finalResponse = this._buildFallbackMessage(ctx);
+        ctx.fallbackUsed = true;
+      }
       return ctx;
     }
+  }
+
+  /**
+   * Friendly message shown when the pipeline fails (typically LLM timeout
+   * against the UPV Ollama server). Localized to the conversation language.
+   */
+  _buildFallbackMessage(ctx) {
+    const lang = ctx && ctx.lang;
+    if (lang === "en") {
+      return "Sorry, the tutor is taking too long to respond right now. Could you rephrase your message or try again in a moment?";
+    }
+    if (lang === "val") {
+      return "Disculpa, el tutor està tardant massa a respondre ara mateix. Pots reformular el teu missatge o tornar-ho a provar d'ací a un moment?";
+    }
+    return "Disculpa, el tutor está tardando demasiado en responder ahora mismo. ¿Puedes reformular tu mensaje o intentarlo de nuevo en un momento?";
   }
 
   /**
@@ -149,12 +195,16 @@ class TutoringOrchestrator {
    * We ONLY finish when the student has shown good reasoning — never on
    * "correct_no_reasoning" or "correct_wrong_reasoning" alone, even after
    * many turns. This enforces "justify before validating" pedagogically.
+   *
+   * Threshold raised to 2 prior correct turns (was 1) so a single
+   * misclassification of "correct_good_reasoning" can no longer close the
+   * exercise prematurely.
    */
   _shouldFinishDeterministically(ctx) {
-    const cls = ctx.classification?.type;
-    const { prevCorrectTurns } = ctx.loopState;
+    const cls = ctx && ctx.classification && ctx.classification.type;
+    const prevCorrectTurns = (ctx && ctx.loopState && ctx.loopState.prevCorrectTurns) || 0;
 
-    return cls === "correct_good_reasoning" && prevCorrectTurns >= 1;
+    return cls === "correct_good_reasoning" && prevCorrectTurns >= 2;
   }
 
   /**

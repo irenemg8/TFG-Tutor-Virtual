@@ -44,6 +44,24 @@ class Usuario {
   hasRole(role) {
     return this.rol === role;
   }
+
+  /** Legacy Mongo JSON shape for frontend compat. */
+  toJSON() {
+    return {
+      _id: this.id,
+      id: this.id,
+      upvLogin: this.upvLogin,
+      email: this.email,
+      nombre: this.nombre,
+      apellidos: this.apellidos,
+      dni: this.dni,
+      grupos: this.grupos,
+      rol: this.rol,
+      lastLoginAt: this.lastLoginAt,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+    };
+  }
 }
 
 module.exports = Usuario;

@@ -4,7 +4,13 @@
 const express = require("express");
 const axios = require("axios");
 const https = require("https");
-const mongoose = require("mongoose");
+// ID validation: accepts MongoDB ObjectId (24 hex chars) or UUID (36 chars with dashes).
+// Post-migration, IDs stored in Postgres preserve the original ObjectId format for
+// historical data and use UUIDs for new records.
+function isValidId(v) {
+  if (typeof v !== "string") return false;
+  return /^[a-f0-9]{24}$/i.test(v) || /^[0-9a-f-]{36}$/i.test(v);
+}
 const fs = require("fs");
 const path = require("path");
 const config = require("../../../infrastructure/llm/config");
@@ -16,9 +22,20 @@ const { logInteraction } = require("../../../infrastructure/llm/logger");
 const { setRequestId, emitEvent } = require("../../../infrastructure/events/ragEventBus");
 const { buildTutorSystemPrompt } = require("../../../domain/services/promptBuilder");
 const { resolveLanguage, getFinishMessages, getElementNamingInstruction, getRandomIntermediatePhrase, getAllPatterns, frustrationPatterns: frustrationDict } = require("../../../domain/services/languageManager");
-const Ejercicio = require("../../../infrastructure/persistence/mongodb/models/ejercicio");
-const Interaccion = require("../../../infrastructure/persistence/mongodb/models/interaccion");
+const container = require("../../../container");
+const Message = require("../../../domain/entities/Message");
 const HeuristicSecurityAdapter = require("../../../infrastructure/security/HeuristicSecurityAdapter");
+const trace = require("../../../infrastructure/events/pipelineDebugLogger");
+
+// Repos del container (para el path legacy; si container no está listo, fallthrough)
+function repos() {
+  if (!container._initialized) return null;
+  return {
+    ejercicioRepo: container.ejercicioRepo,
+    interaccionRepo: container.interaccionRepo,
+    messageRepo: container.messageRepo,
+  };
+}
 
 const securityService = new HeuristicSecurityAdapter({
   logger: function (event, payload) {
@@ -181,78 +198,36 @@ async function callOllama(messages) {
   return (response.data.message && response.data.message.content) || "";
 }
 
-// Count how many previous turns had a "correct" classification (for loop detection)
-// Prevents the tutor from endlessly asking for better reasoning when the student has the right answer
+// Count previous turns classified as "correct-ish" (for loop detection).
 async function countPreviousCorrectTurns(interaccionId) {
-  var doc = await Interaccion.findById(interaccionId).select({ conversacion: 1 }).lean();
-  if (!doc || !Array.isArray(doc.conversacion)) return 0;
-  var count = 0;
-  var correctTypes = ["correct_no_reasoning", "correct_wrong_reasoning", "correct_good_reasoning", "partial_correct"];
-  for (var i = 0; i < doc.conversacion.length; i++) {
-    var msg = doc.conversacion[i];
-    if (msg.role === "assistant" && msg.metadata && msg.metadata.classification) {
-      for (var j = 0; j < correctTypes.length; j++) {
-        if (msg.metadata.classification === correctTypes[j]) {
-          count++;
-          break;
-        }
-      }
-    }
+  const r = repos(); if (!r) return 0;
+  const all = await r.messageRepo.getAllMessages(interaccionId);
+  const correctTypes = ["correct_no_reasoning", "correct_wrong_reasoning", "correct_good_reasoning", "partial_correct"];
+  let count = 0;
+  for (const m of all) {
+    const c = m.metadata?.classification || m.classification;
+    if (m.role === "assistant" && c && correctTypes.includes(c)) count++;
   }
   return count;
 }
 
-// Count total assistant turns in the conversation
 async function countTotalAssistantTurns(interaccionId) {
-  var doc = await Interaccion.findById(interaccionId).select({ conversacion: 1 }).lean();
-  if (!doc || !Array.isArray(doc.conversacion)) return 0;
-  var count = 0;
-  for (var i = 0; i < doc.conversacion.length; i++) {
-    if (doc.conversacion[i].role === "assistant") count++;
-  }
-  return count;
+  const r = repos(); if (!r) return 0;
+  return r.messageRepo.countAssistantMessages(interaccionId);
 }
 
-// Count consecutive wrong classifications from the end of conversation
-// Returns how many assistant messages in a row have wrong_answer, wrong_concept, or single_word
 async function countConsecutiveWrongTurns(interaccionId) {
-  var doc = await Interaccion.findById(interaccionId).select({ conversacion: 1 }).lean();
-  if (!doc || !Array.isArray(doc.conversacion)) return 0;
-  var wrongTypes = ["wrong_answer", "wrong_concept", "single_word"];
-  var count = 0;
-  for (var i = doc.conversacion.length - 1; i >= 0; i--) {
-    var msg = doc.conversacion[i];
-    if (msg.role !== "assistant") continue;
-    if (!msg.metadata || !msg.metadata.classification) break;
-    var isWrong = false;
-    for (var j = 0; j < wrongTypes.length; j++) {
-      if (msg.metadata.classification === wrongTypes[j]) {
-        isWrong = true;
-        break;
-      }
-    }
-    if (!isWrong) break;
-    count++;
-  }
-  return count;
+  const r = repos(); if (!r) return 0;
+  return r.messageRepo.countConsecutiveFromEnd(
+    interaccionId,
+    ["wrong_answer", "wrong_concept", "single_word"]
+  );
 }
 
-// Load last N messages from conversation history
 async function loadHistory(interaccionId) {
-  const doc = await Interaccion.findById(interaccionId)
-    .select({ conversacion: 1 })
-    .slice("conversacion", -config.HISTORY_MAX_MESSAGES)
-    .lean();
-
-  if (doc == null || !Array.isArray(doc.conversacion)) {
-    return [];
-  }
-
-  const messages = [];
-  for (let i = 0; i < doc.conversacion.length; i++) {
-    messages.push({ role: doc.conversacion[i].role, content: doc.conversacion[i].content });
-  }
-  return messages;
+  const r = repos(); if (!r) return [];
+  const msgs = await r.messageRepo.getLastMessages(interaccionId, config.HISTORY_MAX_MESSAGES);
+  return msgs.map((m) => ({ role: m.role, content: m.content }));
 }
 
 // Build a short hint reminding the LLM what its last question was,
@@ -285,19 +260,10 @@ function buildConversationProgressHint(history) {
 // Uses a sliding window: compares ALL pairs among the last 4 assistant questions.
 // This catches alternating patterns (A-B-A-B) that a 2-message comparison would miss.
 async function detectTutorRepetition(interaccionId) {
-  var doc = await Interaccion.findById(interaccionId)
-    .select({ conversacion: { $slice: -12 } })
-    .lean();
-  if (!doc || !Array.isArray(doc.conversacion)) return { repeating: false };
-
-  // Collect the last 4 assistant messages
-  var assistantMessages = [];
-  for (var i = doc.conversacion.length - 1; i >= 0 && assistantMessages.length < 4; i--) {
-    if (doc.conversacion[i].role === "assistant") {
-      assistantMessages.push(doc.conversacion[i].content || "");
-    }
-  }
-  if (assistantMessages.length < 2) return { repeating: false };
+  const r = repos(); if (!r) return { repeating: false };
+  const lastAssistant = await r.messageRepo.getLastAssistantMessages(interaccionId, 4);
+  if (lastAssistant.length < 2) return { repeating: false };
+  const assistantMessages = lastAssistant.map((m) => m.content || "");
 
   // Extract the last question from each assistant message
   function extractLastQuestion(text) {
@@ -357,16 +323,31 @@ function endSSE(res, hb) {
   res.end();
 }
 
+// Helper: ALWAYS-ON log for when RAG middleware falls through. This is critical for debugging
+// and should never be gated behind DEBUG_PIPELINE.
+function logFallthrough(reason, details) {
+  console.log("[RAG_SKIP] ⛔ reason=" + reason + (details ? " " + JSON.stringify(details) : ""));
+}
+
 // Middleware: intercepts POST /chat/stream
 router.post("/chat/stream", async function (req, res, next) {
   // Skip if RAG is disabled or not initialized
   if (!config.RAG_ENABLED || !ragReady) {
+    logFallthrough("rag_disabled_or_not_ready", { RAG_ENABLED: config.RAG_ENABLED, ragReady: ragReady });
+    trace.traceRagGate("", "rag_disabled_or_not_ready", { RAG_ENABLED: config.RAG_ENABLED, ragReady: ragReady });
     return next();
   }
 
   const startTime = Date.now();
   requestCounter++;
   setRequestId("req_" + requestCounter + "_" + Date.now());
+
+  var reqId = trace.traceRequestStart("ragMiddleware", {
+    userId: req.userId,
+    exerciseId: (req.body || {}).exerciseId,
+    interaccionId: (req.body || {}).interaccionId,
+    userMessage: (req.body || {}).userMessage,
+  });
 
   try {
     // 1. Extract and validate inputs
@@ -375,21 +356,47 @@ router.post("/chat/stream", async function (req, res, next) {
     var userMessage = req.body.userMessage;
     var interaccionId = req.body.interaccionId;
 
-    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return next();
-    if (!exerciseId || !mongoose.Types.ObjectId.isValid(exerciseId)) return next();
-    if (typeof userMessage !== "string" || userMessage.trim() === "") return next();
+    if (!userId || !isValidId(userId)) {
+      logFallthrough("invalid_userId", { userId: userId });
+      trace.traceRagGate(reqId, "invalid_userId", { userId: userId });
+      return next();
+    }
+    if (!exerciseId || !isValidId(exerciseId)) {
+      logFallthrough("invalid_exerciseId", { exerciseId: exerciseId });
+      trace.traceRagGate(reqId, "invalid_exerciseId", { exerciseId: exerciseId });
+      return next();
+    }
+    if (typeof userMessage !== "string" || userMessage.trim() === "") {
+      logFallthrough("empty_userMessage");
+      trace.traceRagGate(reqId, "empty_userMessage");
+      return next();
+    }
 
     emitEvent("request_start", "start", { userId: userId, exerciseId: exerciseId, userMessage: userMessage, interaccionId: interaccionId });
 
     // 2. Load exercise from MongoDB
-    var ejercicio = await Ejercicio.findById(exerciseId).lean();
-    if (ejercicio == null) return next();
+    var _r = repos();
+    if (!_r) return next();
+    var ejercicio = await _r.ejercicioRepo.findById(exerciseId);
+    if (ejercicio == null) {
+      logFallthrough("exercise_not_found", { exerciseId: exerciseId });
+      trace.traceRagGate(reqId, "exercise_not_found", { exerciseId: exerciseId });
+      return next();
+    }
 
     var exerciseNum = getExerciseNum(ejercicio);
-    if (exerciseNum == null) return next();
+    if (exerciseNum == null) {
+      logFallthrough("no_exercise_number_in_title", { titulo: ejercicio.titulo });
+      trace.traceRagGate(reqId, "no_exercise_number_in_title", { titulo: ejercicio.titulo });
+      return next();
+    }
 
     var correctAnswer = getCorrectAnswer(ejercicio);
-    if (correctAnswer.length === 0) return next();
+    if (correctAnswer.length === 0) {
+      logFallthrough("no_correct_answer", { exerciseNum: exerciseNum, hasTutorContext: !!ejercicio.tutorContext, respuestaCorrecta: ejercicio.tutorContext && ejercicio.tutorContext.respuestaCorrecta });
+      trace.traceRagGate(reqId, "no_correct_answer", { exerciseNum: exerciseNum, tutorContext: !!ejercicio.tutorContext });
+      return next();
+    }
 
     emitEvent("exercise_loaded", "end", { exerciseNum: exerciseNum, titulo: ejercicio.titulo, correctAnswer: correctAnswer, canonicalExercise: canonicalExercise[exerciseNum] || exerciseNum, datasetFile: config.EXERCISE_DATASET_MAP[exerciseNum] || "unknown" });
 
@@ -401,10 +408,20 @@ router.post("/chat/stream", async function (req, res, next) {
 
     // Resolve language early (needed for intermediate feedback phrases in pipeline)
     var earlyLang = "es";
-    if (interaccionId && mongoose.Types.ObjectId.isValid(interaccionId)) {
+    if (interaccionId && isValidId(interaccionId)) {
       var earlyHistory = await loadHistory(interaccionId);
       earlyLang = resolveLanguage(earlyHistory);
     }
+
+    trace.traceRagAccepted(reqId, {
+      exerciseNum: exerciseNum,
+      correctAnswer: correctAnswer,
+      evaluableElements: evaluableElements,
+      lang: earlyLang,
+    });
+    // Phase-0 baseline: declare a theoretical budget (not enforced yet; Phase 3 will enforce).
+    // Captures what the refactored pipeline will target — lets us measure overshoot today.
+    trace.traceBudgetSet(reqId, 45000);
 
     // 2b. Input guardrail: block prompt injection / off-topic BEFORE the LLM
     var securityResult = securityService.analyzeInput(userMessage.trim(), {
@@ -412,6 +429,7 @@ router.post("/chat/stream", async function (req, res, next) {
       ejercicio: ejercicio,
       evaluableElements: evaluableElements,
     });
+    trace.traceSecurity(reqId, securityResult);
     if (!securityResult.safe) {
       emitEvent("security_block", "end", {
         category: securityResult.category,
@@ -435,43 +453,30 @@ router.post("/chat/stream", async function (req, res, next) {
       try {
         var iidBlock = interaccionId || null;
         if (iidBlock) {
-          var existsB = await Interaccion.exists({ _id: iidBlock, usuario_id: userId });
+          var existsB = await _r.interaccionRepo.existsForUser(iidBlock, userId);
           if (!existsB) iidBlock = null;
         }
         if (iidBlock == null) {
-          var createdB = await Interaccion.create({
-            usuario_id: userId,
-            ejercicio_id: exerciseId,
-            inicio: new Date(),
-            fin: new Date(),
-            conversacion: [],
+          var createdB = await _r.interaccionRepo.create({
+            usuarioId: userId,
+            ejercicioId: exerciseId,
           });
-          iidBlock = createdB._id.toString();
+          iidBlock = createdB.id;
           sseSend(res, { interaccionId: iidBlock });
         }
 
-        await Interaccion.updateOne(
-          { _id: iidBlock },
-          {
-            $push: {
-              conversacion: {
-                $each: [
-                  { role: "user", content: userMessage.trim() },
-                  {
-                    role: "assistant",
-                    content: securityResult.redirectMessage,
-                    metadata: {
-                      blockedByInputGuardrail: true,
-                      category: securityResult.category,
-                      matchedPattern: securityResult.matchedPattern,
-                    },
-                  },
-                ],
-              },
-              $set: { fin: new Date() },
-            }
-          }
-        );
+        await _r.messageRepo.appendMessage(iidBlock, new Message({
+          interaccionId: iidBlock, role: "user", content: userMessage.trim(),
+        }));
+        await _r.messageRepo.appendMessage(iidBlock, new Message({
+          interaccionId: iidBlock, role: "assistant", content: securityResult.redirectMessage,
+          metadata: {
+            blockedByInputGuardrail: true,
+            category: securityResult.category,
+            matchedPattern: securityResult.matchedPattern,
+          },
+        }));
+        await _r.interaccionRepo.updateFin(iidBlock, new Date());
 
         sseSend(res, { chunk: securityResult.redirectMessage });
         endSSE(res, hbBlock);
@@ -499,8 +504,19 @@ router.post("/chat/stream", async function (req, res, next) {
     var pipelineTime = Date.now() - pipelineStart;
     emitEvent("pipeline_end", "end", { decision: ragResult.decision, classification: ragResult.classification, augmentationLength: (ragResult.augmentation || "").length, sourcesCount: (ragResult.sources || []).length, pipelineTimeMs: pipelineTime });
 
+    trace.traceClassify(reqId, {
+      type: ragResult.classification,
+      decision: ragResult.decision,
+      proposed: ragResult.proposed,
+      negated: ragResult.negated,
+      concepts: ragResult.mentionedElements,
+      hasReasoning: ragResult.classification === "correct_good_reasoning" || ragResult.classification === "correct_wrong_reasoning",
+    });
+
     // If no RAG needed (greeting, etc.), fall through to original handler
     if (ragResult.decision === "no_rag") {
+      logFallthrough("no_rag_decision", { classification: ragResult.classification, pipelineMs: pipelineTime });
+      trace.traceRagGate(reqId, "no_rag_decision", { classification: ragResult.classification, pipelineMs: pipelineTime });
       emitEvent("no_rag", "end", { reason: "greeting or non-RAG classification" });
       emitEvent("request_end", "end", { totalTimeMs: Date.now() - startTime });
       return next();
@@ -527,37 +543,29 @@ router.post("/chat/stream", async function (req, res, next) {
       // 5. Load or create Interaccion
       var iid = interaccionId || null;
       if (iid) {
-        // Verify the interaccion exists AND belongs to the authenticated user
-        var exists = await Interaccion.exists({ _id: iid, usuario_id: userId });
+        var exists = await _r.interaccionRepo.existsForUser(iid, userId);
         if (!exists) iid = null;
       }
       if (iid == null) {
-        var created = await Interaccion.create({
-          usuario_id: userId,
-          ejercicio_id: exerciseId,
-          inicio: new Date(),
-          fin: new Date(),
-          conversacion: [],
+        var created = await _r.interaccionRepo.create({
+          usuarioId: userId, ejercicioId: exerciseId,
         });
-        iid = created._id.toString();
+        iid = created.id;
         sseSend(res, { interaccionId: iid });
       }
 
       // 6. Save user message (with student response time if there is a previous assistant message)
       var text = userMessage.trim();
       var studentResponseMs = null;
-      var lastDoc = await Interaccion.findById(iid).select({ conversacion: { $slice: -1 } }).lean();
-      if (lastDoc && lastDoc.conversacion && lastDoc.conversacion.length > 0) {
-        var lastMsg = lastDoc.conversacion[lastDoc.conversacion.length - 1];
-        if (lastMsg.role === "assistant" && lastMsg.timestamp) {
-          studentResponseMs = Date.now() - new Date(lastMsg.timestamp).getTime();
-        }
+      var lastMsg = await _r.messageRepo.getLastMessage(iid);
+      if (lastMsg && lastMsg.role === "assistant" && lastMsg.timestamp) {
+        studentResponseMs = Date.now() - new Date(lastMsg.timestamp).getTime();
       }
-      var userMetadata = studentResponseMs != null ? { metadata: { studentResponseMs: studentResponseMs } } : {};
-      await Interaccion.updateOne(
-        { _id: iid },
-        { $push: { conversacion: Object.assign({ role: "user", content: text }, userMetadata) }, $set: { fin: new Date() } }
-      );
+      await _r.messageRepo.appendMessage(iid, new Message({
+        interaccionId: iid, role: "user", content: text,
+        metadata: studentResponseMs != null ? { studentResponseMs } : null,
+      }));
+      await _r.interaccionRepo.updateFin(iid, new Date());
 
       // 7. Deterministic finish: correct answer → check if we can finish directly
       var isCorrect = ragResult.classification === "correct_good_reasoning"
@@ -587,6 +595,16 @@ router.post("/chat/stream", async function (req, res, next) {
       var totalTurns = await countTotalAssistantTurns(iid);
       var stuckHint = "";
 
+      trace.traceLoopState(reqId, {
+        prevCorrectTurns: prevCorrectCount,
+        wrongStreak: wrongStreak,
+        totalTurns: totalTurns,
+        repetition: repetitionInfo.repeating,
+        frustration: detectFrustration(text),
+        demandJustification: demandJustification,
+        stuckHint: wrongStreak >= config.MAX_WRONG_STREAK || totalTurns >= config.MAX_TOTAL_TURNS,
+      });
+
       if (wrongStreak >= config.MAX_WRONG_STREAK || totalTurns >= config.MAX_TOTAL_TURNS) {
         console.log("[RAG] Global loop-break: wrongStreak=" + wrongStreak + " totalTurns=" + totalTurns);
         stuckHint = "[STUDENT IS STUCK]\n"
@@ -607,19 +625,26 @@ router.post("/chat/stream", async function (req, res, next) {
 
         if (ragResult.classification === "correct_good_reasoning") {
           // Student gave correct answer and has been reasoning (or gave reasoning now) → finish
+          trace.traceDeterministicFinish(reqId, {
+            classification: ragResult.classification,
+            prevCorrectTurns: prevCorrectCount || 0,
+            source: "ragMiddleware",
+            responseLen: (getFinishMessages(lang).identifiedResistances + FIN_TOKEN).length,
+          });
           emitEvent("deterministic_finish", "end", { classification: ragResult.classification, historyLength: prevHistory.length, finished: true });
           var finishMsg = getFinishMessages(lang).identifiedResistances + FIN_TOKEN;
           sseSend(res, { chunk: finishMsg });
 
-          await Interaccion.updateOne(
-            { _id: iid },
-            { $push: { conversacion: { role: "assistant", content: finishMsg, metadata: {
+          await _r.messageRepo.appendMessage(iid, new Message({
+            interaccionId: iid, role: "assistant", content: finishMsg,
+            metadata: {
               classification: ragResult.classification,
               decision: "deterministic_finish",
               isCorrectAnswer: true,
               timing: { pipelineMs: pipelineTime, totalMs: Date.now() - startTime },
-            } } }, $set: { fin: new Date() } }
-          );
+            },
+          }));
+          await _r.interaccionRepo.updateFin(iid, new Date());
 
           emitEvent("mongodb_save", "end", { interaccionId: iid, messagesAdded: 2 });
           endSSE(res, hb);
@@ -709,20 +734,25 @@ router.post("/chat/stream", async function (req, res, next) {
       }
 
       // 10. Call Ollama (non-streaming so we can check guardrails before sending to client)
+      trace.traceLlmCall(reqId, "start", { model: config.OLLAMA_MODEL, messagesCount: messages.length, promptLen: augmentedPrompt.length, reason: "primary" });
       emitEvent("ollama_call_start", "start", { model: config.OLLAMA_MODEL, temperature: config.OLLAMA_TEMPERATURE, num_ctx: config.OLLAMA_NUM_CTX, num_predict: config.OLLAMA_NUM_PREDICT, keep_alive: config.OLLAMA_KEEP_ALIVE, messageCount: messages.length, ollamaUrl: config.OLLAMA_CHAT_URL });
       var ollamaStart = Date.now();
       var fullResponse = await callOllama(messages);
+      trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - ollamaStart, responseLen: fullResponse.length, reason: "primary", response: fullResponse });
       emitEvent("ollama_call_end", "end", { responseLength: fullResponse.length, responsePreview: fullResponse, durationMs: Date.now() - ollamaStart, reason: "non-streaming (guardrail check)" });
 
       // 11. Guardrail checks: solution leak + false confirmation
       var guardrailTriggered = false;
 
       // 11a. Check if the LLM revealed the solution (iterative: up to 2 retries)
+      var _tLeak0 = Date.now();
       var leakCheck = checkSolutionLeak(fullResponse, correctAnswer);
+      trace.traceGuardrailCheck(reqId, "solution_leak", { violated: leakCheck.leaked, checkMs: Date.now() - _tLeak0, evidence: leakCheck.details });
       emitEvent("guardrail_leak", "end", { responsePreview: fullResponse, correctAnswer: correctAnswer, result: leakCheck, passed: !leakCheck.leaked, check: "Checks if LLM response reveals the correct answer resistances" });
       for (var leakAttempt = 1; leakAttempt <= 2 && leakCheck.leaked; leakAttempt++) {
         guardrailTriggered = true;
         console.log("[RAG] Guardrail triggered (leak) attempt " + leakAttempt + ": " + leakCheck.details);
+        trace.traceLlmRetry(reqId, "solution_leak", leakAttempt);
         emitEvent("ollama_retry", "start", { reason: "solution_leak", retryCount: leakAttempt });
 
         var strongerPrompt = augmentedPrompt + getStrongerInstruction(lang);
@@ -730,17 +760,22 @@ router.post("/chat/stream", async function (req, res, next) {
         for (let i = 0; i < history.length; i++) {
           retryMessages.push(history[i]);
         }
+        var _tRetry = Date.now();
         fullResponse = await callOllama(retryMessages);
+        trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - _tRetry, responseLen: fullResponse.length, reason: "retry_solution_leak_" + leakAttempt, response: fullResponse });
         emitEvent("ollama_retry", "end", { reason: "solution_leak", responseLength: fullResponse.length });
         leakCheck = checkSolutionLeak(fullResponse, correctAnswer);
       }
 
       // 11b. Check if the LLM confirmed a wrong answer as correct
+      var _tConfirm0 = Date.now();
       var confirmCheck = checkFalseConfirmation(fullResponse, ragResult.classification);
+      trace.traceGuardrailCheck(reqId, "false_confirmation", { violated: confirmCheck.confirmed, checkMs: Date.now() - _tConfirm0, evidence: confirmCheck.details });
       emitEvent("guardrail_false_confirm", "end", { responsePreview: fullResponse, classification: ragResult.classification, result: confirmCheck, passed: !confirmCheck.confirmed, check: "Checks if LLM falsely confirms a wrong answer as correct" });
       if (confirmCheck.confirmed) {
         guardrailTriggered = true;
         console.log("[RAG] Guardrail triggered (false confirm): " + confirmCheck.details);
+        trace.traceLlmRetry(reqId, "false_confirmation", 1);
         emitEvent("ollama_retry", "start", { reason: "false_confirmation", retryCount: 1 });
 
         var confirmPrompt = augmentedPrompt + getFalseConfirmationInstruction(lang);
@@ -748,16 +783,21 @@ router.post("/chat/stream", async function (req, res, next) {
         for (let i = 0; i < history.length; i++) {
           confirmRetry.push(history[i]);
         }
+        var _tCR = Date.now();
         fullResponse = await callOllama(confirmRetry);
+        trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - _tCR, responseLen: fullResponse.length, reason: "retry_false_confirmation", response: fullResponse });
         emitEvent("ollama_retry", "end", { reason: "false_confirmation", responseLength: fullResponse.length });
       }
 
       // 11b2. Check if the LLM prematurely confirms a partially correct answer
+      var _tPrem0 = Date.now();
       var prematureCheck = checkPrematureConfirmation(fullResponse, ragResult.classification);
+      trace.traceGuardrailCheck(reqId, "premature_confirmation", { violated: prematureCheck.premature, checkMs: Date.now() - _tPrem0, evidence: prematureCheck.details });
       emitEvent("guardrail_premature_confirm", "end", { responsePreview: fullResponse, classification: ragResult.classification, result: prematureCheck, passed: !prematureCheck.premature, check: "Checks if LLM prematurely confirms correct answer without reasoning" });
       if (prematureCheck.premature) {
         guardrailTriggered = true;
         console.log("[RAG] Guardrail triggered (premature confirm): " + prematureCheck.details);
+        trace.traceLlmRetry(reqId, "premature_confirmation", 1);
         emitEvent("ollama_retry", "start", { reason: "premature_confirmation", retryCount: 1 });
 
         var partialPrompt = augmentedPrompt + getPartialConfirmationInstruction(lang, ragResult.classification);
@@ -765,7 +805,9 @@ router.post("/chat/stream", async function (req, res, next) {
         for (let i = 0; i < history.length; i++) {
           partialRetry.push(history[i]);
         }
+        var _tPR = Date.now();
         fullResponse = await callOllama(partialRetry);
+        trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - _tPR, responseLen: fullResponse.length, reason: "retry_premature_confirmation", response: fullResponse });
         emitEvent("ollama_retry", "end", { reason: "premature_confirmation", responseLength: fullResponse.length });
       }
 
@@ -774,11 +816,14 @@ router.post("/chat/stream", async function (req, res, next) {
       // name loaded from the knowledge graph. Iterative (up to 2 retries)
       // plus deterministic redaction fallback — the student must discover
       // states themselves, so we prefer a clunky placeholder to a leak.
+      var _tState0 = Date.now();
       var stateCheck = checkStateReveal(fullResponse, evaluableElements, kgConceptPatterns);
+      trace.traceGuardrailCheck(reqId, "state_reveal", { violated: stateCheck.revealed, checkMs: Date.now() - _tState0, evidence: stateCheck.details });
       emitEvent("guardrail_state_reveal", "end", { responsePreview: fullResponse, result: stateCheck, passed: !stateCheck.revealed, check: "Checks if LLM reveals internal element states or KG concepts bound to a specific element" });
       for (var stateAttempt = 1; stateAttempt <= 2 && stateCheck.revealed; stateAttempt++) {
         guardrailTriggered = true;
         console.log("[RAG] Guardrail triggered (state reveal) attempt " + stateAttempt + ": " + stateCheck.details);
+        trace.traceLlmRetry(reqId, "state_reveal", stateAttempt);
         emitEvent("ollama_retry", "start", { reason: "state_reveal", retryCount: stateAttempt });
 
         var statePrompt = augmentedPrompt + getStateRevealInstruction(lang);
@@ -786,7 +831,9 @@ router.post("/chat/stream", async function (req, res, next) {
         for (let i = 0; i < history.length; i++) {
           stateRetry.push(history[i]);
         }
+        var _tSR = Date.now();
         fullResponse = await callOllama(stateRetry);
+        trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - _tSR, responseLen: fullResponse.length, reason: "retry_state_reveal_" + stateAttempt, response: fullResponse });
         emitEvent("ollama_retry", "end", { reason: "state_reveal", responseLength: fullResponse.length });
         stateCheck = checkStateReveal(fullResponse, evaluableElements, kgConceptPatterns);
       }
@@ -794,7 +841,9 @@ router.post("/chat/stream", async function (req, res, next) {
       // 11c-bis. Surgical redaction: if the LLM still reveals state, rewrite
       // the offending sentence only, keeping the rest of the response intact.
       if (stateCheck.revealed) {
+        var _tSurg0 = Date.now();
         var stateRedact = redactStateRevealSentence(fullResponse, evaluableElements, stateCheck.pattern, lang);
+        trace.traceSurgicalFix(reqId, "state_reveal", { applied: stateRedact.redacted, durationMs: Date.now() - _tSurg0, before: fullResponse, after: stateRedact.text });
         if (stateRedact.redacted) {
           guardrailTriggered = true;
           console.log("[RAG] Deterministic state-reveal redaction applied");
@@ -805,11 +854,14 @@ router.post("/chat/stream", async function (req, res, next) {
 
       // 11d. Check if the LLM names specific evaluable elements in questions/directives
       // Iterative: up to 2 retries. Final fallback: deterministic redaction.
+      var _tNaming0 = Date.now();
       var namingCheck = checkElementNaming(fullResponse, evaluableElements);
+      trace.traceGuardrailCheck(reqId, "element_naming", { violated: namingCheck.named, checkMs: Date.now() - _tNaming0, evidence: namingCheck.details });
       emitEvent("guardrail_element_naming", "end", { responsePreview: fullResponse, result: namingCheck, passed: !namingCheck.named, check: "Checks if LLM names specific elements in questions or directives" });
       for (var namingAttempt = 1; namingAttempt <= 2 && namingCheck.named; namingAttempt++) {
         guardrailTriggered = true;
         console.log("[RAG] Guardrail triggered (element naming) attempt " + namingAttempt + ": " + namingCheck.details);
+        trace.traceLlmRetry(reqId, "element_naming", namingAttempt);
         emitEvent("ollama_retry", "start", { reason: "element_naming", retryCount: namingAttempt });
 
         var namingPrompt = augmentedPrompt + getElementNamingInstruction(lang);
@@ -817,7 +869,9 @@ router.post("/chat/stream", async function (req, res, next) {
         for (var ni = 0; ni < history.length; ni++) {
           namingRetry.push(history[ni]);
         }
+        var _tNR = Date.now();
         fullResponse = await callOllama(namingRetry);
+        trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - _tNR, responseLen: fullResponse.length, reason: "retry_element_naming_" + namingAttempt, response: fullResponse });
         emitEvent("ollama_retry", "end", { reason: "element_naming", responseLength: fullResponse.length });
         namingCheck = checkElementNaming(fullResponse, evaluableElements);
       }
@@ -826,7 +880,9 @@ router.post("/chat/stream", async function (req, res, next) {
       // response STILL names correct elements in questions/directives, rewrite
       // them with a generic placeholder. Prefer clunky-but-safe over leaking.
       if (namingCheck.named) {
+        var _tSurgN = Date.now();
         var redactResult = redactElementMentions(fullResponse, correctAnswer, lang);
+        trace.traceSurgicalFix(reqId, "element_naming", { applied: redactResult.redacted, durationMs: Date.now() - _tSurgN, before: fullResponse, after: redactResult.text });
         if (redactResult.redacted) {
           guardrailTriggered = true;
           console.log("[RAG] Deterministic redaction applied (element naming could not be fixed by LLM)");
@@ -840,7 +896,9 @@ router.post("/chat/stream", async function (req, res, next) {
       // they appear outside a question — this catches leaks in statements.
       var finalLeak = checkSolutionLeak(fullResponse, correctAnswer);
       if (finalLeak.leaked) {
+        var _tSurgL = Date.now();
         var redactResult2 = redactElementMentions(fullResponse, correctAnswer, lang);
+        trace.traceSurgicalFix(reqId, "final_leak_safeguard", { applied: redactResult2.redacted, durationMs: Date.now() - _tSurgL, before: fullResponse, after: redactResult2.text });
         if (redactResult2.redacted) {
           guardrailTriggered = true;
           console.log("[RAG] Deterministic redaction applied (final leak safeguard)");
@@ -885,10 +943,13 @@ router.post("/chat/stream", async function (req, res, next) {
       // explain. If the response contains definitional/explanatory patterns
       // ("this means that...", "when a resistor is X, then..."), retry up to
       // 2 times asking for a pure scaffolding question instead.
+      var _tDidactic0 = Date.now();
       var didacticCheck = checkDidacticExplanation(fullResponse);
+      trace.traceGuardrailCheck(reqId, "didactic_explanation", { violated: didacticCheck.explaining, checkMs: Date.now() - _tDidactic0, evidence: didacticCheck.details });
       for (var didacticAttempt = 1; didacticAttempt <= 2 && didacticCheck.explaining; didacticAttempt++) {
         guardrailTriggered = true;
         console.log("[RAG] Guardrail triggered (didactic explanation) attempt " + didacticAttempt + ": " + didacticCheck.details);
+        trace.traceLlmRetry(reqId, "didactic_explanation", didacticAttempt);
         emitEvent("ollama_retry", "start", { reason: "didactic_explanation", retryCount: didacticAttempt });
 
         var scaffoldPrompt = augmentedPrompt + getScaffoldInstruction(lang);
@@ -896,7 +957,9 @@ router.post("/chat/stream", async function (req, res, next) {
         for (var si = 0; si < history.length; si++) {
           scaffoldRetry.push(history[si]);
         }
+        var _tDR = Date.now();
         fullResponse = await callOllama(scaffoldRetry);
+        trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - _tDR, responseLen: fullResponse.length, reason: "retry_didactic_" + didacticAttempt, response: fullResponse });
         emitEvent("ollama_retry", "end", { reason: "didactic_explanation", responseLength: fullResponse.length });
         didacticCheck = checkDidacticExplanation(fullResponse);
       }
@@ -922,8 +985,24 @@ router.post("/chat/stream", async function (req, res, next) {
         emitEvent("guardrail_fin_stripped", "end", { classification: ragResult.classification });
       }
 
+      // 11g. Trace all guardrail results
+      trace.traceGuardrails(reqId, {
+        solutionLeak: leakCheck.leaked,
+        falseConfirmation: confirmCheck.confirmed,
+        prematureConfirmation: prematureCheck.premature,
+        stateReveal: stateCheck.revealed,
+        elementNaming: namingCheck.named,
+        didacticExplanation: didacticCheck.explaining,
+        styleFixed: styleResult && styleResult.changed,
+        finStripped: ragResult.classification !== "correct_good_reasoning" && fullResponse.includes(FIN_TOKEN),
+        retries: (leakAttempt > 1 ? leakAttempt - 1 : 0) + (stateAttempt > 1 ? stateAttempt - 1 : 0) + (namingAttempt > 1 ? namingAttempt - 1 : 0) + (didacticAttempt > 1 ? didacticAttempt - 1 : 0),
+        finalLen: fullResponse.length,
+        finalResponse: fullResponse,
+      });
+
       // 12. Send response to client as SSE
       sseSend(res, { chunk: fullResponse });
+      trace.traceResponse(reqId, { len: fullResponse.length, containsFIN: fullResponse.includes(FIN_TOKEN), response: fullResponse });
       emitEvent("response_sent", "end", { responseLength: fullResponse.length, responsePreview: fullResponse, containsFIN: fullResponse.includes(FIN_TOKEN), guardrailTriggered: guardrailTriggered });
 
       // 13. Save assistant response to MongoDB with detailed metadata
@@ -947,10 +1026,10 @@ router.post("/chat/stream", async function (req, res, next) {
         sourcesCount: (ragResult.sources || []).length,
         isCorrectAnswer: isCorrect || false,
       };
-      await Interaccion.updateOne(
-        { _id: iid },
-        { $push: { conversacion: { role: "assistant", content: fullResponse, metadata: assistantMetadata } }, $set: { fin: new Date() } }
-      );
+      await _r.messageRepo.appendMessage(iid, new Message({
+        interaccionId: iid, role: "assistant", content: fullResponse, metadata: assistantMetadata,
+      }));
+      await _r.interaccionRepo.updateFin(iid, new Date());
       emitEvent("mongodb_save", "end", { interaccionId: iid, messagesAdded: 2 });
 
       // 14. Close SSE connection
@@ -968,9 +1047,19 @@ router.post("/chat/stream", async function (req, res, next) {
       });
       emitEvent("log_written", "end", { logPath: config.LOG_DIR, fields: ["exerciseNum", "userId", "correctAnswer", "classification", "decision", "query", "retrievedDocs", "augmentation", "response", "guardrailTriggered", "timing"] });
       emitEvent("request_end", "end", { totalTimeMs: Date.now() - startTime, guardrailTriggered: guardrailTriggered, pipelineTimeMs: pipelineTime, llmDurationMs: Date.now() - ollamaStart });
+
+      trace.traceRequestEnd(reqId, {
+        outcome: "rag_handled",
+        totalMs: Date.now() - startTime,
+        responseLen: fullResponse.length,
+        classification: ragResult.classification,
+        decision: ragResult.decision,
+        guardrailTriggered: guardrailTriggered,
+      });
     } catch (innerErr) {
       // Error after SSE headers were sent → send error event and close
       clearInterval(hb);
+      trace.traceError(reqId, "rag_inner", innerErr);
       console.error("[RAG] Error:", innerErr.message);
       emitEvent("request_error", "end", { error: innerErr.message });
       sseSend(res, { error: "Error en el sistema RAG." });
@@ -980,6 +1069,8 @@ router.post("/chat/stream", async function (req, res, next) {
     }
   } catch (err) {
     // Error before SSE headers → fall through to original handler
+    logFallthrough("EXCEPTION", { error: err.message, stack: err.stack ? err.stack.split("\n").slice(0, 3).join(" | ") : "-" });
+    trace.traceRagGate(reqId, "exception_before_sse", { error: err.message, stack: err.stack ? err.stack.split("\n").slice(0, 3).join(" | ") : "-" });
     console.error("[RAG] Fallback to original handler:", err.message);
     emitEvent("request_error", "end", { error: err.message });
     return next();

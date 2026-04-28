@@ -2,13 +2,21 @@
 
 const path = require("path");
 
-// Ollama base URL 
-const ollamaBaseUrl =
-  process.env.OLLAMA_API_URL_UPV ||
-  process.env.OLLAMA_BASE_URL_UPV ||
-  process.env.OLLAMA_API_URL ||
-  process.env.OLLAMA_BASE_URL ||
-  "http://127.0.0.1:11434";
+// Ollama base URL — respeta LLM_MODE para no llamar a la UPV en local.
+// (Antes la lista de fallback empezaba por OLLAMA_API_URL_UPV: si la variable
+// estaba seteada — como en cualquier .env heredado de producción — el
+// adapter intentaba llamar a la UPV en local y devolvía 404.)
+const llmMode = (process.env.LLM_MODE || "local").toLowerCase();
+const ollamaBaseUrl = llmMode === "upv"
+  ? (process.env.OLLAMA_API_URL_UPV ||
+     process.env.OLLAMA_BASE_URL_UPV ||
+     process.env.OLLAMA_API_URL ||
+     process.env.OLLAMA_BASE_URL ||
+     "http://127.0.0.1:11434")
+  : (process.env.OLLAMA_API_URL_LOCAL ||
+     process.env.OLLAMA_API_URL ||
+     process.env.OLLAMA_BASE_URL ||
+     "http://127.0.0.1:11434");
 
 module.exports = {
   // ChromaDB URL
@@ -41,12 +49,13 @@ module.exports = {
   HISTORY_MAX_MESSAGES: Number(process.env.HISTORY_MAX_MESSAGES || 8),
 
   // File paths for the datasets and the knowledge graph
+  // __dirname = backend/src/infrastructure/llm/ → need 4 levels up to reach project root
   DATASETS_DIR: path.join(
-    __dirname, "..", "..", "..",
+    __dirname, "..", "..", "..", "..",
     "material-complementario", "llm", "datasets"
   ),
   KG_PATH: path.join(
-    __dirname, "..", "..", "..",
+    __dirname, "..", "..", "..", "..",
     "material-complementario", "llm", "knowledge-graph",
     "knowledge-graph-with-interactions-and-rewards.json"
   ),

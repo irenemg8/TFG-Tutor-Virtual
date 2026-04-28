@@ -37,6 +37,18 @@ class Message {
   toOllamaFormat() {
     return { role: this.role, content: this.content };
   }
+
+  /** Legacy Mongo JSON shape for frontend compat (conversacion[] items). */
+  toJSON() {
+    return {
+      _id: this.id,
+      id: this.id,
+      role: this.role,
+      content: this.content,
+      timestamp: this.timestamp,
+      metadata: this.metadata,
+    };
+  }
 }
 
 module.exports = Message;

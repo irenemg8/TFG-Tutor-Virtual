@@ -30,7 +30,7 @@
   "Relation": "es una propiedad eléctrica de la ",
   "Node2": "Materia",
   "Expert reasoning": "La carga eléctrica es una propiedad física fundamental de la materia que determina cómo interactúa con los campos eléctricos y magnéticos.",
-  "AC": "AC13 ",
+  "AC": "AC13",
   "AC name": "Confusión V\/I\/R",
   "Description": "El voltaje está causado por el flujo de corriente",
   "Socratic Tutoring ": "¿Puedes explicar con tus palabras lo que significa 'La carga eléctrica es una propiedad física fundamental de la materia que determina cómo interactúa con los campos eléctricos y magnéticos'?; ¿Cómo se relaciona 'La carga eléctrica' con 'Materia'?; ¿Qué pasaría si cambiamos un componente en el circuito? ¿Cómo afectaría eso a 'Materia'?; ¿Puedes identificar algún error común que se podría cometer al analizar esta relación?"
@@ -86,7 +86,7 @@
   "AC name": "Modelo del circuito abierto",
   "Description": "La corriente es distinta de cero cuando el circuito está abierto ",
   "Example common errors ": "Estudiantes creen que hay corriente en un circuito abierto;\nPensar que el voltaje produce corriente por sí solo, sin considerar que se necesita un circuito cerrado;\n",
-  "AC.1": "AC13 ",
+  "AC.1": "AC13",
   "AC name.1": "Confusión V\/I\/R",
   "Description1": "El voltaje está causado por el flujo de corriente",
   "Example common errors 1": "Estudiantes afirman que hay corriente porque hay una batería conectada, ignorando que el circuito está abierto;\nPensar que el voltaje produce corriente por sí solo, sin considerar que se necesita un circuito cerrado",

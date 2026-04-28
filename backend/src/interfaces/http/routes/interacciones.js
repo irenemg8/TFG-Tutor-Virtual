@@ -1,149 +1,127 @@
-// Interacciones
+// backend/src/interfaces/http/routes/interacciones.js
 const express = require("express");
-const Interaccion = require("../../../infrastructure/persistence/mongodb/models/interaccion");
-const mongoose = require("mongoose");
+const container = require("../../../container");
 const { canAccessUserData } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// NOTE: globalAuth is applied at app level in index.js, so all routes
-// here already require authentication. req.userId is set by globalAuth.
+function repo(res) {
+  if (!container._initialized || !container.interaccionRepo) {
+    res.status(503).json({ error: "service_unavailable" });
+    return null;
+  }
+  return container.interaccionRepo;
+}
 
-// 0. Get current user's interacciones (was GET /user/:userId — now uses session)
+// Validación de IDs: ObjectId (24 hex) o UUID (36 con guiones).
+// Suficiente como guardia básica; la FK de Postgres valida el resto.
+function isValidId(v) {
+  if (typeof v !== "string") return false;
+  if (/^[a-f0-9]{24}$/i.test(v)) return true;           // ObjectId legacy
+  if (/^[0-9a-f-]{36}$/i.test(v)) return true;          // UUID
+  return false;
+}
+
+// NOTE: globalAuth está aplicado a nivel de app. req.userId viene de la sesión.
+
+// 0. Interacciones del usuario actual
 router.get("/mine", async (req, res) => {
+  const r = repo(res); if (!r) return;
   try {
-    const interacciones = await Interaccion.find({ usuario_id: req.userId }).sort({ fin: -1 });
-    res.status(200).json(interacciones);
-  } catch (error) {
-    res.status(500).json({ message: "Error interno del servidor." });
+    const data = await r.findByUserId(req.userId);
+    return res.status(200).json(data);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 });
 
-// 1. LEGACY: Get interacciones by userId param (profesor/admin only can see other users)
+// 1. LEGACY: interacciones de otro usuario (solo admin/profesor)
 router.get("/user/:userId", async (req, res) => {
+  const r = repo(res); if (!r) return;
   try {
     const { userId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({ message: "ID de usuario inválido." });
-    }
-
-    // Ownership check: only own data or profesor/admin
+    if (!isValidId(userId)) return res.status(400).json({ message: "ID inválido." });
     if (!canAccessUserData(userId, req)) {
       return res.status(403).json({ message: "No autorizado." });
     }
-
-    const interacciones = await Interaccion.find({ usuario_id: userId }).sort({ fin: -1 });
-    res.status(200).json(interacciones);
-  } catch (error) {
-    res.status(500).json({ message: "Error interno del servidor." });
+    const data = await r.findByUserId(userId);
+    return res.status(200).json(data);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 });
 
-// 2. Get latest interaction for current user + exercise
-// Changed: uses req.userId instead of URL param
+// 2. Última interacción del usuario actual + ejercicio
 router.get("/byExercise/:exerciseId", async (req, res) => {
+  const r = repo(res); if (!r) return;
   try {
     const { exerciseId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(exerciseId)) {
-      return res.status(400).json({ message: "ID de ejercicio inválido." });
-    }
-
-    const interaccion = await Interaccion.findOne({
-      ejercicio_id: exerciseId,
-      usuario_id: req.userId,
-    }).sort({ fin: -1 });
-
-    if (!interaccion) {
-      return res.status(200).json(null);
-    }
-
-    res.status(200).json(interaccion);
-  } catch (error) {
-    res.status(500).json({ message: "Error interno del servidor." });
+    if (!isValidId(exerciseId)) return res.status(400).json({ message: "ID de ejercicio inválido." });
+    const i = await r.findLatestByExerciseAndUser(exerciseId, req.userId);
+    return res.status(200).json(i || null);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 });
 
-// 2b. LEGACY: Keep old URL pattern working during frontend migration
+// 2b. LEGACY: compat frontend anterior
 router.get("/byExerciseAndUser/:exerciseId/:userId", async (req, res) => {
+  const r = repo(res); if (!r) return;
   try {
     const { exerciseId, userId } = req.params;
-
-    if (
-      !mongoose.Types.ObjectId.isValid(exerciseId) ||
-      !mongoose.Types.ObjectId.isValid(userId)
-    ) {
-      return res.status(400).json({ message: "IDs de ejercicio o usuario inválidos." });
+    if (!isValidId(exerciseId) || !isValidId(userId)) {
+      return res.status(400).json({ message: "IDs inválidos." });
     }
-
-    // Ownership check
     if (!canAccessUserData(userId, req)) {
       return res.status(403).json({ message: "No autorizado." });
     }
-
-    const interaccion = await Interaccion.findOne({
-      ejercicio_id: exerciseId,
-      usuario_id: userId,
-    }).sort({ fin: -1 });
-
-    if (!interaccion) {
-      return res.status(200).json(null);
-    }
-
-    res.status(200).json(interaccion);
-  } catch (error) {
-    res.status(500).json({ message: "Error interno del servidor." });
+    const i = await r.findLatestByExerciseAndUser(exerciseId, userId);
+    return res.status(200).json(i || null);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 });
 
-// 3. Get a specific interaccion by ID (ownership check)
+// 3. Obtener una interacción concreta (con conversacion embedded al estilo legacy)
 router.get("/:id", async (req, res) => {
+  const r = repo(res); if (!r) return;
   try {
     const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "ID de interacción inválido." });
-    }
-
-    const interaccion = await Interaccion.findById(id);
-    if (!interaccion) {
-      return res.status(404).json({ message: "Interacción no encontrada." });
-    }
-
-    // Ownership check
-    if (!canAccessUserData(interaccion.usuario_id, req)) {
+    if (!isValidId(id)) return res.status(400).json({ message: "ID inválido." });
+    const i = await r.findById(id);
+    if (!i) return res.status(404).json({ message: "Interacción no encontrada." });
+    if (!canAccessUserData(i.usuarioId || i.usuario_id, req)) {
       return res.status(403).json({ message: "No autorizado." });
     }
-
-    res.status(200).json(interaccion);
-  } catch (error) {
-    res.status(500).json({ message: "Error interno del servidor." });
+    // El frontend legacy espera `conversacion` como array embebido (como era
+    // en Mongo). En Pg los mensajes viven en tabla aparte; los cargamos y los
+    // inyectamos aquí para mantener el contrato del API sin tocar React.
+    const messages = await container.messageRepo.getAllMessages(id);
+    const body = i.toJSON();
+    body.conversacion = messages;
+    return res.status(200).json(body);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 });
 
-// 4. Delete an interaccion (owner only)
+// 4. Borrar interacción (solo owner)
 router.delete("/:id", async (req, res) => {
+  const r = repo(res); if (!r) return;
   try {
     const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "ID de interacción inválido." });
-    }
-
-    const interaccion = await Interaccion.findById(id);
-    if (!interaccion) {
-      return res.status(404).json({ message: "Interacción no encontrada para eliminar" });
-    }
-
-    // Only owner can delete (not even profesor)
-    if (String(interaccion.usuario_id) !== String(req.userId)) {
+    if (!isValidId(id)) return res.status(400).json({ message: "ID inválido." });
+    const i = await r.findById(id);
+    if (!i) return res.status(404).json({ message: "Interacción no encontrada." });
+    const ownerId = i.usuarioId || i.usuario_id;
+    if (String(ownerId) !== String(req.userId)) {
       return res.status(403).json({ message: "No autorizado." });
     }
-
-    await Interaccion.findByIdAndDelete(id);
-    res.status(200).json({ message: "Interacción eliminada exitosamente" });
-  } catch (error) {
-    res.status(500).json({ message: "Error interno del servidor." });
+    await r.deleteById(id);
+    return res.status(200).json({ message: "Interacción eliminada." });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 });
-
 
 module.exports = router;

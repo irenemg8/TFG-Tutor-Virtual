@@ -345,8 +345,10 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements) {
   var reasoning = hasReasoning(userMessage);
   var concepts = findConcepts(userMessage);
 
-  // 1. Greeting
-  if (isGreeting(userMessage)) {
+  // 1. Greeting — ONLY if message has no resistance mentions and is short.
+  // This prevents "hola, ahora R1 R2" from being swallowed as a greeting and
+  // routed to a fallback handler that ignores the actual answer.
+  if (allMentioned.length === 0 && userMessage.trim().length <= 30 && isGreeting(userMessage)) {
     return { type: types.greeting, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
   }
 

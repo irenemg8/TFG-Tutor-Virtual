@@ -25,6 +25,23 @@ class Interaccion {
   belongsTo(userId) {
     return String(this.usuarioId) === String(userId);
   }
+
+  /**
+   * JSON shape compatible with the legacy Mongo API consumed by the frontend
+   * (`_id`, snake_case foreign keys). Domain code uses the class fields
+   * directly; only serialization via res.json() uses this form.
+   */
+  toJSON() {
+    return {
+      _id: this.id,
+      id: this.id,
+      usuario_id: this.usuarioId,
+      ejercicio_id: this.ejercicioId,
+      inicio: this.inicio,
+      fin: this.fin,
+      createdAt: this.createdAt,
+    };
+  }
 }
 
 module.exports = Interaccion;

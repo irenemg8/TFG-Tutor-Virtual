@@ -1,46 +1,61 @@
 const express = require("express");
-const Usuario = require("../../../infrastructure/persistence/mongodb/models/usuario");
+const container = require("../../../container");
 const { requireRole } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// All user management routes require admin role
-router.post("/usuarios", requireRole("admin"), (req, res) => {
-   const nuevoUsuario = new Usuario(req.body);
-   nuevoUsuario
-   .save()
-   .then((data) => res.json(data))
-   .catch((error) => res.json({ message: error }));
+function repo(res) {
+  if (!container._initialized || !container.usuarioRepo) {
+    res.status(503).json({ error: "service_unavailable" });
+    return null;
+  }
+  return container.usuarioRepo;
+}
+
+// Create user (admin only)
+router.post("/usuarios", requireRole("admin"), async (req, res) => {
+  const r = repo(res); if (!r) return;
+  try {
+    const created = await r.create(req.body);
+    return res.json(created);
+  } catch (err) {
+    return res.status(400).json({ message: err.message });
+  }
 });
 
 // Get all users (admin only)
-router.get("/usuarios", requireRole("admin"), (req, res) => {
-    Usuario
-   .find()
-   .then((data) => res.json(data))
-   .catch((error) => res.json({ message: error }));
+router.get("/usuarios", requireRole("admin"), async (_req, res) => {
+  const r = repo(res); if (!r) return;
+  try {
+    const all = await r.findAll();
+    return res.json(all);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
 });
 
-// Get a user (admin only)
-router.get("/usuarios/:id", requireRole("admin"), (req, res) => {
-    const { id } = req.params;
-    Usuario
-   .findById(id)
-   .then((data) => res.json(data))
-   .catch((error) => res.json({ message: error }));
+// Get user by id (admin only)
+router.get("/usuarios/:id", requireRole("admin"), async (req, res) => {
+  const r = repo(res); if (!r) return;
+  try {
+    const u = await r.findById(req.params.id);
+    if (!u) return res.status(404).json({ message: "Usuario no encontrado" });
+    return res.json(u);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
 });
 
-// Update a user (admin only)
-router.put("/usuarios/:id", requireRole("admin"), (req, res) => {
-    const { id } = req.params;
+// Update user by id (admin only)
+router.put("/usuarios/:id", requireRole("admin"), async (req, res) => {
+  const r = repo(res); if (!r) return;
+  try {
     const { loguin_usuario } = req.body;
-    Usuario
-   .updateOne({ _id: id}, {$set: {loguin_usuario}})
-   .then((data) => res.json(data))
-   .catch((error) => res.json({ message: error }));
+    const updated = await r.updateById(req.params.id, { loguin_usuario });
+    return res.json(updated);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
 });
-
-
 
 module.exports = router;
-

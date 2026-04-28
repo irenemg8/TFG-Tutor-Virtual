@@ -3,8 +3,8 @@
 -- Each element of the array becomes a row in this table
 
 CREATE TABLE IF NOT EXISTS messages (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    interaccion_id      UUID NOT NULL REFERENCES interacciones(id) ON DELETE CASCADE,
+    id                  VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    interaccion_id      VARCHAR(50) NOT NULL REFERENCES interacciones(id) ON DELETE CASCADE,
     sequence_num        INTEGER NOT NULL,
     role                VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant')),
     content             TEXT NOT NULL,

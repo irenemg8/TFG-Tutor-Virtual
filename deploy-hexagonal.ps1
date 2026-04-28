@@ -6,6 +6,7 @@
 #         .\deploy-hexagonal.ps1 -BuildFrontend
 #         .\deploy-hexagonal.ps1 -SkipEnvPatch
 #         .\deploy-hexagonal.ps1 -StopAll
+#         .\deploy-hexagonal.ps1 -DebugPipeline   (activa logs [DEBUG_PIPELINE])
 # ================================================================
 
 [CmdletBinding()]
@@ -14,6 +15,7 @@ param(
     [switch]$SkipEnvPatch,
     [switch]$SkipHealthChecks,
     [switch]$StopAll,
+    [switch]$DebugPipeline,
 
     # --- Rutas / servicios (editar si cambian en el servidor) ---
     [string]$ProjectRoot   = "C:\Users\admin\TutorVirtual_Irene",
@@ -200,6 +202,16 @@ function Get-EnvValue([string]$Path, [string]$Key) {
     if ($m.Success) { return $m.Groups[1].Value } else { return $null }
 }
 
+# Set a key only if it doesn't already exist; returns $true if it wrote.
+function Set-EnvValueIfMissing([string]$Path, [string]$Key, [string]$Value) {
+    $existing = Get-EnvValue $Path $Key
+    if ([string]::IsNullOrEmpty($existing)) {
+        Set-EnvValue $Path $Key $Value
+        return $true
+    }
+    return $false
+}
+
 if (-not $SkipEnvPatch) {
     Info "=== AJUSTANDO .env PARA PRODUCCION ==="
 
@@ -226,6 +238,27 @@ if (-not $SkipEnvPatch) {
     }
 
     Ok ".env actualizado (NODE_ENV, DEV_BYPASS_AUTH, DATABASE_TYPE, PORT, CHROMA_URL)"
+
+    # --- Variables del refactor hexagonal (Phase 5) ---
+    # Solo se escriben si faltan, para respetar ajustes manuales del usuario.
+    $refactorVars = [ordered]@{
+        "USE_ORCHESTRATOR"              = "1"
+        "AUDIT_LOG"                     = "1"
+        "GUARDRAIL_BUDGET_MS"           = "45000"
+        "GUARDRAIL_MIN_RETRY_BUDGET_MS" = "10000"
+        "ORCHESTRATOR_BUDGET_MS"        = "45000"
+    }
+    $added = @()
+    foreach ($k in $refactorVars.Keys) {
+        if (Set-EnvValueIfMissing $EnvFile $k $refactorVars[$k]) {
+            $added += $k
+        }
+    }
+    if ($added.Count -gt 0) {
+        Ok "Vars del refactor hexagonal añadidas al .env: $($added -join ', ')"
+    } else {
+        Ok "Vars del refactor hexagonal ya presentes en .env"
+    }
 } else {
     Warn "-SkipEnvPatch: se respeta el .env tal cual"
 }
@@ -280,11 +313,33 @@ Info "=== 3/4 Backend Node hexagonal ==="
 if (Test-Port "127.0.0.1" $BackendPort) {
     Warn "Puerto $BackendPort ya en uso. Asumo que el backend ya esta corriendo."
 } else {
-    if (-not (Test-Path (Join-Path $BackendDir "node_modules"))) {
-        Info "Instalando dependencias backend (npm install)..."
+    # Ejecutar npm install si node_modules no existe O si package.json es mas nuevo
+    # que el lockfile interno (indica que deps cambiaron tras un git pull).
+    $nodeModulesDir = Join-Path $BackendDir "node_modules"
+    $pkgJson        = Join-Path $BackendDir "package.json"
+    $internalLock   = Join-Path $nodeModulesDir ".package-lock.json"
+
+    $needsInstall = $false
+    $reason = ""
+    if (-not (Test-Path $nodeModulesDir)) {
+        $needsInstall = $true
+        $reason = "node_modules no existe"
+    } elseif (-not (Test-Path $internalLock)) {
+        $needsInstall = $true
+        $reason = "node_modules/.package-lock.json no existe"
+    } elseif ((Get-Item $pkgJson).LastWriteTime -gt (Get-Item $internalLock).LastWriteTime) {
+        $needsInstall = $true
+        $reason = "package.json mas nuevo que node_modules/.package-lock.json"
+    }
+
+    if ($needsInstall) {
+        Info "Instalando dependencias backend (npm install) - motivo: $reason"
         Push-Location $BackendDir
         & npm install
         Pop-Location
+        Ok "Dependencias backend instaladas"
+    } else {
+        Ok "Dependencias backend al dia (skip npm install)"
     }
 
     if ($BuildFrontend) {
@@ -297,9 +352,14 @@ if (Test-Port "127.0.0.1" $BackendPort) {
     }
 
     $backendCmd = "node src/index.js"
+    $debugPrefix = ""
+    if ($DebugPipeline) {
+        $debugPrefix = "`$env:DEBUG_PIPELINE='1'; Write-Host '[DEBUG_PIPELINE enabled]' -ForegroundColor Yellow; "
+        Info "DebugPipeline activado: la ventana del backend correra con DEBUG_PIPELINE=1"
+    }
     Info "Lanzando en ventana nueva: $backendCmd (cwd=$BackendDir)"
     Start-Process -FilePath "powershell.exe" `
-        -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle='Backend hexagonal :$BackendPort'; Set-Location `"$BackendDir`"; $backendCmd" `
+        -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle='Backend hexagonal :$BackendPort'; Set-Location `"$BackendDir`"; $debugPrefix$backendCmd" `
         -WindowStyle Normal | Out-Null
 
     if (-not (Wait-Port "Backend Node" "127.0.0.1" $BackendPort 60)) {

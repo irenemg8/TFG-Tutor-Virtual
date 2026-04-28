@@ -5,8 +5,16 @@ const { classifyQuery, extractResistances, types } = require("./queryClassifier"
 const { hybridSearch } = require("../../../infrastructure/search/hybridSearch");
 const { searchKG } = require("../../../infrastructure/search/knowledgeGraph");
 const { emitEvent } = require("../../../infrastructure/events/ragEventBus");
-const Resultado = require("../../../infrastructure/persistence/mongodb/models/resultado");
+const container = require("../../../container");
 const { getAllPatterns, conceptKeywords: conceptDict, normalizeToSpanish, getIntermediateFeedback } = require("../languageManager");
+
+// Foundational KG concepts to scaffold the tutor's hints when the student is
+// wrong/partial but did NOT use any concept keyword. Picks the building blocks
+// most circuits exercises hinge on.
+const SCAFFOLD_CONCEPTS = [
+  "serie", "paralelo", "cortocircuito", "circuito abierto",
+  "divisor de tensión", "interruptor abierto",
+];
 
 // Format dataset examples as context for the LLM
 function formatExamples(results) {
@@ -69,11 +77,22 @@ Socratic questions: "¿Qué ocurre con la corriente cuando un componente está c
     if (entry.socraticQuestions) {
       text = text + "Socratic questions: \"" + entry.socraticQuestions + "\"\n";
     }
-    if (entry.acName) {
-      text = text + "Alternative conception: \"" + entry.acName + "\"\n";
-    }
-    if (entry.acDescription) {
-      text = text + "AC description: \"" + entry.acDescription + "\"\n";
+    // Render every AC associated with this KG entry. Some entries carry two
+    // alternative conceptions on the same concept; both are pedagogically
+    // relevant. Falls back to the legacy primary fields when the new
+    // alternativeConceptions array is missing (defensive).
+    const acs = Array.isArray(entry.alternativeConceptions) && entry.alternativeConceptions.length > 0
+      ? entry.alternativeConceptions
+      : (entry.acName || entry.acDescription
+          ? [{ ac: entry.ac, acName: entry.acName, acDescription: entry.acDescription }]
+          : []);
+    for (let a = 0; a < acs.length; a++) {
+      if (acs[a].acName) {
+        text = text + "Alternative conception: \"" + acs[a].acName + "\"\n";
+      }
+      if (acs[a].acDescription) {
+        text = text + "AC description: \"" + acs[a].acDescription + "\"\n";
+      }
     }
     text = text + "\n";
   }
@@ -237,46 +256,32 @@ function formatClassificationHint(classification, correctAnswer, lang) {
   return text;
 }
 
-// Load the student's past AC errors from the Resultado model
+// Load the student's past AC errors via the Resultado repository (Pg-backed).
 async function loadStudentHistory(userId) {
-  if (userId == null) {
-    return "";
-  }
+  if (userId == null) return "";
+  if (!container._initialized || !container.resultadoRepo) return "";
 
   try {
-    const resultados = await Resultado.find({ usuario_id: userId }).select("errores");
+    const resultados = await container.resultadoRepo.findByUserId(userId);
 
     // Count error tags across all exercises
     const errorCounts = {};
-    for (let i = 0; i < resultados.length; i++) {
-      const errores = resultados[i].errores;
-      if (errores == null) {
-        continue;
-      }
-      for (let j = 0; j < errores.length; j++) {
-        const tag = errores[j].etiqueta;
-        if (tag != null) {
-          if (errorCounts[tag] == null) {
-            errorCounts[tag] = 1;
-          } 
-          else {
-            errorCounts[tag] = errorCounts[tag] + 1;
-          }
-        }
+    for (const r of resultados) {
+      for (const err of r.errores || []) {
+        const tag = err?.etiqueta;
+        if (tag) errorCounts[tag] = (errorCounts[tag] || 0) + 1;
       }
     }
 
     const tags = Object.keys(errorCounts);
-    if (tags.length === 0) {
-      return "";
-    }
+    if (tags.length === 0) return "";
 
     let text = "[STUDENT HISTORY]\n";
-    text = text + "This student has previously shown these misconceptions:\n";
-    for (let i = 0; i < tags.length; i++) {
-      text = text + "- " + tags[i] + " (" + errorCounts[tags[i]] + " times)\n";
+    text += "This student has previously shown these misconceptions:\n";
+    for (const tag of tags) {
+      text += "- " + tag + " (" + errorCounts[tag] + " times)\n";
     }
-    text = text + "Pay special attention to these recurring errors.\n\n";
+    text += "Pay special attention to these recurring errors.\n\n";
     return text;
   } catch (err) {
     console.error("Error loading student history:", err.message);
@@ -381,9 +386,19 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
       emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
     }
 
-    result.augmentation = formatClassificationHint(classification, correctAnswer, lang) + formatExamples(datasetResults);
+    // KG scaffolding: when the student is wrong but used no concept words, the
+    // tutor still benefits from foundational concepts to anchor a Socratic hint
+    // (current path, divisor de tensión, cortocircuito, interruptor abierto).
+    const kgConcepts = classification.concepts && classification.concepts.length > 0
+      ? classification.concepts
+      : SCAFFOLD_CONCEPTS;
+    emitEvent("kg_search_start", "start", { concepts: kgConcepts });
+    const kgResults = searchKG(kgConcepts).slice(0, 3);
+    emitEvent("kg_search_end", "end", { resultCount: kgResults.length, entries: kgResults.map(function(e) { return { node1: e.node1, relation: e.relation, node2: e.node2, acName: e.acName || null, acDescription: e.acDescription || null, expertReasoning: e.expertReasoning || "", socraticQuestions: e.socraticQuestions || "" }; }) });
+
+    result.augmentation = formatClassificationHint(classification, correctAnswer, lang) + formatKGContext(kgResults) + formatExamples(datasetResults);
     result.decision = "rag_examples";
-    result.sources = datasetResults;
+    result.sources = datasetResults.concat(kgResults);
     return result;
   }
 
@@ -442,9 +457,19 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
     emitEvent("hybrid_search_start", "start", { query: userMessage, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
     var datasetResults = await hybridSearch(userMessage, exerciseNum);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
-    result.augmentation = formatClassificationHint(classification, correctAnswer, lang) + formatExamples(datasetResults);
+
+    // KG scaffolding: partial answers benefit from foundational concepts so the
+    // tutor can ask "what about <concept>?" instead of pointing at a resistor.
+    const kgConcepts = classification.concepts && classification.concepts.length > 0
+      ? classification.concepts
+      : SCAFFOLD_CONCEPTS;
+    emitEvent("kg_search_start", "start", { concepts: kgConcepts });
+    const kgResults = searchKG(kgConcepts).slice(0, 3);
+    emitEvent("kg_search_end", "end", { resultCount: kgResults.length, entries: kgResults.map(function(e) { return { node1: e.node1, relation: e.relation, node2: e.node2, acName: e.acName || null, acDescription: e.acDescription || null, expertReasoning: e.expertReasoning || "", socraticQuestions: e.socraticQuestions || "" }; }) });
+
+    result.augmentation = formatClassificationHint(classification, correctAnswer, lang) + formatKGContext(kgResults) + formatExamples(datasetResults);
     result.decision = "rag_examples";
-    result.sources = datasetResults;
+    result.sources = datasetResults.concat(kgResults);
     return result;
   }
 

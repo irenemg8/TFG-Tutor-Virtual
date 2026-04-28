@@ -314,18 +314,44 @@ function getStrongerInstruction(lang) {
 // Guardrail 5: Element Naming in Questions (generic)
 // =====================
 
-// Directive verbs that indicate the tutor is pointing the student to a specific element
+// Directive verbs/phrases that indicate the tutor is pointing the student to
+// a specific element. Includes the obvious imperatives plus the "let's focus
+// on", "let's discuss", "now think about" framings the LLM often uses to
+// sneak in element naming as a soft directive.
 var directivePatterns = [
   /\b(analiza|observa|mira|fíjate en|considera|piensa en|revisa|examina|estudia)\b/i,
   /\b(look at|consider|analyze|think about|observe|examine|study|check)\b/i,
   /\b(analitza|observa|fixa't en|considera|pensa en|revisa|examina)\b/i,
+  // "Vamos a / centrémonos / hablemos / concentrémonos / pensemos / veamos"
+  /\b(vamos a|centrémonos|hablemos|concentrémonos|pensemos|veamos|enfoqu[eé]monos|enfoc[ae]rnos)\b/i,
+  // English variants: "let's focus", "let's talk", "now think", "let's analyze"
+  /\b(let'?s focus|let'?s talk|let'?s analyze|let'?s consider|let'?s look|now think)\b/i,
+  // Valencian variants
+  /\b(centrem-nos|parlem|pensem|vegem|enfoquem-nos)\b/i,
 ];
 
 // Check if the tutor names a specific evaluable element in a question or directive
 function checkElementNaming(response, evaluableElements) {
-  if (!Array.isArray(evaluableElements) || evaluableElements.length === 0) {
+  // Fallback: if the exercise's elementosEvaluables is empty or missing some
+  // elements, also check any R\d+ tokens in the response. Naming a specific
+  // element in a question/directive is anti-Socratic regardless of whether
+  // the domain registered it as "evaluable".
+  var regexElements = (response.match(/R\d+/gi) || []).map(function (s) { return s.toUpperCase(); });
+  var seen = {};
+  var elements = [];
+  if (Array.isArray(evaluableElements)) {
+    for (var i = 0; i < evaluableElements.length; i++) {
+      var e = String(evaluableElements[i]).toUpperCase();
+      if (!seen[e]) { seen[e] = true; elements.push(evaluableElements[i]); }
+    }
+  }
+  for (var k = 0; k < regexElements.length; k++) {
+    if (!seen[regexElements[k]]) { seen[regexElements[k]] = true; elements.push(regexElements[k]); }
+  }
+  if (elements.length === 0) {
     return { named: false, details: "" };
   }
+  evaluableElements = elements;
 
   // Split into sentences
   var sentences = response.split(/(?<=[.!?\n])\s*/);
@@ -391,6 +417,17 @@ function removeOpeningConfirmation(response, lang) {
     for (var i = 0; i < confirmPhrases.length; i++) {
       var phraseLower = stripAccents(confirmPhrases[i]);
       if (lowerResult.startsWith(phraseLower)) {
+        // BUG FIX (2026-04-27): word-boundary check tras la phrase.
+        // confirmPhrases incluye prefijos como "eso es" (length 6) y un
+        // input como "Eso está muy bien" hacía .startsWith("eso es") = true
+        // — el séptimo char "t" no se comparaba — y el strip de 6 chars
+        // dejaba "ta muy bien dicho..." → capitalizado "Tá muy bien dicho".
+        // Si el char inmediatamente después de la phrase es una letra,
+        // estamos dentro de una palabra: NO match.
+        var nextChar = lowerResult.charAt(phraseLower.length);
+        if (nextChar && /[a-zA-Z0-9ñü]/.test(nextChar)) {
+          continue; // dentro de palabra, no es la phrase real
+        }
         // Strip the phrase and any following punctuation/whitespace
         var afterPhrase = stripped.substring(confirmPhrases[i].length).replace(/^[,;:!.\s¡¿]+/, "");
         result = afterPhrase;
@@ -465,13 +502,16 @@ function redactElementMentions(response, correctAnswer, lang) {
     "\\(?\\s*" + joined.join("\\s*[,;y]\\s*|\\s*(?:y|i|and)\\s*") + "\\s*\\)?",
     "gi"
   );
-  // simpler & more tolerant pattern: "R1, R2 y R4" (es) / "i" (val) / "and" (en) / commas
+  // simpler & more tolerant pattern: "R1, R2 y R4" (es) / "i" (val) / "and" (en) / commas.
+  // No consume \s* exterior — sin esto, "que R1, R2 y R4 contribuyen" perdía
+  // los espacios alrededor y el resultado quedaba "queese conjunto de
+  // elementoscontribuyen" (mismo bug de espacios que afectaba a step 2a).
   var tolerantPattern = new RegExp(
-    "\\(?\\s*" + joined[0] +
+    "\\(?" + joined[0] +
       joined.slice(1).map(function (r) {
         return "\\s*(?:,|;|y|i|and)\\s*" + r;
       }).join("") +
-      "\\s*\\)?",
+      "\\)?",
     "gi"
   );
   if (tolerantPattern.test(text)) {
@@ -481,7 +521,13 @@ function redactElementMentions(response, correctAnswer, lang) {
 
   // 2) Replace any remaining individual mention of a correct element inside
   //    a question or directive sentence.
-  var sentences = text.split(/(?<=[.!?\n])\s*/);
+  //
+  // BUG FIX (2026-04-27): el split anterior `text.split(/(?<=[.!?\n])\s*/)`
+  // consumía los whitespace separadores y luego `sentences.join("")` los
+  // perdía, dando salidas como "...revisar.Tá muy bien dicho.Ahora,...".
+  // Usamos `.match` con un patrón que CAPTURA cada sentence + su trailing
+  // whitespace, así el join final preserva la separación natural.
+  var sentences = text.match(/[^.!?\n]+[.!?\n]+\s*|[^.!?\n]+$/g) || [text];
   for (var i = 0; i < sentences.length; i++) {
     var sent = sentences[i];
     var isQuestion = sent.includes("?") || sent.includes("¿");
@@ -492,6 +538,26 @@ function redactElementMentions(response, correctAnswer, lang) {
     if (!isQuestion && !isDirective) continue;
 
     var newSent = sent;
+
+    // 2a. Collapse RUNS of element mentions in the same sentence into ONE
+    //     placeholder. Without this, "¿Por qué R3, R5 y R1?" was redacted as
+    //     "ese conjunto, ese conjunto y ese conjunto" — gibberish that
+    //     surfaced in the chat. The pattern matches Rn (+ inner separators
+    //     + Rn)+ but does NOT consume the surrounding whitespace — otherwise
+    //     "que R1, R2 y R4 afectan" would lose its boundary spaces and
+    //     produce "queese conjunto de elementosafectan". Optional parens are
+    //     consumed so "(R1, R2 y R4)" collapses cleanly.
+    var runPattern = new RegExp(
+      "\\(?\\bR\\d+\\b(?:\\s*(?:,|;|y|i|and|or)\\s*\\bR\\d+\\b)+\\)?",
+      "gi"
+    );
+    if (runPattern.test(newSent)) {
+      newSent = newSent.replace(runPattern, placeholder);
+      changed = true;
+    }
+
+    // 2b. Replace any remaining LONE element mention (a single Rn left after
+    //     collapsing runs).
     for (var j = 0; j < correctAnswer.length; j++) {
       var elem = correctAnswer[j];
       var safe = elem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -501,6 +567,20 @@ function redactElementMentions(response, correctAnswer, lang) {
         changed = true;
       }
     }
+
+    // 2c. After redacting, collapse repeated identical placeholders that may
+    //     remain when redaction collided with surrounding connectors (e.g.
+    //     "ese conjunto, ese conjunto y ese conjunto").
+    var safePlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var dupePattern = new RegExp(
+      "(?:" + safePlaceholder + ")(?:\\s*(?:,|;|y|i|and|or)\\s*" + safePlaceholder + ")+",
+      "gi"
+    );
+    if (dupePattern.test(newSent)) {
+      newSent = newSent.replace(dupePattern, placeholder);
+      changed = true;
+    }
+
     sentences[i] = newSent;
   }
   text = sentences.join("");

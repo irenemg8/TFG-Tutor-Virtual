@@ -8,8 +8,11 @@ require("dotenv").config();
  */
 const config = {
   // --- Database ---
-  DATABASE_TYPE: process.env.DATABASE_TYPE || "mongodb",
-  MONGODB_URI: process.env.MONGODB_URI,
+  // Tras la migración Mongo→PG (abril 2026) el único valor soportado es
+  // "postgresql". Cambiar el default evita que un .env sin esta variable
+  // arranque en modo Mongo (que ya no existe) y lance un error confuso en
+  // container.initialize().
+  DATABASE_TYPE: process.env.DATABASE_TYPE || "postgresql",
   PG_CONNECTION_STRING: process.env.PG_CONNECTION_STRING || null,
 
   // --- Server ---

@@ -19,7 +19,9 @@ function loadKG() {
   console.log("Knowledge graph loaded: " + kgEntries.length + " entries");
 }
 
-// Search KG entries by concept keywords -> Returns entries where Node1, Node2 or Relation match
+// Search KG entries by concept keywords -> Returns entries where Node1, Node2 or Relation match.
+// AC ids are trimmed because the source JSON has trailing whitespace on at least
+// one entry ("AC13 ") which would otherwise break exact-id lookups.
 function searchKG(concepts) {
   if (concepts.length === 0) {
     return [];
@@ -32,15 +34,36 @@ function searchKG(concepts) {
 
     for (let j = 0; j < concepts.length; j++) {
       if (text.includes(concepts[j].toLowerCase())) {
+        // Some KG entries carry TWO alternative conceptions per node-pair
+        // (fields "AC.1", "AC name.1", "Description1"). The legacy loader only
+        // exposed the primary one — we now surface both so the augmentation
+        // can present alternative misconceptions on the same concept.
+        const altAcs = [];
+        const primary = (entry.AC || "").trim();
+        if (primary) altAcs.push({
+          ac: primary,
+          acName: entry["AC name"] || "",
+          acDescription: entry.Description || "",
+        });
+        const secondary = (entry["AC.1"] || "").trim();
+        if (secondary) altAcs.push({
+          ac: secondary,
+          acName: entry["AC name.1"] || "",
+          acDescription: entry["Description1"] || "",
+        });
+
         results.push({
           enlace: entry.Enlace,
           node1: entry.Node1,
           relation: entry.Relation,
           node2: entry.Node2,
           expertReasoning: entry["Expert reasoning"],
-          ac: entry.AC || "",
+          // Backward-compatible primary fields (unchanged).
+          ac: primary,
           acName: entry["AC name"] || "",
           acDescription: entry.Description || "",
+          // New: full list of ACs (1 or 2 entries).
+          alternativeConceptions: altAcs,
           socraticQuestions: entry["Socratic Tutoring "] || "",
         });
         break; // avoids duplicates if entry matches multiple concepts

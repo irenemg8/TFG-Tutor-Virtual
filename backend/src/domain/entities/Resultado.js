@@ -28,6 +28,23 @@ class Resultado {
       (e) => new (require("./ErrorEntry"))(e)
     );
   }
+
+  /** Legacy Mongo JSON shape for frontend compat. */
+  toJSON() {
+    return {
+      _id: this.id,
+      id: this.id,
+      usuario_id: this.usuarioId,
+      ejercicio_id: this.ejercicioId,
+      interaccion_id: this.interaccionId,
+      numMensajes: this.numMensajes,
+      resueltoALaPrimera: this.resueltoALaPrimera,
+      analisisIA: this.analisisIA,
+      consejoIA: this.consejoIA,
+      fecha: this.fecha,
+      errores: this.errores,
+    };
+  }
 }
 
 module.exports = Resultado;

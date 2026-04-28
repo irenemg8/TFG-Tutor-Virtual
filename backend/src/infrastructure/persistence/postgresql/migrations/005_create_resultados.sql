@@ -2,10 +2,10 @@
 -- Replaces MongoDB Resultado model (embedded errores[] → separate table)
 
 CREATE TABLE IF NOT EXISTS resultados (
-    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    usuario_id            UUID NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
-    ejercicio_id          UUID NOT NULL REFERENCES ejercicios(id) ON DELETE CASCADE,
-    interaccion_id        UUID NOT NULL REFERENCES interacciones(id) ON DELETE CASCADE,
+    id                    VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    usuario_id            VARCHAR(50) NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    ejercicio_id          VARCHAR(50) NOT NULL REFERENCES ejercicios(id) ON DELETE CASCADE,
+    interaccion_id        VARCHAR(50) NOT NULL REFERENCES interacciones(id) ON DELETE CASCADE,
     num_mensajes          INTEGER DEFAULT 0,
     resuelto_a_la_primera BOOLEAN DEFAULT FALSE,
     analisis_ia           TEXT,
@@ -20,8 +20,8 @@ CREATE INDEX IF NOT EXISTS idx_resultados_usuario_fecha ON resultados(usuario_id
 
 -- Error entries: replaces embedded errores[] array in Resultado
 CREATE TABLE IF NOT EXISTS error_entries (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    resultado_id UUID NOT NULL REFERENCES resultados(id) ON DELETE CASCADE,
+    id           VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    resultado_id VARCHAR(50) NOT NULL REFERENCES resultados(id) ON DELETE CASCADE,
     etiqueta     VARCHAR(50) NOT NULL,
     texto        TEXT NOT NULL
 );

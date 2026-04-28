@@ -81,32 +81,32 @@ export default function Login() {
             </span>
           </button>
 
-          {/* Demo login — disabled for production
-          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "1rem", paddingTop: "1rem", textAlign: "center" }}>
-            <p style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: "0.5rem" }}>
-              Modo desarrollo local
-            </p>
-            <button
-              type="button"
-              onClick={handleDemoLogin}
-              disabled={demoLoading}
-              style={{
-                padding: "0.5rem 1.5rem",
-                background: "#6b7280",
-                color: "white",
-                border: "none",
-                borderRadius: "0.375rem",
-                cursor: demoLoading ? "wait" : "pointer",
-                fontSize: "0.9rem",
-              }}
-            >
-              {demoLoading ? "Entrando…" : "Entrar como usuario demo"}
-            </button>
-            {demoError && (
-              <p style={{ color: "#ef4444", fontSize: "0.8rem", marginTop: "0.5rem" }}>{demoError}</p>
-            )}
-          </div>
-          */}
+          {import.meta.env.DEV && (
+            <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "1rem", paddingTop: "1rem", textAlign: "center" }}>
+              <p style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: "0.5rem" }}>
+                Modo desarrollo local
+              </p>
+              <button
+                type="button"
+                onClick={handleDemoLogin}
+                disabled={demoLoading}
+                style={{
+                  padding: "0.5rem 1.5rem",
+                  background: "#6b7280",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.375rem",
+                  cursor: demoLoading ? "wait" : "pointer",
+                  fontSize: "0.9rem",
+                }}
+              >
+                {demoLoading ? "Entrando…" : "Entrar como usuario demo"}
+              </button>
+              {demoError && (
+                <p style={{ color: "#ef4444", fontSize: "0.8rem", marginTop: "0.5rem" }}>{demoError}</p>
+              )}
+            </div>
+          )}
 
           <div className="tv-login__foot">
             Acceso exclusivo mediante CAS. Si tienes sesión iniciada en el

@@ -3,16 +3,13 @@
 const config = require("./environment");
 
 /**
- * Database connection configuration.
- * Provides connection setup for both MongoDB and PostgreSQL.
+ * Database connection helper (PostgreSQL only).
+ *
+ * The MongoDB connection was removed in the 2026-04-21 migration.
+ * PostgreSQL connections are managed by the container via PgConnection.js;
+ * this module remains for compatibility with any caller that expects
+ * connectDatabase() or connectPostgreSQL().
  */
-
-async function connectMongoDB() {
-  const mongoose = require("mongoose");
-  await mongoose.connect(config.MONGODB_URI);
-  console.log("[DB] Connected to MongoDB Atlas");
-  return mongoose;
-}
 
 async function connectPostgreSQL() {
   const { Pool } = require("pg");
@@ -23,10 +20,7 @@ async function connectPostgreSQL() {
 }
 
 async function connectDatabase() {
-  if (config.DATABASE_TYPE === "postgresql") {
-    return { type: "postgresql", pool: await connectPostgreSQL() };
-  }
-  return { type: "mongodb", mongoose: await connectMongoDB() };
+  return { type: "postgresql", pool: await connectPostgreSQL() };
 }
 
-module.exports = { connectMongoDB, connectPostgreSQL, connectDatabase };
+module.exports = { connectPostgreSQL, connectDatabase };

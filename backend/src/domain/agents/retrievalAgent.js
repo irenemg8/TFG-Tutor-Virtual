@@ -53,9 +53,21 @@ class RetrievalAgent extends AgentInterface {
       classification: ragResult.classification || context.classification,
     };
 
-    // Update classification if the pipeline refined it
-    if (ragResult.classification) {
-      context.classification = ragResult.classification;
+    // Update classification.type if the pipeline refined it.
+    // BUG FIX (2026-04-27, dump-cazado): el código anterior hacía
+    //   context.classification = ragResult.classification;
+    // pero ragPipeline devuelve `classification: classification.type` (string),
+    // así que el objeto original — con .concepts, .proposed, .negated — se
+    // perdía. Eso rompía el conceptsBanner del tutorAgent (P1a) y cualquier
+    // otro consumer downstream que esperase el objeto. Ahora solo refinamos
+    // el .type, preservando el resto del objeto.
+    if (
+      ragResult.classification &&
+      typeof ragResult.classification === "string" &&
+      context.classification &&
+      typeof context.classification === "object"
+    ) {
+      context.classification.type = ragResult.classification;
     }
   }
 }
