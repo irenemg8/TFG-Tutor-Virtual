@@ -6,6 +6,7 @@ const InputGuardrailAgent = require("./inputGuardrailAgent");
 const ClassifierAgent = require("./classifierAgent");
 const RetrievalAgent = require("./retrievalAgent");
 const TutorAgent = require("./tutorAgent");
+const PedagogicalReviewerAgent = require("./pedagogicalReviewerAgent");
 const GuardrailAgent = require("./guardrailAgent");
 const PersistenceAgent = require("./persistenceAgent");
 
@@ -62,6 +63,8 @@ function createAgentRegistry(deps) {
       config: deps.config,
       debugLogger: deps.debugLogger,
     }),
+
+    pedagogicalReviewer: new PedagogicalReviewerAgent(),
 
     guardrail: new GuardrailAgent({
       guardrailPipeline: deps.guardrailPipeline,

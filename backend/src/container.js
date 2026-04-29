@@ -134,14 +134,24 @@ const container = {
     }
 
     // Guardrail pipeline (parallel + surgical-first + consolidated retry + budget)
-    const { createDefaultGuardrails } = require("./infrastructure/guardrails");
+    // Profile selection: GUARDRAIL_PROFILE=legacy keeps the pre-hexagonal set
+    // (premature/didactic/dataset_style still inside the safety pipeline).
+    // Default profile delegates those three to the PedagogicalReviewerAgent.
+    const { createGuardrailsForProfile } = require("./infrastructure/guardrails");
     const GuardrailPipeline = require("./domain/services/GuardrailPipeline");
     const trace = require("./infrastructure/events/pipelineDebugLogger");
+    const guardrailProfile = process.env.GUARDRAIL_PROFILE || "default";
+    const guardrailList = createGuardrailsForProfile(guardrailProfile);
+    console.log(
+      "[Container] GuardrailPipeline profile=" + guardrailProfile +
+      " (" + guardrailList.length + " guardrails: " +
+      guardrailList.map(function (g) { return g.id; }).join(", ") + ")"
+    );
     this.guardrailPipeline = new GuardrailPipeline({
-      guardrails: createDefaultGuardrails(),
+      guardrails: guardrailList,
       llmService: this.llmService,
-      budgetMs: Number(process.env.GUARDRAIL_BUDGET_MS || 45000),
-      minRetryBudgetMs: Number(process.env.GUARDRAIL_MIN_RETRY_BUDGET_MS || 10000),
+      budgetMs: Number(process.env.GUARDRAIL_BUDGET_MS || 20000),
+      minRetryBudgetMs: Number(process.env.GUARDRAIL_MIN_RETRY_BUDGET_MS || 8000),
       logger: trace,
     });
 

@@ -153,6 +153,20 @@ class TutoringOrchestrator {
       await this.agents.tutor.execute(ctx);
       this.emitEvent("agent_end", "tutor", { agent: "tutorAgent" });
 
+      // Stage 4.5: Pedagogical reviewer — deterministic style/scaffolding
+      // fixes BEFORE the safety guardrails. Replaces the legacy adapters
+      // PrematureConfirmation / DidacticExplanation / DatasetStyle in the
+      // default GUARDRAIL_PROFILE (legacy profile keeps them inside the
+      // pipeline for A/B comparison).
+      if (this.agents.pedagogicalReviewer) {
+        this.emitEvent("agent_start", "pedagogical_reviewer", { agent: "pedagogicalReviewerAgent" });
+        await this.agents.pedagogicalReviewer.execute(ctx);
+        this.emitEvent("agent_end", "pedagogical_reviewer", {
+          agent: "pedagogicalReviewerAgent",
+          corrections: ctx.pedagogicalCorrectionsApplied || [],
+        });
+      }
+
       // Stage 5: Validate (Guardrail)
       this.emitEvent("agent_start", "guardrail", {
         agent: "guardrailAgent",
