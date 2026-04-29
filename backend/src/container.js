@@ -78,6 +78,30 @@ const container = {
       console.warn("[Container] KG concept patterns not available:", err.message);
     }
 
+    // Load BM25 indices for every exercise dataset. Previously only the legacy
+    // ragMiddleware loaded these; with USE_ORCHESTRATOR=1 the new pipeline ran
+    // without BM25 (semantic-only fallback), silently degrading retrieval.
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      const ragConfig = require("./infrastructure/llm/config");
+      const { loadIndex } = require("./infrastructure/search/bm25");
+      const seenFiles = new Set();
+      const exerciseNums = Object.keys(ragConfig.EXERCISE_DATASET_MAP);
+      for (let i = 0; i < exerciseNums.length; i++) {
+        const num = Number(exerciseNums[i]);
+        const fileName = ragConfig.EXERCISE_DATASET_MAP[num];
+        const filePath = path.join(ragConfig.DATASETS_DIR, fileName);
+        const pairs = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        loadIndex(num, pairs);
+        seenFiles.add(fileName);
+      }
+      console.log("[Container] BM25 indices loaded for " +
+        exerciseNums.length + " exercises (" + seenFiles.size + " unique datasets)");
+    } catch (err) {
+      console.warn("[Container] BM25 indices not loaded:", err.message);
+    }
+
     // Health check: verify Chroma collections are populated. Non-fatal —
     // the system can still serve traffic with BM25 in-memory only, but we
     // log a clear warning so a forgotten ingestion is visible at boot.

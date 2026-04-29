@@ -35,7 +35,7 @@ const config = {
   OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || "60m",
   OLLAMA_STREAM_MAX_MS:
     parseInt(process.env.OLLAMA_STREAM_MAX_MS, 10) || 1800000,
-  OLLAMA_TIMEOUT_MS: parseInt(process.env.OLLAMA_TIMEOUT_MS, 10) || 180000,
+  OLLAMA_TIMEOUT_MS: parseInt(process.env.OLLAMA_TIMEOUT_MS, 10) || 60000,
   OLLAMA_CLASSIFIER_MODEL:
     process.env.OLLAMA_CLASSIFIER_MODEL || "qwen2.5:latest",
   OLLAMA_CLASSIFIER_TIMEOUT_MS:

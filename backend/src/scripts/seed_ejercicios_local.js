@@ -4,7 +4,7 @@
 /**
  * Seed script para desarrollo local (sin MongoDB).
  *
- * FUENTE PRIMARIA — `material-complementario/llm/contextos-ejercicios/
+ * FUENTE PRIMARIA — `backend/src/data/contextos-ejercicios/
  *   tutorContext_por_ejercicio.json`
  *   (datos pedagógicos de Irene; pueden estar incompletos o duplicados).
  *
@@ -31,12 +31,9 @@ require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env") });
 const fs = require("fs");
 const { Pool } = require("pg");
 
-const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
-const OHM_JSON = path.join(REPO_ROOT, "backend", "src", "data", "ohm_exercises.json");
-const CTX_JSON = path.join(
-  REPO_ROOT, "material-complementario", "llm",
-  "contextos-ejercicios", "tutorContext_por_ejercicio.json"
-);
+const DATA_DIR = path.resolve(__dirname, "..", "data");
+const OHM_JSON = path.join(DATA_DIR, "ohm_exercises.json");
+const CTX_JSON = path.join(DATA_DIR, "contextos-ejercicios", "tutorContext_por_ejercicio.json");
 
 const RESET = process.argv.includes("--reset");
 

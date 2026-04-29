@@ -58,44 +58,64 @@ let kgConceptPatterns = [];
 
 function initRAG() {
   try {
-    // Load knowledge graph into memory
-    loadKG();
-    try {
-      kgConceptPatterns = loadConceptPatternsFromKG(getAllEntries());
-      console.log("[RAG] Loaded " + kgConceptPatterns.length + " KG concept patterns for state-reveal guardrail");
-    } catch (kgErr) {
-      console.warn("[RAG] Could not derive concept patterns from KG:", kgErr.message);
-    }
-
-    // Build canonical mapping and load BM25 for all exercises
+    // Build canonical mapping (always — needed even when the container already
+    // loaded the KG and BM25 indices). Maps each exercise number to the first
+    // one that uses the same dataset file (so e.g. exercise 2 reuses the
+    // ChromaDB collection of exercise 1).
     const fileToFirst = {};
     const exerciseNums = Object.keys(config.EXERCISE_DATASET_MAP);
-
     for (let i = 0; i < exerciseNums.length; i++) {
       const num = Number(exerciseNums[i]);
       const fileName = config.EXERCISE_DATASET_MAP[num];
-
-      // Track first exercise number for each dataset file (for ChromaDB collection lookup)
       if (fileToFirst[fileName] == null) {
         fileToFirst[fileName] = num;
       }
       canonicalExercise[num] = fileToFirst[fileName];
+    }
 
-      // Load BM25 index for this exercise
-      const filePath = path.join(config.DATASETS_DIR, fileName);
-      const raw = fs.readFileSync(filePath, "utf-8");
-      const pairs = JSON.parse(raw);
-      loadIndex(num, pairs);
+    // KG + BM25 are now loaded by the container. Only recompute concept
+    // patterns from the in-memory KG if they're not already exposed by the
+    // container (initial boot ordering, tests that bypass the container).
+    if (container._initialized && Array.isArray(container.kgConceptPatterns) && container.kgConceptPatterns.length > 0) {
+      kgConceptPatterns = container.kgConceptPatterns;
+    } else {
+      try {
+        loadKG();
+      } catch (kgErr) {
+        console.warn("[RAG] KG load fallback failed:", kgErr.message);
+      }
+      try {
+        kgConceptPatterns = loadConceptPatternsFromKG(getAllEntries());
+      } catch (e) {
+        console.warn("[RAG] Could not derive concept patterns from KG:", e.message);
+      }
+      // Fallback BM25 load — only when the container hasn't done it for us.
+      for (let i = 0; i < exerciseNums.length; i++) {
+        const num = Number(exerciseNums[i]);
+        const fileName = config.EXERCISE_DATASET_MAP[num];
+        try {
+          const filePath = path.join(config.DATASETS_DIR, fileName);
+          const pairs = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+          loadIndex(num, pairs);
+        } catch (e) {
+          console.warn("[RAG] BM25 fallback load failed for ex " + num + ":", e.message);
+        }
+      }
     }
 
     ragReady = true;
-    console.log("[RAG] Ready");
+    console.log("[RAG] Ready (kgPatterns=" + kgConceptPatterns.length + ")");
   } catch (err) {
     console.error("[RAG] Init failed:", err.message);
   }
 }
 
-initRAG();
+// Lazy init: deferred until the first /chat/stream request, by which time the
+// container has finished initialize() and we can reuse what it already loaded
+// (KG + BM25 indices) instead of re-reading the files.
+function ensureRagReady() {
+  if (!ragReady) initRAG();
+}
 
 // Extract exercise number from title ("Ejercicio 1" → 1)
 function getExerciseNum(ejercicio) {
@@ -193,7 +213,10 @@ async function callOllama(messages) {
         temperature: config.OLLAMA_TEMPERATURE,
       },
     },
-    { timeout: 180000, ...axiosOpts() }
+    {
+      timeout: Number(process.env.OLLAMA_TIMEOUT_MS || 60000),
+      ...axiosOpts(),
+    }
   );
   return (response.data.message && response.data.message.content) || "";
 }
@@ -331,6 +354,9 @@ function logFallthrough(reason, details) {
 
 // Middleware: intercepts POST /chat/stream
 router.post("/chat/stream", async function (req, res, next) {
+  // Lazy init on first request — by now the container has finished
+  // initialize() so we reuse its KG/BM25 instead of double-loading.
+  ensureRagReady();
   // Skip if RAG is disabled or not initialized
   if (!config.RAG_ENABLED || !ragReady) {
     logFallthrough("rag_disabled_or_not_ready", { RAG_ENABLED: config.RAG_ENABLED, ragReady: ragReady });

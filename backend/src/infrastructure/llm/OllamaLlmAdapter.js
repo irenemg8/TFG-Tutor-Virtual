@@ -27,7 +27,9 @@ class OllamaLlmAdapter extends ILlmService {
     this.defaultNumPredict = opts.numPredict != null ? opts.numPredict : config.OLLAMA_NUM_PREDICT;
     this.defaultNumCtx = opts.numCtx != null ? opts.numCtx : config.OLLAMA_NUM_CTX;
     this.keepAlive = opts.keepAlive || config.OLLAMA_KEEP_ALIVE;
-    this.defaultTimeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 180000;
+    this.defaultTimeoutMs = opts.timeoutMs != null
+      ? opts.timeoutMs
+      : Number(process.env.OLLAMA_TIMEOUT_MS || 60000);
     this.insecureTls = process.env.OLLAMA_INSECURE_TLS === "1";
   }
 
