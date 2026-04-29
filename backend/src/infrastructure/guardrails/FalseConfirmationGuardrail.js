@@ -24,7 +24,7 @@ class FalseConfirmationGuardrail extends IGuardrail {
 
   check(response, ctx) {
     const classification = ctx && ctx.classification;
-    const wrongTypes = ["wrong_answer", "wrong_concept", "single_word"];
+    const wrongTypes = ["wrong_answer", "wrong_concept"];
     if (wrongTypes.indexOf(classification) < 0) return { violated: false };
     if (typeof response !== "string") return { violated: false };
 

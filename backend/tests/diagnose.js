@@ -114,8 +114,19 @@ const c4 = classifyQuery("r1 r2 r4", correct, evalEl);
 assert("'r1 r2 r4' → correct_no_reasoning", c4.type === "correct_no_reasoning", "got: " + c4.type);
 const c5 = classifyQuery("ni idea", correct, evalEl);
 assert("'ni idea' → dont_know", c5.type === "dont_know", "got: " + c5.type);
+// 'sí' without any tutor question context → wrong_answer (nothing concrete to evaluate).
+// The legacy classifier mapped this to "single_word"; that bucket has been removed —
+// short non-elements without context are treated as wrong_answer so the tutor demands
+// the student rephrase or elaborate.
 const c6 = classifyQuery("sí", correct, evalEl);
-assert("'sí' → single_word (NOT confirmation)", c6.type === "single_word", "got: " + c6.type);
+assert("'sí' (no tutor context) → wrong_answer", c6.type === "wrong_answer", "got: " + c6.type);
+// 'sí' answering a CLOSED diagnostic question → closed_answer (don't escalate).
+const c6b = classifyQuery("sí", correct, evalEl, "Vale, ¿tienes alguna duda sobre el circuito?");
+assert("'sí' replying to '¿tienes dudas?' → closed_answer", c6b.type === "closed_answer", "got: " + c6b.type);
+// 'sí' answering a CLOSED reasoning question → correct_no_reasoning (still demand a why).
+const c6c = classifyQuery("sí", correct, evalEl, "¿Es R3 una resistencia que conduce corriente?");
+assert("'sí' replying to closed reasoning question → correct_no_reasoning",
+  c6c.type === "correct_no_reasoning", "got: " + c6c.type);
 
 // ─── 6. ELEMENT_NAMING retry hint plagiarism ────────────────────────────────
 section("6. ElementNaming retry hint contains a quotable example");

@@ -37,9 +37,16 @@ class RetrievalAgent extends AgentInterface {
       return;
     }
 
+    // Use canonical exercise number for retrieval (e.g. ex.2 shares dataset
+    // and Chroma collection with ex.1). contextAgent populates this; falls
+    // back to exerciseNum if missing for any reason.
+    const searchNum = context.canonicalExerciseNum != null
+      ? context.canonicalExerciseNum
+      : context.exerciseNum;
+
     const ragResult = await this.runFullPipeline(
       context.userMessage,
-      context.exerciseNum,
+      searchNum,
       context.correctAnswer,
       context.userId,
       context.evaluableElements,

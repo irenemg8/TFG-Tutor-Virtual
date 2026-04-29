@@ -186,7 +186,7 @@ function formatClassificationHint(classification, correctAnswer, lang) {
 
   var hints = {
     dont_know: "The student does not know where to start. Ask ONE question about a fundamental concept (e.g., 'What conditions does a component need for current to flow through it?'). Do NOT mention specific elements.",
-    single_word: "The student gave an answer without reasoning. Ask them to explain WHY they think that. Do not move forward until they reason.",
+    closed_answer: "The student answered yes/no to a diagnostic question (e.g., '¿tienes dudas?'). Acknowledge briefly and either close gracefully or move to the next step. Do NOT escalate or demand reasoning for this turn.",
     wrong_answer: "The student gave an incorrect answer. Ask them to explain their reasoning. If you detect an alternative conception (AC), focus on challenging THAT concept with a Socratic question. Do NOT mention specific elements or reveal states.",
     correct_no_reasoning: "The student got the right answer but has not explained why. Ask them to justify their answer using concepts. Do NOT accept the answer as correct until they reason. Do NOT use phrases like 'Perfect', 'Correct', 'Very good', 'Exactly'. Indicate they are on the right track but you need them to explain their reasoning.",
     correct_wrong_reasoning: "The student got the right answer but uses a wrong concept. Focus on correcting the alternative conception with a Socratic question about the concept, NOT about specific elements. Do NOT use phrases like 'Perfect', 'Correct', 'Very good', 'Exactly'. Acknowledge they are on the right track but challenge the wrong reasoning.",
@@ -204,7 +204,7 @@ function formatClassificationHint(classification, correctAnswer, lang) {
   // to a Socratic sub-question (not giving the final answer). In this case, soften
   // aggressive hints so the LLM can evaluate the response using conversation history.
   var noElementsMentioned = classification.resistances.length === 0;
-  var aggressiveTypes = ["wrong_concept", "wrong_answer", "single_word"];
+  var aggressiveTypes = ["wrong_concept", "wrong_answer"];
   var isAggressiveType = aggressiveTypes.indexOf(classification.type) >= 0;
 
   if (noElementsMentioned && isAggressiveType) {
@@ -276,12 +276,19 @@ async function loadStudentHistory(userId) {
     const tags = Object.keys(errorCounts);
     if (tags.length === 0) return "";
 
+    // Show only the top-3 most frequent ACs to keep the prompt compact and
+    // weight the LLM towards what truly recurs. Long histories used to bury
+    // strong signals among noise and inflated num_ctx unnecessarily.
+    const topTags = tags
+      .sort(function (a, b) { return errorCounts[b] - errorCounts[a]; })
+      .slice(0, 3);
+
     let text = "[STUDENT HISTORY]\n";
-    text += "This student has previously shown these misconceptions:\n";
-    for (const tag of tags) {
+    text += "This student has previously shown these recurring misconceptions:\n";
+    for (const tag of topTags) {
       text += "- " + tag + " (" + errorCounts[tag] + " times)\n";
     }
-    text += "Pay special attention to these recurring errors.\n\n";
+    text += "Pay special attention to these.\n\n";
     return text;
   } catch (err) {
     console.error("Error loading student history:", err.message);
@@ -364,10 +371,11 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
     return result;
   }
 
-  if (classification.type === types.singleWord) {
-    emitEvent("routing_decision", "end", { classification: classification.type, decision: "demand_reasoning", path: "single_word → demand_reasoning" });
+  if (classification.type === types.closedAnswer) {
+    // Yes/no replies to diagnostic questions: acknowledge & advance.
+    emitEvent("routing_decision", "end", { classification: classification.type, decision: "acknowledge_diagnostic", path: "closed_answer → acknowledge_diagnostic" });
     result.augmentation = formatClassificationHint(classification, correctAnswer, lang);
-    result.decision = "demand_reasoning";
+    result.decision = "acknowledge_diagnostic";
     return result;
   }
 

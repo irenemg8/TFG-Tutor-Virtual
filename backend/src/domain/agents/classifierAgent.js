@@ -23,12 +23,28 @@ class ClassifierAgent extends AgentInterface {
   }
 
   async execute(context) {
+    // The classifier now needs the tutor's last message to disambiguate
+    // short yes/no answers from "single word" wrong answers. The
+    // contextAgent already loaded history, so we extract it locally.
+    const lastAssistantText = this._lastAssistantText(context.history);
+
     context.classification = this.classifyQuery(
       context.userMessage,
       context.correctAnswer,
-      context.evaluableElements
+      context.evaluableElements,
+      lastAssistantText
     );
     this.debugLogger.logClassify(context.userMessage, context.classification);
+  }
+
+  _lastAssistantText(history) {
+    if (!Array.isArray(history)) return "";
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i] && history[i].role === "assistant") {
+        return history[i].content || "";
+      }
+    }
+    return "";
   }
 
   canSkip() {

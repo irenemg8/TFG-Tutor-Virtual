@@ -126,7 +126,7 @@ const confirmPhrases = getAllPatterns(confirmDict);
 // classification must be wrong_answer, wrong_concept, or similar
 function checkFalseConfirmation(response, classification) {
   // Only check when the student's answer is wrong
-  const wrongTypes = ["wrong_answer", "wrong_concept", "single_word"];
+  const wrongTypes = ["wrong_answer", "wrong_concept"];
   var isWrong = false;
   for (let i = 0; i < wrongTypes.length; i++) {
     if (classification === wrongTypes[i]) {

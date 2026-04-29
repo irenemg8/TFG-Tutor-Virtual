@@ -37,6 +37,14 @@ class ContextAgent extends AgentInterface {
     context.correctAnswer = ejercicio.getCorrectAnswer();
     context.evaluableElements = ejercicio.getEvaluableElements();
 
+    // Canonical exercise number for retrieval. Two exercises that share the
+    // same dataset file (e.g. ex.1 and ex.2 both use dataset_exercise_1.json)
+    // also share the same ChromaDB collection — so retrieval must use the
+    // FIRST exercise number that maps to that dataset, otherwise the search
+    // hits an empty collection and degrades silently to BM25 only. The legacy
+    // ragMiddleware did this; the orchestrator path was missing it.
+    context.canonicalExerciseNum = this._canonicalExerciseNum(context.exerciseNum);
+
     // 2. Load or create interaccion
     if (context.interaccionId) {
       const exists = await this.interaccionRepo.existsForUser(
@@ -71,7 +79,7 @@ class ContextAgent extends AgentInterface {
       "correct_good_reasoning",
       "partial_correct",
     ];
-    const wrongTypes = ["wrong_answer", "wrong_concept", "single_word"];
+    const wrongTypes = ["wrong_answer", "wrong_concept"];
 
     const [
       prevCorrectTurns,
@@ -193,21 +201,38 @@ class ContextAgent extends AgentInterface {
     return overlap / wordsA.length;
   }
 
+  _canonicalExerciseNum(exerciseNum) {
+    if (exerciseNum == null) return exerciseNum;
+    const map = (this.config && this.config.EXERCISE_DATASET_MAP) || null;
+    if (!map) return exerciseNum;
+    const target = map[exerciseNum];
+    if (!target) return exerciseNum;
+    // Walk all entries of the map; the canonical exercise is the FIRST
+    // (smallest) exercise number whose dataset file matches.
+    let canonical = exerciseNum;
+    let bestNum = Infinity;
+    const keys = Object.keys(map);
+    for (let i = 0; i < keys.length; i++) {
+      const num = Number(keys[i]);
+      if (map[num] === target && num < bestNum) {
+        bestNum = num;
+        canonical = num;
+      }
+    }
+    return canonical;
+  }
+
   _detectFrustration(message) {
-    const lower = message.toLowerCase();
-    const patterns = [
-      "ya te lo he dicho",
-      "te lo acabo de decir",
-      "no me entiendes",
-      "no entiendes",
-      "ya lo he dicho",
-      "te lo he explicado",
-      "already told you",
-      "i already said",
-      "you don't understand",
-      "ja t'ho he dit",
-    ];
-    return patterns.some((p) => lower.includes(p));
+    // Use the multilingual frustration dictionary from languageManager so any
+    // phrase added there propagates to the orchestrator path. Previously this
+    // method had a hardcoded list that drifted behind the legacy ragMiddleware.
+    const { getAllPatterns, frustrationPatterns } = require("../services/languageManager");
+    const lower = (message || "").toLowerCase();
+    const patterns = getAllPatterns(frustrationPatterns);
+    for (let i = 0; i < patterns.length; i++) {
+      if (lower.includes(patterns[i])) return true;
+    }
+    return false;
   }
 }
 

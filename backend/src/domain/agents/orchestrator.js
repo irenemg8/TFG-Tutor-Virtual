@@ -155,6 +155,14 @@ class TutoringOrchestrator {
         triggered: ctx.guardrailsTriggered,
       });
 
+      // Last-resort safety net: if the LLM emitted <FIN_EJERCICIO> in a
+      // turn that should NOT close the exercise (i.e. classification is not
+      // correct_good_reasoning OR we haven't accumulated enough correct
+      // turns), strip the token so the frontend doesn't end the session
+      // prematurely. The legacy ragMiddleware did this; without it the
+      // orchestrator path could close mid-conversation.
+      this._stripUnauthorizedFinToken(ctx);
+
       ctx.timing.pipelineMs = Date.now() - ctx.timing.pipelineStartMs;
 
       // Stage 6: Persist
@@ -205,6 +213,26 @@ class TutoringOrchestrator {
     const prevCorrectTurns = (ctx && ctx.loopState && ctx.loopState.prevCorrectTurns) || 0;
 
     return cls === "correct_good_reasoning" && prevCorrectTurns >= 2;
+  }
+
+  /**
+   * Defense in depth: strip <FIN_EJERCICIO> from the LLM output unless the
+   * orchestrator's own deterministic-finish criteria are met
+   * (correct_good_reasoning + ≥2 prior correct turns). The legacy path did
+   * this in ragMiddleware:981-986; the orchestrator path was missing it,
+   * so the LLM could close the session by emitting the token on its own.
+   */
+  _stripUnauthorizedFinToken(ctx) {
+    const FIN = "<FIN_EJERCICIO>";
+    const final = ctx && ctx.finalResponse;
+    if (typeof final !== "string" || final.indexOf(FIN) === -1) return;
+    if (ctx.deterministicFinish) return;
+    const cls = ctx.classification && ctx.classification.type;
+    const prevCorrect = (ctx.loopState && ctx.loopState.prevCorrectTurns) || 0;
+    const authorized = cls === "correct_good_reasoning" && prevCorrect >= 2;
+    if (authorized) return;
+    ctx.finalResponse = final.split(FIN).join("").trimEnd();
+    ctx.finStripped = true;
   }
 
   /**

@@ -19,7 +19,7 @@ function stripAccents(str) {
 const types = {
   greeting: "greeting",                                 // Hola, ¿qué tal?
   dontKnow: "dont_know",                                // No lo sé
-  singleWord: "single_word",                            // Todas
+  closedAnswer: "closed_answer",                        // "Sí" / "No" replying to a closed-form tutor question
   wrongAnswer: "wrong_answer",                          // R5
   correctNoReasoning: "correct_no_reasoning",           // R1, R2 y R4
   correctWrongReasoning: "correct_wrong_reasoning",     // R1, R2 y R4 porque forman un divisor de tensión
@@ -319,12 +319,91 @@ function isDontKnow(message) {
 }
 
 /*------------------------------------------------------
+  Closed-question detection (heuristic — multilingual)
+  ----------------------------------------------------
+  Returns { isClosed, isDiagnostic } for a tutor message. A closed question
+  starts with "¿Es...?", "¿Está...?", "¿Tienes...?", "¿Puede...?", etc.,
+  and expects a yes/no answer.
+  isDiagnostic = the question is checking the student's state ("¿tienes
+  dudas?", "¿quieres repasar?") rather than asking them to commit to a
+  reasoning step. A yes/no answer to a diagnostic question is fully valid
+  and should NOT trigger demand_reasoning.
+--------------------------------------------------------*/
+function detectClosedQuestion(lastAssistantText) {
+  if (typeof lastAssistantText !== "string" || lastAssistantText.length === 0) {
+    return { isClosed: false, isDiagnostic: false };
+  }
+  // Last interrogative sentence (with or without leading ¿).
+  var matches = lastAssistantText.match(/[^.!?]*\?/g);
+  if (!matches || matches.length === 0) return { isClosed: false, isDiagnostic: false };
+  var last = matches[matches.length - 1].toLowerCase().trim();
+  // Remove leading ¿
+  last = last.replace(/^¿/, "").trim();
+
+  // Closed-form openers across es / val / en. The patterns must match the
+  // BEGINNING of the last interrogative — open-ended interrogatives like
+  // "¿qué...?" or "¿por qué...?" are intentionally excluded.
+  var closedOpeners = [
+    // es — yes/no openers
+    "es ", "es la ", "es el ", "es un", "es una",
+    "está ", "estan ", "están ", "estás ", "estoy",
+    "tienes", "te has ", "te queda ", "tendrías", "te apetece",
+    "puedes", "puede ", "podrías",
+    "has ", "hay ", "hace falta", "necesitas", "necesitarías",
+    "crees", "consideras", "sabes", "entiendes", "ves ",
+    "sigues", "quieres", "quisieras", "deseas",
+    // val
+    "tens", "t'has ", "te queda", "saps", "pots", "vols", "vols saber",
+    "està ", "estan ", "estàs", "creus",
+    // en
+    "is ", "are ", "do you", "did you", "have you", "has the", "have we",
+    "can you", "could you", "would you", "should you",
+    "is there", "are there", "do we",
+  ];
+  var isClosed = false;
+  for (var i = 0; i < closedOpeners.length; i++) {
+    if (last.indexOf(closedOpeners[i]) === 0) { isClosed = true; break; }
+  }
+
+  // Diagnostic markers — meta-questions about the student's state, not the
+  // exercise itself. A yes/no here is a legitimate final answer.
+  var diagnosticMarkers = [
+    // es
+    "duda", "dudas", "alguna duda", "te apetece", "quieres repasar",
+    "te ha quedado", "te ha quedado claro", "te queda claro", "lo entiendes",
+    "necesitas ayuda", "quieres seguir", "estás seguro", "estás segura",
+    "todo bien", "vamos bien",
+    // val
+    "dubte", "dubtes", "vols repassar", "ho entens", "necessites ajuda",
+    // en
+    "any doubts", "any questions", "do you understand", "are you sure",
+    "want to review", "need help",
+  ];
+  var isDiagnostic = false;
+  if (isClosed) {
+    for (var j = 0; j < diagnosticMarkers.length; j++) {
+      if (last.indexOf(diagnosticMarkers[j]) >= 0) { isDiagnostic = true; break; }
+    }
+  }
+  return { isClosed: isClosed, isDiagnostic: isDiagnostic };
+}
+
+// Yes/no detector — used in conjunction with detectClosedQuestion.
+function isYesNoAnswer(message) {
+  var trimmed = (message || "").trim().toLowerCase();
+  if (trimmed.length === 0) return false;
+  return /^(s[ií]|no|vale|ok|okay|sip|nop|claro|por supuesto|nope|yep|yes|yeah|yup|nah|sure|of course|exactly|exacto|exacte)\b/.test(trimmed);
+}
+
+/*------------------------------------------------------
   Classify a student message based on:
     - correctAnswer: array of correct elements ["R1", "R2", "R4"]
     - evaluableElements: (optional) all possible answer elements ["R1","R2","R3","R4","R5"]
+    - lastAssistantText: (optional) last tutor message — enables yes/no
+      answers to closed-form tutor questions to be classified properly.
   Returns: { type, resistances, proposed, negated, hasReasoning, concepts }
 --------------------------------------------------------*/
-function classifyQuery(userMessage, correctAnswer, evaluableElements) {
+function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssistantText) {
   // Extract mentioned elements with positions (generic or regex fallback)
   var mentions = extractMentionedElements(userMessage, evaluableElements);
 
@@ -357,9 +436,24 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements) {
     return { type: types.dontKnow, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
   }
 
-  // 3. Single word / short answer without elements
+  // 3. Short answer without elements (formerly "single_word"). Now we look
+  //    at the tutor's last question. If it was a closed yes/no question and
+  //    the student answered yes/no, the answer is VALID — we don't punish
+  //    them for being concise. Diagnostic checks ("¿tienes dudas?") are
+  //    accepted as final; closed reasoning checks fall through to the
+  //    correct_no_reasoning path so the tutor still asks for the why.
   if (userMessage.trim().length < 15 && allMentioned.length === 0) {
-    return { type: types.singleWord, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
+    var ctxQ = detectClosedQuestion(lastAssistantText);
+    var yesNo = isYesNoAnswer(userMessage);
+    if (ctxQ.isClosed && yesNo) {
+      if (ctxQ.isDiagnostic) {
+        return { type: types.closedAnswer, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
+      }
+      return { type: types.correctNoReasoning, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
+    }
+    // No closed-question context (or non yes/no short answer): treat as a
+    // wrong answer — there's nothing concrete to evaluate.
+    return { type: types.wrongAnswer, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
   }
 
   // 4. Check if PROPOSED elements match correct answer (ignoring negated ones)
@@ -450,4 +544,4 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements) {
   return { type: types.wrongAnswer, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
 }
 
-module.exports = { classifyQuery, extractResistances, extractMentionedElements, types };
+module.exports = { classifyQuery, extractResistances, extractMentionedElements, detectClosedQuestion, isYesNoAnswer, types };

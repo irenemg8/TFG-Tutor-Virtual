@@ -48,9 +48,10 @@ class TutorAgent extends AgentInterface {
       if (detectedConcepts.length > 0) {
         conceptsBanner +=
           "The student explicitly used these concept(s): " + detectedConcepts.join(", ") + ".\n" +
-          "Address these concepts directly in your Socratic question. If their use suggests an " +
-          "Alternative Conception (AC), focus your question on challenging that specific concept " +
-          "rather than asking about specific elements.\n";
+          "Test their use of the concept by asking a question about how it applies to THIS circuit. " +
+          "NEVER ask the student to define the concept (no 'define X', no 'what do you understand by Y'). " +
+          "If their use suggests an Alternative Conception (AC), challenge that specific concept rather " +
+          "than asking about specific elements.\n";
       }
       if (acRefs.length > 0) {
         conceptsBanner +=
@@ -61,6 +62,37 @@ class TutorAgent extends AgentInterface {
       conceptsBanner += "\n";
     }
 
+    // 1c. Pedagogical safety banners that the legacy ragMiddleware injected
+    //    but that were lost in the hexagonal refactor. Each one is a hard
+    //    instruction tied to a specific classification/state combination.
+    const cls = context.classification && context.classification.type;
+    const prevCorrect = (context.loopState && context.loopState.prevCorrectTurns) || 0;
+
+    let dontKnowHint = "";
+    if (cls === "dont_know") {
+      dontKnowHint =
+        "[STUDENT DOESN'T KNOW]\n" +
+        "CRITICAL: The student just said they don't know. You MUST:\n" +
+        "- NOT explain concepts. NOT give definitions. NOT say 'this means that...' or 'when a resistor is X, then Y'.\n" +
+        "- NOT reveal internal states (short-circuited, open, same potential, etc.).\n" +
+        "- Lower the scaffolding: ask ONE simpler, more concrete question about a VISIBLE feature of the circuit (e.g. 'Look at where the two terminals of one of the elements are connected. Do you notice anything?').\n" +
+        "- Keep the response to a SINGLE question, no preamble, no explanation.\n\n";
+    }
+
+    let demandJustificationHint = "";
+    if ((cls === "correct_no_reasoning" || cls === "correct_wrong_reasoning") && prevCorrect >= 1) {
+      demandJustificationHint =
+        "[DEMAND JUSTIFICATION]\n" +
+        "CRITICAL: The student has given the CORRECT elements " + prevCorrect +
+        " time(s) WITHOUT justifying them, or with INCORRECT reasoning.\n" +
+        "You MUST NOT accept the answer as final. You MUST NOT emit <FIN_EJERCICIO>.\n" +
+        "Your ONLY task this turn is:\n" +
+        "1. Briefly acknowledge they have the right elements (do NOT say 'Perfect' / 'Correcto').\n" +
+        "2. Ask DIRECTLY: 'Explica por qué' / 'Explain why', requiring them to use a concept such as cortocircuito, circuito abierto, divisor de tensión, ley de Ohm or Kirchhoff.\n" +
+        "3. Do NOT name the correct elements in your question. Use generic wording like 'esos elementos' / 'those elements'.\n" +
+        "4. Do NOT provide the reasoning yourself. The student must produce it.\n\n";
+    }
+
     // 2. Build conversation progress hint
     const progressHint = this._buildProgressHint(context.history);
 
@@ -68,9 +100,12 @@ class TutorAgent extends AgentInterface {
     let repetitionHint = "";
     if (context.loopState.tutorRepeating) {
       repetitionHint =
-        "[ANTI-REPETITION] You have been asking the same question repeatedly. " +
-        "Change your approach: try a different angle, give a concrete hint, " +
-        "or ask about a different aspect of the problem.\n\n";
+        "[ANTI-LOOP]\n" +
+        "CRITICAL: You have been asking similar questions repeatedly and the student is stuck.\n" +
+        "DO NOT ask any question you have asked before. Instead:\n" +
+        "1. Briefly acknowledge what the student has said correctly so far.\n" +
+        "2. Give a CONCRETE HINT about the circuit (without revealing the answer).\n" +
+        "3. Ask a NEW, DIFFERENT question that the student has NOT been asked before.\n\n";
     }
 
     let frustrationHint = "";
@@ -114,6 +149,8 @@ class TutorAgent extends AgentInterface {
       basePrompt +
       "\n\n" +
       conceptsBanner +
+      dontKnowHint +
+      demandJustificationHint +
       progressHint +
       repetitionHint +
       frustrationHint +
@@ -182,8 +219,8 @@ class TutorAgent extends AgentInterface {
    * to the situation:
    *   - correct_no_reasoning: stop asking conceptual questions; ask the
    *     student to justify ONE specific element they already named.
-   *   - wrong_answer / wrong_concept / single_word: stop asking the same
-   *     Socratic question; offer a concrete CONCEPT-level partial hint.
+   *   - wrong_answer / wrong_concept: stop asking the same Socratic
+   *     question; offer a concrete CONCEPT-level partial hint.
    *   - dont_know: stop asking generic questions; introduce a concrete
    *     definitional anchor and ask the student to react.
    */
@@ -203,7 +240,7 @@ class TutorAgent extends AgentInterface {
         "of elements. Do NOT name elements yourself.\n\n"
       );
     }
-    if (currentType === "wrong_answer" || currentType === "wrong_concept" || currentType === "single_word") {
+    if (currentType === "wrong_answer" || currentType === "wrong_concept") {
       return (
         "[ESCALATE — STUDENT IS STUCK ON WRONG TRACK (streak=" + streak + ")]\n" +
         "The student has given the same kind of wrong answer multiple times. " +

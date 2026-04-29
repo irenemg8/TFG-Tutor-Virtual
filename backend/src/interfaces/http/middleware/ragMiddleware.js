@@ -243,7 +243,7 @@ async function countConsecutiveWrongTurns(interaccionId) {
   const r = repos(); if (!r) return 0;
   return r.messageRepo.countConsecutiveFromEnd(
     interaccionId,
-    ["wrong_answer", "wrong_concept", "single_word"]
+    ["wrong_answer", "wrong_concept"]
   );
 }
 

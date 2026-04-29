@@ -271,7 +271,9 @@ async function main() {
     var testCases = [
       { msg: "hola", correctAnswer: ["R1"], expected: "greeting" },
       { msg: "no sé", correctAnswer: ["R1"], expected: "dont_know" },
-      { msg: "todas", correctAnswer: ["R1", "R2", "R4"], expected: "single_word" },
+      // After removing the "single_word" bucket, short messages without
+      // elements and without tutor-context fall into wrong_answer.
+      { msg: "todas", correctAnswer: ["R1", "R2", "R4"], expected: "wrong_answer" },
     ];
 
     var classifierOk = true;
