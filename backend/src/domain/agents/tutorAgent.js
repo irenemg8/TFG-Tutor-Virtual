@@ -62,6 +62,35 @@ class TutorAgent extends AgentInterface {
       conceptsBanner += "\n";
     }
 
+    // 1b-bis. Recurrent AC banner: when the student is showing a concept
+    //         this turn that matches one of their TOP recurring ACs from
+    //         past sessions, surface it loudly. AcTrackerAgent populates
+    //         context.userACHistory; we cross-reference it with concepts
+    //         the classifier just detected and with the exercise's ac_refs
+    //         so we don't shout about ACs unrelated to this exercise.
+    const userHistory = (context.userACHistory && context.userACHistory.topACs) || [];
+    if (userHistory.length > 0 && (detectedConcepts.length > 0 || acRefs.length > 0)) {
+      const acRefsLower = acRefs.map(function (a) { return String(a).toLowerCase(); });
+      const conceptsLower = detectedConcepts.map(function (c) { return String(c).toLowerCase(); });
+      const recurrent = [];
+      for (let i = 0; i < userHistory.length; i++) {
+        const tag = String(userHistory[i].ac).toLowerCase();
+        const matchesExerciseAc = acRefsLower.indexOf(tag) >= 0;
+        const matchesConcept = conceptsLower.some(function (c) { return tag.indexOf(c) >= 0 || c.indexOf(tag) >= 0; });
+        if (matchesExerciseAc || matchesConcept) {
+          recurrent.push(userHistory[i]);
+        }
+      }
+      if (recurrent.length > 0) {
+        conceptsBanner +=
+          "[RECURRENT AC FOR THIS USER]\n" +
+          "This student has hit the following AC(s) before across past sessions: " +
+          recurrent.map(function (r) { return r.ac + " (×" + r.count + ")"; }).join(", ") + ".\n" +
+          "The signal is strong: focus your Socratic question on challenging that AC " +
+          "rather than asking generic questions. Do NOT name elements or reveal states.\n\n";
+      }
+    }
+
     // 1c. Pedagogical safety banners that the legacy ragMiddleware injected
     //    but that were lost in the hexagonal refactor. Each one is a hard
     //    instruction tied to a specific classification/state combination.

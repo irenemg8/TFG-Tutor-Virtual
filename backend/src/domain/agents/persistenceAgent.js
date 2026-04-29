@@ -42,6 +42,13 @@ class PersistenceAgent extends AgentInterface {
       decision: context.ragResult?.decision || null,
       isCorrectAnswer: context.classification?.isCorrectAnswer ?? null,
       sourcesCount: context.ragResult?.sources?.length || 0,
+      // Persist the rule-based concepts the classifier flagged so the
+      // AcTrackerAgent can rebuild long-term AC evidence in future
+      // sessions, even if this interaction is later abandoned without
+      // a final Resultado.
+      concepts: Array.isArray(context.classification?.concepts)
+        ? context.classification.concepts
+        : [],
       guardrails: context.guardrailsTriggered,
       timing: {
         pipelineMs: context.timing.pipelineMs,

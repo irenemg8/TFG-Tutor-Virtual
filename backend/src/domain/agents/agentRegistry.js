@@ -1,6 +1,7 @@
 "use strict";
 
 const ContextAgent = require("./contextAgent");
+const AcTrackerAgent = require("./acTrackerAgent");
 const InputGuardrailAgent = require("./inputGuardrailAgent");
 const ClassifierAgent = require("./classifierAgent");
 const RetrievalAgent = require("./retrievalAgent");
@@ -35,6 +36,11 @@ function createAgentRegistry(deps) {
       interaccionRepo: deps.interaccionRepo,
       messageRepo: deps.messageRepo,
       config: deps.config,
+    }),
+
+    acTracker: new AcTrackerAgent({
+      resultadoRepo: deps.resultadoRepo,
+      messageRepo: deps.messageRepo,
     }),
 
     inputGuardrail: new InputGuardrailAgent({

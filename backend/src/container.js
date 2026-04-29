@@ -158,6 +158,7 @@ const container = {
       ejercicioRepo: this.ejercicioRepo,
       interaccionRepo: this.interaccionRepo,
       messageRepo: this.messageRepo,
+      resultadoRepo: this.resultadoRepo,
       llmService: this.llmService,
       guardrailPipeline: this.guardrailPipeline,
       kgConceptPatterns: this.kgConceptPatterns,

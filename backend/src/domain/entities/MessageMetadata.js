@@ -13,6 +13,10 @@ class MessageMetadata {
    * @param {number}  [props.studentResponseMs]
    * @param {object}  [props.guardrails]
    * @param {object}  [props.timing]
+   * @param {string[]} [props.concepts] - rule-based concepts detected by the
+   *   classifier this turn (e.g. ["divisor de tensión", "cortocircuito"]).
+   *   Persisted so AcTrackerAgent can rebuild long-term AC evidence even
+   *   for interactions that were abandoned without a final Resultado.
    */
   constructor(props) {
     this.classification = props.classification || null;
@@ -20,6 +24,7 @@ class MessageMetadata {
     this.isCorrectAnswer = props.isCorrectAnswer ?? null;
     this.sourcesCount = props.sourcesCount || 0;
     this.studentResponseMs = props.studentResponseMs || null;
+    this.concepts = Array.isArray(props.concepts) ? props.concepts : [];
 
     this.guardrails = {
       solutionLeak: props.guardrails?.solutionLeak || false,

@@ -80,6 +80,22 @@ class IMessageRepository {
   async getLastMessage(interaccionId) {
     throw new Error("Not implemented");
   }
+
+  /**
+   * Aggregate AC evidence (concept counts + classification counts) across
+   * ALL of a user's interactions — open, closed, or abandoned. Used by
+   * AcTrackerAgent to surface recurring misconceptions even when no final
+   * Resultado was persisted.
+   *
+   * @param {string} userId
+   * @returns {Promise<{
+   *   concepts: Array<{ concept: string, count: number }>,
+   *   classifications: Array<{ classification: string, count: number }>,
+   * }>}
+   */
+  async getAcEvidenceByUserId(userId) {
+    throw new Error("Not implemented");
+  }
 }
 
 module.exports = IMessageRepository;

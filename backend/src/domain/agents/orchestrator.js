@@ -65,6 +65,14 @@ class TutoringOrchestrator {
 
       if (ctx.fallthrough) return ctx;
 
+      // Stage 1.5: AC tracker (parallel with input guardrail).
+      // Loads the student's recurring Alternative Conceptions from past
+      // results so the TutorAgent can prioritise them when one matches a
+      // concept used in this turn. No LLM, just a DB read.
+      const acTrackerPromise = this.agents.acTracker
+        ? this.agents.acTracker.execute(ctx)
+        : Promise.resolve();
+
       // Stage 2: Input guardrail (prompt injection / off-topic)
       this.emitEvent("agent_start", "input_guardrail", {
         agent: "inputGuardrailAgent",
@@ -75,6 +83,10 @@ class TutoringOrchestrator {
         blocked: ctx.inputBlocked,
         category: ctx.inputSecurity?.category,
       });
+
+      // Make sure the AC tracker has finished writing context.userACHistory
+      // before any downstream agent (TutorAgent) reads it.
+      await acTrackerPromise;
 
       if (ctx.inputBlocked) {
         ctx.timing.pipelineMs = Date.now() - ctx.timing.pipelineStartMs;
