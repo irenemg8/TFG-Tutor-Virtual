@@ -117,20 +117,25 @@ class PedagogicalReviewerAgent extends AgentInterface {
 
   _studentAskedForDefinition(userMessage) {
     if (typeof userMessage !== "string" || !userMessage) return false;
-    const lower = userMessage.toLowerCase();
-    const triggers = [
-      // es
-      "qué es ", "que es ", "qué significa", "que significa", "qué entiendes por",
-      "qué quiere decir", "que quiere decir", "explícame", "explicame",
-      "defíneme", "definelo", "puedes definir", "podrías definir",
+    const lower = userMessage.toLowerCase().trim();
+    // Anchored / boundary-aware patterns: avoid false positives like "creo
+    // que es R1 y R2" matching the substring "que es" — only treat the
+    // student as having asked for a definition when the trigger is at the
+    // start of the message, just after a leading "¿"/"?" or after a clear
+    // phrase boundary.
+    const patterns = [
+      // es — interrogative openers
+      /^¿?\s*qu[eé]\s+(es|significa|quiere\s+decir|entiendes\s+por)\b/i,
+      /^¿?\s*c[oó]mo\s+(es|funciona|defin)/i,
+      /^¿?\s*(expl[ií]came|expl[ií]canos|defíneme|defineme|definelo|defínelo|puedes\s+definir|podr[ií]as\s+definir|puedes\s+explicar|podr[ií]as\s+explicar)/i,
       // val
-      "què és ", "que és ", "què significa", "que significa", "explica'm",
-      "definix", "pots definir",
+      /^¿?\s*qu[eè]\s+(és|significa|vols\s+dir)\b/i,
+      /^¿?\s*(explica'?m|definix|pots\s+definir|pots\s+explicar)/i,
       // en
-      "what is ", "what does ", "what means", "explain me", "define ", "can you define",
+      /^\??\s*(what\s+is|what\s+does|what\s+means|explain\s+me|define\b|can\s+you\s+define|can\s+you\s+explain|could\s+you\s+explain)/i,
     ];
-    for (let i = 0; i < triggers.length; i++) {
-      if (lower.indexOf(triggers[i]) >= 0) return true;
+    for (let i = 0; i < patterns.length; i++) {
+      if (patterns[i].test(lower)) return true;
     }
     return false;
   }

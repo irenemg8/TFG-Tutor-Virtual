@@ -194,7 +194,23 @@ router.get("/api/auth/cas/callback", async (req, res) => {
     const goto = req.session.returnTo || `${FRONTEND_BASE_URL || "/"}`;
     delete req.session.oauthState;
     delete req.session.returnTo;
-    console.log("[CAS CALLBACK] redirect to frontend", { goto });
+
+    // Diagnostic: surface the Set-Cookie that we are about to emit and the
+    // session id we persisted. If after the browser follows the redirect
+    // /api/auth/me returns 401, comparing this sid against the cookie on
+    // that next request tells you whether the cookie is being lost in
+    // transit (proxy/path issue) vs. never being persisted.
+    const setCookieHeader = res.getHeader && res.getHeader("set-cookie");
+    console.log("[CAS CALLBACK] session saved + redirect", {
+      sessionId: req.sessionID,
+      userId: req.session.user && req.session.user.id,
+      goto,
+      setCookieEmitted: Array.isArray(setCookieHeader)
+        ? setCookieHeader.length
+        : setCookieHeader
+        ? 1
+        : 0,
+    });
     return res.redirect(goto);
   } catch (err) {
     console.error("[CAS FATAL ERROR]", {
@@ -214,6 +230,24 @@ router.get("/api/auth/cas/callback", async (req, res) => {
  * ═══════════════════════════════════════════════════════════════════ */
 router.get("/api/auth/me", (req, res) => {
   if (!req.session?.user) {
+    // Targeted diagnostic for the post-CAS 401: tells you whether the
+    // browser sent ANY cookie and whether express-session was able to
+    // load a session for it. The expected sequence after a successful
+    // CAS login is:
+    //   /callback → emits Set-Cookie sid_irene=<x>;
+    //   /me       → req.headers.cookie contains "sid_irene=<x>",
+    //               req.sessionID === <x>, req.session.user populated.
+    // Any mismatch points to where the cookie is being lost (proxy
+    // path, SameSite, secure flag, etc.).
+    console.warn("[AUTH /me] 401 not authenticated", {
+      sessionId: req.sessionID,
+      hasCookieHeader: Boolean(req.headers && req.headers.cookie),
+      cookieNames: req.headers && req.headers.cookie
+        ? req.headers.cookie.split(";").map((c) => c.trim().split("=")[0]).join(",")
+        : "",
+      sessionExists: Boolean(req.session),
+      hasUser: false,
+    });
     return res.status(401).json({ authenticated: false });
   }
   return res.json({ authenticated: true, user: req.session.user });

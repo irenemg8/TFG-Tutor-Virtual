@@ -99,6 +99,22 @@ const pgStore = new PgSession({
   // a failing store could silently hang CAS login — errors must not be silent).
   errorLog: function (msg) { console.error("[SESSION STORE]", msg); },
 });
+// Cookie hardening:
+//   - secure → true in production (HTTPS via Nginx) so the browser only
+//     sends it over TLS. In dev (NODE_ENV !== "production" OR
+//     DEV_BYPASS_AUTH=true) we set false so plain HTTP works.
+//   - sameSite=lax is required for the OAuth/CAS callback redirect: the
+//     browser arrives back at /api/auth/cas/callback as a top-level GET,
+//     and lax allows the cookie to be sent in that case. "strict" would
+//     drop it.
+//   - path="/" (explicit) so the cookie is sent for the frontend SPA
+//     routes too, not just /api/*. Critical when Nginx serves both under
+//     the same host.
+//   - maxAge: 24h. Shorter than express-session's "session cookie"
+//     default (browser-session) so we don't keep stale sids around for
+//     weeks; long enough to cover a normal teaching day.
+const isProduction = process.env.NODE_ENV === "production";
+const devBypass = process.env.DEV_BYPASS_AUTH === "true";
 app.use(
   session({
     name: "sid_irene",
@@ -108,10 +124,10 @@ app.use(
     store: pgStore,
     cookie: {
       httpOnly: true,
-      // secure=true en producción (HTTPS/Nginx). En dev local (DEV_BYPASS_AUTH=true),
-      // secure=false para que HTTP funcione.
-      secure: process.env.DEV_BYPASS_AUTH !== "true",
+      secure: isProduction && !devBypass,
       sameSite: "lax",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000,
     },
   })
 );

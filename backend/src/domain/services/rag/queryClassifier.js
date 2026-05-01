@@ -120,12 +120,14 @@ const postNegationPhrases = [
   "should not", "shouldn't be", "is not", "isn't",
   // en - flow negation
   "no current flows", "current doesn't flow", "no current", "doesn't flow",
-  // es - state description (implies element is excluded: "R3 está en abierto" = R3 doesn't contribute)
+  // es - state description (implies element is excluded: "R3 está abierto" = R3 doesn't contribute)
   "está en abierto", "en abierto", "en circuito abierto",
+  "está abierto", "está abierta", "están abiertos", "están abiertas",
   "está cortocircuitada", "está cortocircuitado", "cortocircuitada", "cortocircuitado",
-  "en cortocircuito", "en corto",
+  "en cortocircuito", "en corto", "está en corto", "está en cortocircuito",
   // val - state description
-  "està en obert", "en circuit obert", "curtcircuitada", "curtcircuitat", "en curtcircuit",
+  "està en obert", "en circuit obert", "està obert", "està oberta",
+  "curtcircuitada", "curtcircuitat", "en curtcircuit", "està curtcircuitada", "està curtcircuitat",
   // en - state description
   "is open", "is shorted", "is short-circuited", "in open circuit", "in short circuit",
 ];
@@ -175,6 +177,14 @@ function detectNegation(message, position, elementLength) {
   var sentBoundary = suffix.search(/[.!?]/);
   if (sentBoundary >= 0) {
     suffix = suffix.substring(0, sentBoundary);
+  }
+  // Truncate at the next element mention so that "R4 porque R3 está
+  // abierto" does NOT mark R4 as negated — the "está abierto" belongs
+  // to R3's own context, not R4's. Element pattern is generic
+  // letter+digits (R3, C2, L1, ...).
+  var nextElem = suffix.search(/[a-z][\d]+/i);
+  if (nextElem >= 0) {
+    suffix = suffix.substring(0, nextElem);
   }
 
   for (var i = 0; i < postNegationPhrases.length; i++) {
@@ -371,13 +381,15 @@ function detectClosedQuestion(lastAssistantText) {
     // es
     "duda", "dudas", "alguna duda", "te apetece", "quieres repasar",
     "te ha quedado", "te ha quedado claro", "te queda claro", "lo entiendes",
+    "lo has entendido", "has entendido", "lo entendiste", "entendido",
     "necesitas ayuda", "quieres seguir", "estás seguro", "estás segura",
-    "todo bien", "vamos bien",
+    "todo bien", "vamos bien", "te queda alguna", "alguna pregunta",
     // val
     "dubte", "dubtes", "vols repassar", "ho entens", "necessites ajuda",
+    "ho has entès", "ho entengueres",
     // en
     "any doubts", "any questions", "do you understand", "are you sure",
-    "want to review", "need help",
+    "want to review", "need help", "got it", "make sense",
   ];
   var isDiagnostic = false;
   if (isClosed) {
@@ -389,10 +401,14 @@ function detectClosedQuestion(lastAssistantText) {
 }
 
 // Yes/no detector — used in conjunction with detectClosedQuestion.
+// We intentionally avoid `\b` because JavaScript's word boundary is
+// ASCII-only and would fail to match after non-ASCII letters (e.g. the
+// "í" in "sí"). Instead we require either end-of-string or one of the
+// usual punctuation/whitespace separators after the keyword.
 function isYesNoAnswer(message) {
   var trimmed = (message || "").trim().toLowerCase();
   if (trimmed.length === 0) return false;
-  return /^(s[ií]|no|vale|ok|okay|sip|nop|claro|por supuesto|nope|yep|yes|yeah|yup|nah|sure|of course|exactly|exacto|exacte)\b/.test(trimmed);
+  return /^(s[ií]|no|vale|ok|okay|sip|nop|claro|por supuesto|nope|yep|yes|yeah|yup|nah|sure|of course|exactly|exacto|exacte)(?:[\s.,!?¡¿]|$)/.test(trimmed);
 }
 
 /*------------------------------------------------------
