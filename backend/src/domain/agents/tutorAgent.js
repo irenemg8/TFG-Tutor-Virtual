@@ -97,15 +97,47 @@ class TutorAgent extends AgentInterface {
     const cls = context.classification && context.classification.type;
     const prevCorrect = (context.loopState && context.loopState.prevCorrectTurns) || 0;
 
+    const sameClsStreak = (context.loopState && context.loopState.sameClassificationStreak) || 0;
+
     let dontKnowHint = "";
     if (cls === "dont_know") {
+      // Use the EXPERT REASONING (already in the system prompt) as the
+      // step-by-step roadmap. Tell the LLM NOT to ask another abstract
+      // concept question — that's what made the student say "no sé" in
+      // the first place. Instead, give ONE concrete fact about the
+      // current step of the global path and ask a tiny follow-up.
       dontKnowHint =
-        "[STUDENT DOESN'T KNOW]\n" +
-        "CRITICAL: The student just said they don't know. You MUST:\n" +
-        "- NOT explain concepts. NOT give definitions. NOT say 'this means that...' or 'when a resistor is X, then Y'.\n" +
-        "- NOT reveal internal states (short-circuited, open, same potential, etc.).\n" +
-        "- Lower the scaffolding: ask ONE simpler, more concrete question about a VISIBLE feature of the circuit (e.g. 'Look at where the two terminals of one of the elements are connected. Do you notice anything?').\n" +
-        "- Keep the response to a SINGLE question, no preamble, no explanation.\n\n";
+        "[STUDENT DOESN'T KNOW — GUIDE, DON'T INTERROGATE]\n" +
+        "The student is stuck. You must NOT ask another abstract concept question " +
+        "(e.g. 'qué condiciones deben cumplir...', 'qué pasa con la corriente...'). " +
+        "Those questions are exactly what made them say 'no sé'.\n" +
+        "Instead, take the EXPERT REASONING and find the NEXT concrete step the " +
+        "student hasn't covered yet. State it as a brief FACT (one short sentence) " +
+        "and then ask a SIMPLE, NARROW follow-up about that step.\n" +
+        "Pattern: <one fact about the current path>. <simple question about the next node/branch>.\n" +
+        "Examples (adapt to this circuit, do NOT copy verbatim):\n" +
+        "  · 'La corriente sale del terminal + de la fuente. ¿A qué nodo llega primero?'\n" +
+        "  · 'En ese nodo el camino se divide. ¿Por cuál de las dos ramas puede seguir circulando?'\n" +
+        "  · 'Al llegar a ese nodo, una de las ramas tiene un interruptor. ¿Qué crees que ocurre con esa rama?'\n" +
+        "Rules:\n" +
+        "- ONE fact + ONE question. Total ≤ 2 short sentences.\n" +
+        "- Do NOT name a specific resistor (use 'esa rama' / 'ese nodo' / 'ese camino').\n" +
+        "- Do NOT reveal internal states (short-circuited, open).\n" +
+        "- Do NOT define concepts or explain theory.\n" +
+        "- Do NOT repeat any question already asked in the history.\n\n";
+
+      // Hard anti-repeat: if dont_know fires twice or more in a row, the
+      // previous turn's "concrete step" wasn't concrete enough.
+      // Force the LLM to drop another notch and almost spell out the path.
+      if (sameClsStreak >= 2) {
+        dontKnowHint +=
+          "[STUDENT REPEATED 'no sé' " + (sameClsStreak + 1) + " TIMES — DROP THE SCAFFOLDING FURTHER]\n" +
+          "Whatever you asked last turn was still too abstract. This turn:\n" +
+          "1. Acknowledge their effort in ≤6 words ('Vamos por partes:').\n" +
+          "2. State TWO concrete facts of the current path that lead to the next node.\n" +
+          "3. Ask a YES/NO question about that node (e.g. '¿llega corriente a R…?' but using 'esa rama' / 'ese nodo', without naming the element).\n" +
+          "Do NOT ask another open question. Do NOT define concepts.\n\n";
+      }
     }
 
     let demandJustificationHint = "";
