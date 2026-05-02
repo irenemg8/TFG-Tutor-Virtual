@@ -494,6 +494,38 @@ function redactElementMentions(response, correctAnswer, lang) {
   var text = response;
   var changed = false;
 
+  // Per-language inflected placeholders for "noun + Rn" rewrites.
+  // Without these the redaction left clunky ungrammatical fragments such as
+  // "la resistencia ese conjunto de elementos no contribuye" (the LLM had
+  // written "la resistencia R5", we only rewrote R5, and "la resistencia"
+  // became dangling). We now consume the noun + Rn(+more Rn) as a unit
+  // and substitute "esa resistencia" / "esas resistencias" (singular /
+  // plural) so the surrounding sentence still parses naturally.
+  var inflected = {
+    es: { sing: "esa resistencia", plural: "esas resistencias" },
+    val: { sing: "eixa resistència", plural: "eixes resistències" },
+    en: { sing: "that resistor", plural: "those resistors" },
+  };
+  var infl = inflected[lang] || inflected.es;
+
+  // 0) Pre-pase: consume "(la|el|las|los) (resistencia|componente|elemento|
+  //    dispositivo|resistor[s]) Rn[, Rn, …]" entera. Esto resuelve el bug
+  //    "la resistencia <placeholder> no contribuye" sin tocar el resto del
+  //    flujo (los pasos 1 y 2 siguen aplicando para los Rn que aparezcan
+  //    sin sustantivo delante).
+  var nounElementPattern = new RegExp(
+    "\\b(?:la|el|las|los)\\s+(?:resistencias?|resist[èe]nc(?:ia|ies)|componentes?|elementos?|dispositivos?|resistors?)\\s+R\\d+(?:\\s*(?:,|;|y|i|and|or)\\s*R\\d+)*\\b",
+    "gi"
+  );
+  if (nounElementPattern.test(text)) {
+    text = text.replace(nounElementPattern, function (match) {
+      // Plural si el match incluye lista (",", "y", "i", "and", "or").
+      var isList = /,|;|\by\b|\bi\b|\band\b|\bor\b/.test(match);
+      return isList ? infl.plural : infl.sing;
+    });
+    changed = true;
+  }
+
   // 1) Replace comma-separated lists like "(R1, R2, R4)" / "R1, R2 y R4" / "R1, R2 and R4"
   var joined = correctAnswer.slice().map(function (r) {
     return r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
