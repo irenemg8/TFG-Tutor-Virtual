@@ -31,12 +31,31 @@ class OllamaLlmAdapter extends ILlmService {
       ? opts.timeoutMs
       : Number(process.env.OLLAMA_TIMEOUT_MS || 60000);
     this.insecureTls = process.env.OLLAMA_INSECURE_TLS === "1";
+
+    // Reusable HTTPS agent with TCP/TLS keep-alive. Without this, every
+    // chatCompletion opened a fresh TLS handshake to ollama.gti-ia.upv.es,
+    // adding 2-4s of overhead per turn in production. The agent is
+    // constructed once and shared across calls.
+    this.httpsAgent = String(this.baseUrl).startsWith("https://")
+      ? new https.Agent({
+          rejectUnauthorized: !this.insecureTls,
+          keepAlive: true,
+          keepAliveMsecs: 30000,
+          maxSockets: 10,
+        })
+      : null;
   }
 
   _axiosOpts(baseUrl, timeoutMs, abortSignal) {
     const base = { timeout: timeoutMs };
-    if (String(baseUrl || this.baseUrl).startsWith("https://")) {
-      base.httpsAgent = new https.Agent({ rejectUnauthorized: !this.insecureTls });
+    const targetUrl = String(baseUrl || this.baseUrl);
+    if (targetUrl.startsWith("https://")) {
+      // Reuse the cached agent when the call goes to the URL it was built
+      // for; otherwise fall back to a one-off agent (dev / test override).
+      base.httpsAgent =
+        targetUrl === this.baseUrl && this.httpsAgent
+          ? this.httpsAgent
+          : new https.Agent({ rejectUnauthorized: !this.insecureTls, keepAlive: true });
     }
     if (abortSignal) base.signal = abortSignal;
     return base;

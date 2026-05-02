@@ -61,4 +61,39 @@ describe("classifyQuery", () => {
     );
     expect(r.negated).toContain("R3");
   });
+
+  // ---------------------------------------------------------------------------
+  // Regresión: preguntas reformuladoras del alumno (B1)
+  // Antes caían a wrong_answer y disparaban el banner agresivo. Ahora se
+  // tratan como dont_know para que el LLM baje el scaffolding.
+  // ---------------------------------------------------------------------------
+  test("metapregunta con '?' sin elementos → dont_know", () => {
+    const r = classifyQuery(
+      "Por cuáles resistencias pasa la corriente, cierto?",
+      correctAnswer,
+      evaluable
+    );
+    expect(r.type).toBe("dont_know");
+  });
+
+  test("pregunta con elementos NO se reclasifica como dont_know", () => {
+    const r = classifyQuery(
+      "¿son R1 y R2 las correctas?",
+      correctAnswer,
+      evaluable
+    );
+    // El alumno menciona elementos: el classifier debe seguir su ruta normal,
+    // no la nueva regla de pregunta-sin-elementos.
+    expect(r.type).not.toBe("dont_know");
+    expect(r.proposed.sort()).toEqual(["R1", "R2"]);
+  });
+
+  test("respuesta plana sin '?' sigue cayendo a wrong_answer", () => {
+    const r = classifyQuery(
+      "una resistencia cualquiera",
+      correctAnswer,
+      evaluable
+    );
+    expect(r.type).toBe("wrong_answer");
+  });
 });

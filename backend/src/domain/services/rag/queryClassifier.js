@@ -452,6 +452,19 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
     return { type: types.dontKnow, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
   }
 
+  // 2.5. Pregunta del alumno (reformulación del enunciado o metapregunta).
+  //      Cuando el alumno termina su mensaje en "?" o "¿...?" SIN nombrar
+  //      elementos canónicos (R1, R2…), normalmente está repitiendo lo que
+  //      cree que se le pide ("Por cuáles resistencias pasa la corriente,
+  //      cierto?") o pidiendo aclaración. Tratarlas como dont_know dispara
+  //      el banner SCAFFOLD (baja la complejidad y guía con una pregunta
+  //      simple) en lugar de etiquetarlas como wrong_answer y arruinar la
+  //      respuesta del LLM con la lógica agresiva.
+  var trimmed = userMessage.trim();
+  if (allMentioned.length === 0 && /[?¿]/.test(trimmed)) {
+    return { type: types.dontKnow, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
+  }
+
   // 3. Short answer without elements (formerly "single_word"). Now we look
   //    at the tutor's last question. If it was a closed yes/no question and
   //    the student answered yes/no, the answer is VALID — we don't punish
