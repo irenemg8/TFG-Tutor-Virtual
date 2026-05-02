@@ -38,9 +38,11 @@ module.exports = {
   HIGH_THRESHOLD: Number(process.env.RAG_HIGH_THRESHOLD || 0.7),
   MED_THRESHOLD: Number(process.env.RAG_MED_THRESHOLD || 0.4),
 
-  // Retrieval parameters for the RAG system
+  // Retrieval parameters for the RAG system.
+  // TOP_K_FINAL bajado de 3→2 para reducir el tamaño del prompt; los
+  // 2 mejores ejemplos transmiten el estilo socrático sin saturar contexto.
   TOP_K_RETRIEVAL: 10,
-  TOP_K_FINAL: 3,
+  TOP_K_FINAL: 2,
   RRF_K: 60,
   BM25_K1: 1.5,
   BM25_B: 0.75,

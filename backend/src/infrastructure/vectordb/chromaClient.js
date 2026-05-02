@@ -13,13 +13,29 @@ function getClient() {
   return client;
 }
 
-// Get or create a collection with cosine similarity
+// Per-name cache of resolved collection handles. Without this every
+// hybridSearch round-trips Chroma with getOrCreateCollection BEFORE issuing
+// the query — production logs showed 2-3 redundant collection lookups per
+// search and 20s retrievals when those compounded across 7 collections.
+// Collections are immutable by name once created, so caching the handle is
+// safe; we only invalidate on explicit reset (tests / re-ingest scripts).
+const collectionCache = new Map();
+
+// Get or create a collection with cosine similarity (cached).
 async function getCollection(name) {
+  const cached = collectionCache.get(name);
+  if (cached) return cached;
   const chroma = getClient();
-  return chroma.getOrCreateCollection({
+  const col = await chroma.getOrCreateCollection({
     name,
-    metadata: { "hnsw:space": "cosine" }, // hnsw: hierarchical navigable small world graph for cosine similarity
+    metadata: { "hnsw:space": "cosine" },
   });
+  collectionCache.set(name, col);
+  return col;
+}
+
+function resetCollectionCache() {
+  collectionCache.clear();
 }
 
 // Add documents with embeddings to a collection
@@ -50,4 +66,4 @@ async function searchSemantic(queryEmbedding, collectionName, topK = config.TOP_
   return items;
 }
 
-module.exports = { getClient, getCollection, addDocuments, searchSemantic };
+module.exports = { getClient, getCollection, addDocuments, searchSemantic, resetCollectionCache };

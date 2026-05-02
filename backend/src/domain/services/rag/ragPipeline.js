@@ -35,14 +35,14 @@ Student: "R5"
 Tutor: "¿Por qué piensas que R5 ...?"
 -------------------------------------------------------------------------*/
 
-  let text = "[REFERENCE EXAMPLES]\n";
-  text = text + "The following are examples of how an expert tutor responds to similar student answers.\n";
-  text = text + "Use them as reference for tone and pedagogical approach. Adapt to the specific situation.\n\n";
-
-  for (let i = 0; i < results.length; i++) {
-    text = text + "Example " + (i + 1) + ":\n";
-    text = text + "Student: \"" + results[i].student + "\"\n";
-    text = text + "Tutor: \"" + results[i].tutor + "\"\n\n";
+  // Top-2 max — more examples just inflate the prompt without changing
+  // the LLM's pedagogical style noticeably. The dataset's tone is already
+  // set by 1-2 well-chosen pairs.
+  const limited = results.slice(0, 2);
+  let text = "[REFERENCE EXAMPLES — match this tone, adapt to the actual context]\n";
+  for (let i = 0; i < limited.length; i++) {
+    text += 'Student: "' + limited[i].student + '"\n';
+    text += 'Tutor: "' + limited[i].tutor + '"\n\n';
   }
   return text;
 }
@@ -65,36 +65,28 @@ Expert reasoning: "Cuando un componente está cortocircuitado, la corriente no p
 Socratic questions: "¿Qué ocurre con la corriente cuando un componente está cortocircuitado?"
 -------------------------------------------------------------------------*/
 
-  let text = "[DOMAIN KNOWLEDGE]\n";
-  text += "IMPORTANT: Use the following knowledge as internal reference ONLY. Do NOT copy the Socratic questions verbatim. ";
-  text += "Adapt them to the current conversation context, what the student has already answered, and avoid repeating anything you already asked.\n\n";
-  for (let i = 0; i < kgResults.length; i++) {
-    const entry = kgResults[i];
-    text = text + "Concept: \"" + entry.node1 + " " + entry.relation + " " + entry.node2 + "\"\n";
+  // Top-2 max + truncated reasoning + skip socratic-questions verbatim.
+  // The previous block dumped 3 entries × ~500 chars each into the prompt
+  // every turn. Limited here to keep RAG augmentation under ~1500 chars.
+  const REASONING_MAX = 220;
+  const limited = kgResults.slice(0, 2);
+  let text = "[DOMAIN KNOWLEDGE — internal reference, do not quote or copy verbatim]\n";
+  for (let i = 0; i < limited.length; i++) {
+    const entry = limited[i];
+    text += '· ' + entry.node1 + ' ' + entry.relation + ' ' + entry.node2 + '\n';
     if (entry.expertReasoning) {
-      text = text + "Expert reasoning: \"" + entry.expertReasoning + "\"\n";
+      const r = entry.expertReasoning.length > REASONING_MAX
+        ? entry.expertReasoning.slice(0, REASONING_MAX) + "…"
+        : entry.expertReasoning;
+      text += '  reasoning: ' + r + '\n';
     }
-    if (entry.socraticQuestions) {
-      text = text + "Socratic questions: \"" + entry.socraticQuestions + "\"\n";
-    }
-    // Render every AC associated with this KG entry. Some entries carry two
-    // alternative conceptions on the same concept; both are pedagogically
-    // relevant. Falls back to the legacy primary fields when the new
-    // alternativeConceptions array is missing (defensive).
     const acs = Array.isArray(entry.alternativeConceptions) && entry.alternativeConceptions.length > 0
       ? entry.alternativeConceptions
-      : (entry.acName || entry.acDescription
-          ? [{ ac: entry.ac, acName: entry.acName, acDescription: entry.acDescription }]
-          : []);
-    for (let a = 0; a < acs.length; a++) {
-      if (acs[a].acName) {
-        text = text + "Alternative conception: \"" + acs[a].acName + "\"\n";
-      }
-      if (acs[a].acDescription) {
-        text = text + "AC description: \"" + acs[a].acDescription + "\"\n";
-      }
+      : (entry.acName ? [{ acName: entry.acName }] : []);
+    for (let a = 0; a < acs.length && a < 1; a++) {
+      if (acs[a].acName) text += '  AC: ' + acs[a].acName + '\n';
     }
-    text = text + "\n";
+    text += '\n';
   }
   return text;
 }
