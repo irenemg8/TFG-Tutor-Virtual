@@ -171,12 +171,19 @@ class TutorAgent extends AgentInterface {
       context.loopState.lastClassification
     );
 
-    // 5. Combine all into augmented prompt.
-    //    Order matters: conceptsBanner first so the student's own words land
-    //    at the top of the system prompt, where the LLM weights them most.
-    const augmentedPrompt =
-      basePrompt +
-      "\n\n" +
+    // 5. Split content into STABLE (system) and VOLATILE (per-turn) parts so
+    //    Ollama can reuse its KV-cache across turns. Production telemetry
+    //    showed every turn paid ~15s of "prefill" because the entire system
+    //    prompt changed each request (different banners, different RAG hits)
+    //    — Ollama could never reuse the cached prefix and recomputed all
+    //    ~1700 tokens from scratch.
+    //
+    //    The base prompt (rules + circuit topology) is identical for every
+    //    turn of the same exercise. Putting only that in `system` lets
+    //    Ollama cache it once. Banners + RAG augmentation move into the
+    //    last user message, prefixed with a clear delimiter so the LLM
+    //    still treats them as instructions.
+    const dynamicContext =
       conceptsBanner +
       dontKnowHint +
       demandJustificationHint +
@@ -187,14 +194,24 @@ class TutorAgent extends AgentInterface {
       strategyHint +
       (context.ragResult.augmentation || "");
 
-    // 5. Build messages: system + history + CURRENT user message.
+    const userWithContext = dynamicContext.trim().length > 0
+      ? "[TURN CONTEXT — apply these instructions to your reply, do not echo them]\n" +
+        dynamicContext.trim() +
+        "\n[/TURN CONTEXT]\n\n" +
+        context.userMessage
+      : context.userMessage;
+
+    // For logging / debugging keep the legacy combined view.
+    const augmentedPrompt = basePrompt + "\n\n" + dynamicContext;
+
+    // 5. Build messages: stable system + history + (context-prefixed) user.
     //    The current message is NOT yet persisted (PersistenceAgent writes it
     //    at the end of the pipeline), so we must append it explicitly here or
     //    the LLM would respond without knowing what the student just said.
     const messages = [
-      { role: "system", content: augmentedPrompt },
+      { role: "system", content: basePrompt },
       ...context.history,
-      { role: "user", content: context.userMessage },
+      { role: "user", content: userWithContext },
     ];
     context.llmMessages = messages;
 
@@ -204,6 +221,8 @@ class TutorAgent extends AgentInterface {
       model: this.config.OLLAMA_MODEL,
       messagesCount: messages.length,
       promptLen: augmentedPrompt.length,
+      systemLen: basePrompt.length,
+      turnContextLen: dynamicContext.length,
       reason: "primary",
     });
 

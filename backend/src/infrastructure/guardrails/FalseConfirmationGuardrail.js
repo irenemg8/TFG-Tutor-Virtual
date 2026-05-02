@@ -28,6 +28,21 @@ class FalseConfirmationGuardrail extends IGuardrail {
     if (wrongTypes.indexOf(classification) < 0) return { violated: false };
     if (typeof response !== "string") return { violated: false };
 
+    // CRITICAL: when the student did NOT mention any canonical element
+    // (R1, R2, …), they are NOT giving a final answer — they are
+    // responding to a Socratic question with a CONCEPTUAL observation
+    // (e.g. "hay un interruptor abierto", "no todas contribuyen",
+    // "me piden las resistencias por las que pasa la corriente").
+    // The rule-based classifier flags those as wrong_answer/wrong_concept
+    // because there are no elements to match against the correct answer,
+    // BUT the LLM's confirmation ("Correcto que hay un interruptor
+    // abierto") may be pedagogically valid. Suppress the guardrail in
+    // that case and let the response through. Same heuristic the RAG
+    // augmentation uses to soften aggressive hints.
+    const mentionedElements = ctx && ctx.mentionedElements;
+    const noElementsMentioned = !Array.isArray(mentionedElements) || mentionedElements.length === 0;
+    if (noElementsMentioned) return { violated: false };
+
     const lower = stripAccents(response.toLowerCase().trim());
     // Scan the head of the response: up to the first Socratic question mark
     // (which marks the end of the lead-in / start of the actual question)

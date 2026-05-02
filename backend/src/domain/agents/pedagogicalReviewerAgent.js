@@ -54,8 +54,15 @@ class PedagogicalReviewerAgent extends AgentInterface {
     // hasn't justified yet (correct_no_reasoning, correct_wrong_reasoning,
     // partial_correct), strip the confirmation and prepend a partial-feedback
     // phrase so the response still reads naturally.
+    //
+    // Skip this when the student didn't mention any canonical element —
+    // they are answering a Socratic concept question, not giving a final
+    // list, so a "buena observación" / "correcto" from the tutor about a
+    // conceptual point ("hay un interruptor abierto") is appropriate.
+    const mentioned = (context.classification && context.classification.resistances) || [];
+    const noElements = mentioned.length === 0;
     const partialTypes = ["correct_no_reasoning", "correct_wrong_reasoning", "partial_correct"];
-    if (partialTypes.indexOf(cls) >= 0) {
+    if (!noElements && partialTypes.indexOf(cls) >= 0) {
       const fixed = this._stripPrematureConfirmation(text, lang);
       if (fixed && fixed !== text) {
         text = fixed;
