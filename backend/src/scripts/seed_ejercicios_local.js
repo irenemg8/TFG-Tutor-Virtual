@@ -177,7 +177,13 @@ async function main() {
         return Array.from(set);
       })();
 
-      const enunciado = [ex.description, ex.question].filter(Boolean).join("\n\n");
+      // NS-1.b: prefer tutorContext.enunciado when present so the UI cabecera
+      // matches the tutor's actual exercise (image + tutorContext + enunciado
+      // align). ohm_exercises.json's description+question are kept as a
+      // fallback because tests / RAG scripts still consume that file.
+      const enunciado = (tc.enunciado && String(tc.enunciado).trim().length > 20)
+        ? String(tc.enunciado).trim()
+        : [ex.description, ex.question].filter(Boolean).join("\n\n");
       const imagen = "Ejercicio" + ex.id + ".jpg";
       const asignatura = "Dispositivos electrónicos";
       const concepto = "Ley de Ohm";

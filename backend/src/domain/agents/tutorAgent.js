@@ -101,42 +101,19 @@ class TutorAgent extends AgentInterface {
 
     let dontKnowHint = "";
     if (cls === "dont_know") {
-      // Use the EXPERT REASONING (already in the system prompt) as the
-      // step-by-step roadmap. Tell the LLM NOT to ask another abstract
-      // concept question — that's what made the student say "no sé" in
-      // the first place. Instead, give ONE concrete fact about the
-      // current step of the global path and ask a tiny follow-up.
+      // Compact form (NS-22). The full pattern + 3 example sentences had
+      // ballooned this hint to ~1200 chars per request — paid every turn the
+      // student says "no sé". The system prompt already enforces "1-3 short
+      // sentences, ONE question, never name elements, never define concepts".
       dontKnowHint =
-        "[STUDENT DOESN'T KNOW — GUIDE, DON'T INTERROGATE]\n" +
-        "The student is stuck. You must NOT ask another abstract concept question " +
-        "(e.g. 'qué condiciones deben cumplir...', 'qué pasa con la corriente...'). " +
-        "Those questions are exactly what made them say 'no sé'.\n" +
-        "Instead, take the EXPERT REASONING and find the NEXT concrete step the " +
-        "student hasn't covered yet. State it as a brief FACT (one short sentence) " +
-        "and then ask a SIMPLE, NARROW follow-up about that step.\n" +
-        "Pattern: <one fact about the current path>. <simple question about the next node/branch>.\n" +
-        "Examples (adapt to this circuit, do NOT copy verbatim):\n" +
-        "  · 'La corriente sale del terminal + de la fuente. ¿A qué nodo llega primero?'\n" +
-        "  · 'En ese nodo el camino se divide. ¿Por cuál de las dos ramas puede seguir circulando?'\n" +
-        "  · 'Al llegar a ese nodo, una de las ramas tiene un interruptor. ¿Qué crees que ocurre con esa rama?'\n" +
-        "Rules:\n" +
-        "- ONE fact + ONE question. Total ≤ 2 short sentences.\n" +
-        "- Do NOT name a specific resistor (use 'esa rama' / 'ese nodo' / 'ese camino').\n" +
-        "- Do NOT reveal internal states (short-circuited, open).\n" +
-        "- Do NOT define concepts or explain theory.\n" +
-        "- Do NOT repeat any question already asked in the history.\n\n";
-
-      // Hard anti-repeat: if dont_know fires twice or more in a row, the
-      // previous turn's "concrete step" wasn't concrete enough.
-      // Force the LLM to drop another notch and almost spell out the path.
+        "[STUDENT DOESN'T KNOW]\n" +
+        "Pick the next step from EXPERT REASONING that they have not covered. " +
+        "State it as ONE short fact + ONE simple question about that step. " +
+        "Use 'esa rama' / 'ese nodo'; do not name elements or repeat past questions.\n\n";
       if (sameClsStreak >= 2) {
         dontKnowHint +=
-          "[STUDENT REPEATED 'no sé' " + (sameClsStreak + 1) + " TIMES — DROP THE SCAFFOLDING FURTHER]\n" +
-          "Whatever you asked last turn was still too abstract. This turn:\n" +
-          "1. Acknowledge their effort in ≤6 words ('Vamos por partes:').\n" +
-          "2. State TWO concrete facts of the current path that lead to the next node.\n" +
-          "3. Ask a YES/NO question about that node (e.g. '¿llega corriente a R…?' but using 'esa rama' / 'ese nodo', without naming the element).\n" +
-          "Do NOT ask another open question. Do NOT define concepts.\n\n";
+          "[NO-SÉ STREAK x" + (sameClsStreak + 1) + " — DROP A LEVEL] " +
+          "Acknowledge in ≤6 words, give TWO concrete facts of the path, then a yes/no question about the next node (no element names).\n\n";
       }
     }
 
@@ -215,7 +192,16 @@ class TutorAgent extends AgentInterface {
     //    Ollama cache it once. Banners + RAG augmentation move into the
     //    last user message, prefixed with a clear delimiter so the LLM
     //    still treats them as instructions.
+    // Language directive lives here (not in the system prompt) so the
+    // system block stays identical across language switches and Ollama
+    // can KV-cache reuse the prefix between turns of the same exercise.
+    // See languageManager.getLanguageRules for the per-lang content.
+    const { getLanguageRules } = require("../services/languageManager");
+    const langBanner =
+      "[LANGUAGE]\n" + getLanguageRules(context.lang || "es") + "\n\n";
+
     const dynamicContext =
+      langBanner +
       conceptsBanner +
       dontKnowHint +
       demandJustificationHint +
