@@ -13,10 +13,14 @@ class RetrievalAgent extends AgentInterface {
   /**
    * @param {object} deps
    * @param {Function} deps.runFullPipeline - The runFullPipeline function from ragPipeline.js
+   * @param {object}   [deps.resultadoRepo] - PgResultadoRepository, injected so
+   *                   the pipeline's loadStudentHistory call no longer reaches
+   *                   into the DI container from the domain layer (NS-5).
    */
   constructor(deps) {
     super("retrievalAgent");
     this.runFullPipeline = deps.runFullPipeline;
+    this.resultadoRepo = deps.resultadoRepo || null;
   }
 
   canSkip(context) {
@@ -50,7 +54,8 @@ class RetrievalAgent extends AgentInterface {
       context.correctAnswer,
       context.userId,
       context.evaluableElements,
-      context.lang
+      context.lang,
+      this.resultadoRepo ? { resultadoRepo: this.resultadoRepo } : undefined
     );
 
     context.ragResult = {

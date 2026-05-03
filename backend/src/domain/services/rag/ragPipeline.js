@@ -5,7 +5,6 @@ const { classifyQuery, extractResistances, types } = require("./queryClassifier"
 const { hybridSearch } = require("../../../infrastructure/search/hybridSearch");
 const { searchKG } = require("../../../infrastructure/search/knowledgeGraph");
 const { emitEvent } = require("../../../infrastructure/events/ragEventBus");
-const container = require("../../../container");
 const { getAllPatterns, conceptKeywords: conceptDict, normalizeToSpanish, getIntermediateFeedback } = require("../languageManager");
 
 // Foundational KG concepts to scaffold the tutor's hints when the student is
@@ -249,12 +248,14 @@ function formatClassificationHint(classification, correctAnswer, lang) {
 }
 
 // Load the student's past AC errors via the Resultado repository (Pg-backed).
-async function loadStudentHistory(userId) {
+// resultadoRepo is injected by the caller (retrievalAgent passes it through
+// runFullPipeline options). Domain code no longer reaches into the container.
+async function loadStudentHistory(userId, resultadoRepo) {
   if (userId == null) return "";
-  if (!container._initialized || !container.resultadoRepo) return "";
+  if (!resultadoRepo) return "";
 
   try {
-    const resultados = await container.resultadoRepo.findByUserId(userId);
+    const resultados = await resultadoRepo.findByUserId(userId);
 
     // Count error tags across all exercises
     const errorCounts = {};
@@ -479,7 +480,8 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
 // Full pipeline with student history appended
 // evaluableElements: optional array of all possible answer elements
 // lang: language for intermediate feedback phrases
-async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang) {
+async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang, options) {
+  options = options || {};
   var result = await runPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang);
 
   // If no RAG needed, skip
@@ -489,7 +491,7 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
 
   // Load student's past errors and append
   emitEvent("student_history_start", "start", { userId: userId });
-  var history = await loadStudentHistory(userId);
+  var history = await loadStudentHistory(userId, options.resultadoRepo);
   emitEvent("student_history_end", "end", { hasHistory: history.length > 0, historyLength: history.length, historyPreview: history });
   if (history.length > 0) {
     result.augmentation += history;
