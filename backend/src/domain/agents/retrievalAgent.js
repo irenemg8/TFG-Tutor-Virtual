@@ -50,7 +50,8 @@ class RetrievalAgent extends AgentInterface {
       context.correctAnswer,
       context.userId,
       context.evaluableElements,
-      context.lang
+      context.lang,
+      context.retrievalBudgetMs ? { budgetMs: context.retrievalBudgetMs } : undefined
     );
 
     context.ragResult = {
@@ -59,6 +60,14 @@ class RetrievalAgent extends AgentInterface {
       sources: ragResult.sources || [],
       classification: ragResult.classification || context.classification,
     };
+    // Surface the abort signal so the orchestrator (and downstream telemetry)
+    // can mark the turn as degraded. tutorAgent doesn't currently react to
+    // it directly — the empty augmentation already nudges it towards a more
+    // cautious answer — but the flag is now first-class instead of hidden
+    // inside ragPipeline's emitEvent.
+    if (ragResult.retrievalTimedOut) {
+      context.retrievalTimedOut = true;
+    }
 
     // Update classification.type if the pipeline refined it.
     // BUG FIX (2026-04-27, dump-cazado): el código anterior hacía

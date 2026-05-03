@@ -13,11 +13,16 @@ const { emitEvent } = require("../events/ragEventBus");
 -----------------------------------------------------------------------------------------------*/
 
 // Hybrid search for an exercise -> Returns top results sorted by combined score (highest first)
-async function hybridSearch(query, exerciseNum, topK = config.TOP_K_FINAL) {
+// `options.signal` propagates an AbortSignal to embedding + Chroma so the
+// retrieval pipeline can be cut short when the per-stage budget elapses.
+async function hybridSearch(query, exerciseNum, topK = config.TOP_K_FINAL, options) {
+  options = options || {};
+  const signal = options.signal || null;
+
   // 1. Generate query embedding for semantic search
   emitEvent("embedding_start", "start", { query: query, model: config.EMBEDDING_MODEL, ollamaUrl: config.OLLAMA_EMBED_URL });
   var embedStart = Date.now();
-  const queryEmbedding = await generateEmbedding(query);
+  const queryEmbedding = await generateEmbedding(query, signal ? { signal: signal } : undefined);
   emitEvent("embedding_end", "end", {
     vectorDimensions: queryEmbedding.length,
     durationMs: Date.now() - embedStart,
@@ -46,7 +51,12 @@ async function hybridSearch(query, exerciseNum, topK = config.TOP_K_FINAL) {
   });
 
   emitEvent("semantic_search_start", "start", { collectionName: collectionName, topK: config.TOP_K_RETRIEVAL, embeddingDim: queryEmbedding.length, distanceMetric: "cosine", scoreFormula: "1 - cosine_distance" });
-  const semanticResults = await searchSemantic(queryEmbedding, collectionName);
+  const semanticResults = await searchSemantic(
+    queryEmbedding,
+    collectionName,
+    config.TOP_K_RETRIEVAL,
+    signal ? { signal: signal } : undefined
+  );
   emitEvent("semantic_search_end", "end", {
     resultCount: semanticResults.length,
     topScore: semanticResults.length > 0 ? Math.round(semanticResults[0].score * 10000) / 10000 : 0,

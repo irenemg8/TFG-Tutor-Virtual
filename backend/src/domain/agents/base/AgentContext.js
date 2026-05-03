@@ -50,6 +50,11 @@ class AgentContext {
       decision: null,
       sources: [],
     };
+    // True when the per-stage budget aborted the RAG pipeline (NS-3). The
+    // tutor still runs with whatever augmentation the pipeline gathered;
+    // the orchestrator surfaces this flag in telemetry so we can spot
+    // chronic Chroma slowness in logs.
+    this.retrievalTimedOut = false;
 
     // --- Populated by TutorAgent ---
     this.llmResponse = null;

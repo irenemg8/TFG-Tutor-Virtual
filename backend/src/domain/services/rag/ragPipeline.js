@@ -316,7 +316,13 @@ function extractKeyEntities(userMessage) {
 // Main pipeline: classifies, retrieves, evaluates quality, and builds augmentation
 // evaluableElements: optional array of all possible answer elements for generic extraction
 // lang: language for intermediate feedback phrases
-async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang) {
+// options: { signal?: AbortSignal } — when provided, slow embedding/Chroma
+//          calls inside hybridSearch can be cancelled mid-flight by the
+//          enclosing budget watchdog set up in runFullPipeline.
+async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang, options) {
+  options = options || {};
+  const signal = options.signal || null;
+  const hsOpts = signal ? { signal: signal } : undefined;
   // Step A: Classify the query (now with generic element extraction + negation detection)
   emitEvent("classify_start", "start", { userMessage: userMessage, correctAnswer: correctAnswer, messageLength: userMessage.length });
   var classification = classifyQuery(userMessage, correctAnswer, evaluableElements);
@@ -374,7 +380,7 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
   if (classification.type === types.wrongAnswer) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "rag_examples", path: "wrong_answer → rag_examples" });
     emitEvent("hybrid_search_start", "start", { query: userMessage, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
-    let datasetResults = await hybridSearch(userMessage, exerciseNum);
+    let datasetResults = await hybridSearch(userMessage, exerciseNum, config.TOP_K_FINAL, hsOpts);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
 
     // CRAG: if top score is too low, reformulate and retry
@@ -382,7 +388,7 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
       const reformulated = extractKeyEntities(userMessage);
       emitEvent("crag_reformulate", "end", { originalQuery: userMessage, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, threshold: config.MED_THRESHOLD, reformulatedQuery: reformulated, reason: "topScore < MED_THRESHOLD (" + config.MED_THRESHOLD + ")", extractedEntities: reformulated.split(" ") });
       emitEvent("hybrid_search_start", "start", { query: reformulated, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
-      datasetResults = await hybridSearch(reformulated, exerciseNum);
+      datasetResults = await hybridSearch(reformulated, exerciseNum, config.TOP_K_FINAL, hsOpts);
       emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
     }
 
@@ -405,7 +411,7 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
   if (classification.type === types.correctNoReasoning) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "demand_reasoning", path: "correct_no_reasoning → demand_reasoning" });
     emitEvent("hybrid_search_start", "start", { query: userMessage, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
-    const datasetResults = await hybridSearch(userMessage, exerciseNum);
+    const datasetResults = await hybridSearch(userMessage, exerciseNum, config.TOP_K_FINAL, hsOpts);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
     result.augmentation = formatClassificationHint(classification, correctAnswer, lang) + formatExamples(datasetResults);
     result.decision = "demand_reasoning";
@@ -416,7 +422,7 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
   if (classification.type === types.correctWrongReasoning) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "correct_concept", path: "correct_wrong_reasoning → correct_concept" });
     emitEvent("hybrid_search_start", "start", { query: userMessage, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
-    const datasetResults = await hybridSearch(userMessage, exerciseNum);
+    const datasetResults = await hybridSearch(userMessage, exerciseNum, config.TOP_K_FINAL, hsOpts);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
     emitEvent("kg_search_start", "start", { concepts: classification.concepts });
     const kgResults = searchKG(classification.concepts);
@@ -430,7 +436,7 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
   if (classification.type === types.correctGoodReasoning) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "rag_examples", path: "correct_good_reasoning → rag_examples" });
     emitEvent("hybrid_search_start", "start", { query: userMessage, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
-    const datasetResults = await hybridSearch(userMessage, exerciseNum);
+    const datasetResults = await hybridSearch(userMessage, exerciseNum, config.TOP_K_FINAL, hsOpts);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
     result.augmentation = formatClassificationHint(classification, correctAnswer, lang) + formatExamples(datasetResults);
     result.decision = "rag_examples";
@@ -444,7 +450,7 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
     const kgResults = searchKG(classification.concepts);
     emitEvent("kg_search_end", "end", { resultCount: kgResults.length, entries: kgResults.map(function(e) { return { node1: e.node1, relation: e.relation, node2: e.node2, acName: e.acName || null, acDescription: e.acDescription || null, expertReasoning: e.expertReasoning || "", socraticQuestions: e.socraticQuestions || "" }; }) });
     emitEvent("hybrid_search_start", "start", { query: userMessage, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
-    const datasetResults = await hybridSearch(userMessage, exerciseNum);
+    const datasetResults = await hybridSearch(userMessage, exerciseNum, config.TOP_K_FINAL, hsOpts);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
     result.augmentation = formatClassificationHint(classification, correctAnswer, lang) + formatKGContext(kgResults) + formatExamples(datasetResults);
     result.decision = "concept_correction";
@@ -455,7 +461,7 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
   if (classification.type === types.partialCorrect) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "rag_examples", path: "partial_correct → rag_examples" });
     emitEvent("hybrid_search_start", "start", { query: userMessage, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
-    var datasetResults = await hybridSearch(userMessage, exerciseNum);
+    var datasetResults = await hybridSearch(userMessage, exerciseNum, config.TOP_K_FINAL, hsOpts);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
 
     // KG scaffolding: partial answers benefit from foundational concepts so the
@@ -479,8 +485,54 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
 // Full pipeline with student history appended
 // evaluableElements: optional array of all possible answer elements
 // lang: language for intermediate feedback phrases
-async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang) {
-  var result = await runPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang);
+// options: { budgetMs?: number } — when set, the pipeline arms an
+//          AbortController that cancels in-flight Chroma/embedding calls
+//          if they exceed budgetMs * 0.95. On abort the partial result
+//          gathered so far is returned with retrievalTimedOut: true so the
+//          tutorAgent can degrade gracefully instead of waiting forever.
+async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang, options) {
+  options = options || {};
+  const budgetMs = typeof options.budgetMs === "number" && options.budgetMs > 0 ? options.budgetMs : null;
+
+  let controller = null;
+  let abortTimer = null;
+  let signal = null;
+  if (budgetMs) {
+    controller = new AbortController();
+    signal = controller.signal;
+    // 95% leaves a small slack so the surrounding orchestrator can still
+    // emit "retrieval timed out" telemetry before its own outer budget
+    // triggers and forces a hard fallback.
+    abortTimer = setTimeout(() => {
+      try { controller.abort(); } catch (_) {}
+    }, Math.max(500, Math.floor(budgetMs * 0.95)));
+  }
+
+  let result;
+  try {
+    result = await runPipeline(
+      userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang,
+      signal ? { signal: signal } : undefined
+    );
+  } catch (err) {
+    if (err && (err.name === "AbortError" || err.code === "ERR_CANCELED" || err.code === "ECONNABORTED" || err.message === "canceled")) {
+      // Time ran out before any branch finished. Return a no_rag stub so the
+      // tutor still runs (with empty augmentation) and the orchestrator can
+      // surface retrievalTimedOut to the user-facing telemetry.
+      if (abortTimer) clearTimeout(abortTimer);
+      emitEvent("rag_aborted", "end", { reason: "budget_exhausted", budgetMs: budgetMs });
+      return {
+        augmentation: "",
+        decision: "no_rag",
+        sources: [],
+        classification: null,
+        retrievalTimedOut: true,
+      };
+    }
+    if (abortTimer) clearTimeout(abortTimer);
+    throw err;
+  }
+  if (abortTimer) clearTimeout(abortTimer);
 
   // If no RAG needed, skip
   if (result.decision === "no_rag") {

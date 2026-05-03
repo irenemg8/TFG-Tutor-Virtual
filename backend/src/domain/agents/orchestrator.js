@@ -123,9 +123,10 @@ class TutoringOrchestrator {
       const retrievalElapsed = Date.now() - retrievalStart;
       const retrievalOverBudget =
         ctx.retrievalBudgetMs && retrievalElapsed > ctx.retrievalBudgetMs;
-      if (retrievalOverBudget) {
+      if (retrievalOverBudget || ctx.retrievalTimedOut) {
         console.warn(
-          "[Orchestrator] retrieval exceeded budget: elapsed=" + retrievalElapsed +
+          "[Orchestrator] retrieval " + (ctx.retrievalTimedOut ? "ABORTED by budget" : "exceeded budget") +
+          ": elapsed=" + retrievalElapsed +
           "ms slice=" + ctx.retrievalBudgetMs + "ms reqId=" + (ctx.reqId || "")
         );
       }
@@ -135,6 +136,7 @@ class TutoringOrchestrator {
         sourcesCount: ctx.ragResult?.sources?.length || 0,
         elapsedMs: retrievalElapsed,
         overBudget: retrievalOverBudget || false,
+        timedOut: ctx.retrievalTimedOut || false,
       });
 
       // Check for deterministic finish
