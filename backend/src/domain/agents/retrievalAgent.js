@@ -13,10 +13,14 @@ class RetrievalAgent extends AgentInterface {
   /**
    * @param {object} deps
    * @param {Function} deps.runFullPipeline - The runFullPipeline function from ragPipeline.js
+   * @param {object}   [deps.resultadoRepo] - PgResultadoRepository, injected so
+   *                   the pipeline's loadStudentHistory call no longer reaches
+   *                   into the DI container from the domain layer (NS-5).
    */
   constructor(deps) {
     super("retrievalAgent");
     this.runFullPipeline = deps.runFullPipeline;
+    this.resultadoRepo = deps.resultadoRepo || null;
   }
 
   canSkip(context) {
@@ -51,7 +55,7 @@ class RetrievalAgent extends AgentInterface {
       context.userId,
       context.evaluableElements,
       context.lang,
-      context.retrievalBudgetMs ? { budgetMs: context.retrievalBudgetMs } : undefined
+      this._buildPipelineOptions(context)
     );
 
     context.ragResult = {
@@ -85,6 +89,17 @@ class RetrievalAgent extends AgentInterface {
     ) {
       context.classification.type = ragResult.classification;
     }
+  }
+
+  // Combine NS-3's per-stage budget with NS-5's injected resultadoRepo into
+  // the single options bag that runFullPipeline accepts. Returns undefined
+  // when neither is available so the legacy ragMiddleware path keeps the
+  // same six-arg call shape it had before.
+  _buildPipelineOptions(context) {
+    const opts = {};
+    if (context.retrievalBudgetMs) opts.budgetMs = context.retrievalBudgetMs;
+    if (this.resultadoRepo) opts.resultadoRepo = this.resultadoRepo;
+    return Object.keys(opts).length > 0 ? opts : undefined;
   }
 }
 

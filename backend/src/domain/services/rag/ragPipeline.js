@@ -5,7 +5,6 @@ const { classifyQuery, extractResistances, types } = require("./queryClassifier"
 const { hybridSearch } = require("../../../infrastructure/search/hybridSearch");
 const { searchKG } = require("../../../infrastructure/search/knowledgeGraph");
 const { emitEvent } = require("../../../infrastructure/events/ragEventBus");
-const container = require("../../../container");
 const { getAllPatterns, conceptKeywords: conceptDict, normalizeToSpanish, getIntermediateFeedback } = require("../languageManager");
 
 // Foundational KG concepts to scaffold the tutor's hints when the student is
@@ -249,12 +248,14 @@ function formatClassificationHint(classification, correctAnswer, lang) {
 }
 
 // Load the student's past AC errors via the Resultado repository (Pg-backed).
-async function loadStudentHistory(userId) {
+// resultadoRepo is injected by the caller (retrievalAgent passes it through
+// runFullPipeline options). Domain code no longer reaches into the container.
+async function loadStudentHistory(userId, resultadoRepo) {
   if (userId == null) return "";
-  if (!container._initialized || !container.resultadoRepo) return "";
+  if (!resultadoRepo) return "";
 
   try {
-    const resultados = await container.resultadoRepo.findByUserId(userId);
+    const resultados = await resultadoRepo.findByUserId(userId);
 
     // Count error tags across all exercises
     const errorCounts = {};
@@ -485,11 +486,13 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
 // Full pipeline with student history appended
 // evaluableElements: optional array of all possible answer elements
 // lang: language for intermediate feedback phrases
-// options: { budgetMs?: number } — when set, the pipeline arms an
-//          AbortController that cancels in-flight Chroma/embedding calls
-//          if they exceed budgetMs * 0.95. On abort the partial result
-//          gathered so far is returned with retrievalTimedOut: true so the
-//          tutorAgent can degrade gracefully instead of waiting forever.
+// options: {
+//   budgetMs?: number,         — arms an AbortController that cancels
+//                                in-flight Chroma/embedding calls when
+//                                budgetMs * 0.95 elapses (NS-3).
+//   resultadoRepo?: object     — injected so loadStudentHistory doesn't
+//                                require('container') from the domain (NS-5).
+// }
 async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang, options) {
   options = options || {};
   const budgetMs = typeof options.budgetMs === "number" && options.budgetMs > 0 ? options.budgetMs : null;
@@ -516,9 +519,6 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
     );
   } catch (err) {
     if (err && (err.name === "AbortError" || err.code === "ERR_CANCELED" || err.code === "ECONNABORTED" || err.message === "canceled")) {
-      // Time ran out before any branch finished. Return a no_rag stub so the
-      // tutor still runs (with empty augmentation) and the orchestrator can
-      // surface retrievalTimedOut to the user-facing telemetry.
       if (abortTimer) clearTimeout(abortTimer);
       emitEvent("rag_aborted", "end", { reason: "budget_exhausted", budgetMs: budgetMs });
       return {
@@ -541,7 +541,7 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
 
   // Load student's past errors and append
   emitEvent("student_history_start", "start", { userId: userId });
-  var history = await loadStudentHistory(userId);
+  var history = await loadStudentHistory(userId, options.resultadoRepo);
   emitEvent("student_history_end", "end", { hasHistory: history.length > 0, historyLength: history.length, historyPreview: history });
   if (history.length > 0) {
     result.augmentation += history;

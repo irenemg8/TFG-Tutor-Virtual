@@ -55,6 +55,7 @@ function createAgentRegistry(deps) {
 
     retrieval: new RetrievalAgent({
       runFullPipeline: deps.runFullPipeline,
+      resultadoRepo: deps.resultadoRepo,
     }),
 
     tutor: new TutorAgent({
