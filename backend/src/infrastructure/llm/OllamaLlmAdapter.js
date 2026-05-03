@@ -131,6 +131,119 @@ class OllamaLlmAdapter extends ILlmService {
     return resp.data; // stream
   }
 
+  /**
+   * Streaming completion with a per-token callback.
+   *
+   * Wraps `chatCompletionStream` to parse Ollama's NDJSON stream and call
+   * `onChunk(token)` for each piece of content as it arrives. Returns the
+   * accumulated full text, so the caller can keep the existing semantics
+   * of `chatCompletion` (await one string) AND simultaneously push tokens
+   * to the user.
+   *
+   * Notes:
+   *   - Each NDJSON line has shape:
+   *       { "model": "...", "message": { "role": "assistant", "content": "tok" }, "done": false }
+   *     The terminal line has done:true and possibly empty content.
+   *   - Chunks may arrive split across TCP segments — we buffer until the
+   *     newline separator before parsing.
+   *   - Errors and budget exhaustion mirror chatCompletion: BudgetExhaustedError
+   *     when options.budgetMs is set and the call gets aborted.
+   *   - If onChunk is omitted, behaves like chatCompletion (full text only).
+   */
+  async chatCompletionStreamWithCallback(messages, options, onChunk) {
+    options = options || {};
+    const callback = typeof onChunk === "function" ? onChunk : null;
+    const startMs = Date.now();
+    let stream;
+    try {
+      stream = await this.chatCompletionStream(messages, options);
+    } catch (err) {
+      if (
+        options.budgetMs != null &&
+        (err.code === "ECONNABORTED" || err.message === "canceled" || err.name === "CanceledError")
+      ) {
+        throw new BudgetExhaustedError(
+          "Ollama stream call exceeded budget (" + options.budgetMs + "ms, elapsed " + (Date.now() - startMs) + "ms)",
+          { baseUrl: options.baseUrl || this.baseUrl, model: options.model || this.model, budgetMs: options.budgetMs }
+        );
+      }
+      throw err;
+    }
+
+    return await new Promise((resolve, reject) => {
+      let buffer = "";
+      let fullText = "";
+      let settled = false;
+
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        try { stream.removeAllListeners(); } catch (_) {}
+        if (err) return reject(err);
+        resolve(fullText);
+      };
+
+      stream.on("data", (raw) => {
+        if (settled) return;
+        buffer += raw.toString("utf8");
+        let nl;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          let parsed;
+          try { parsed = JSON.parse(line); } catch (_) { continue; }
+          const piece =
+            (parsed && parsed.message && typeof parsed.message.content === "string")
+              ? parsed.message.content
+              : "";
+          if (piece) {
+            fullText += piece;
+            if (callback) {
+              try { callback(piece); } catch (_) { /* never let user code crash the stream */ }
+            }
+          }
+          if (parsed && parsed.done === true) {
+            return finish(null);
+          }
+        }
+      });
+
+      stream.on("end", () => {
+        // Flush any trailing buffered line in case the provider didn't end with \n.
+        if (buffer.trim()) {
+          try {
+            const parsed = JSON.parse(buffer.trim());
+            const piece =
+              (parsed && parsed.message && typeof parsed.message.content === "string")
+                ? parsed.message.content
+                : "";
+            if (piece) {
+              fullText += piece;
+              if (callback) { try { callback(piece); } catch (_) {} }
+            }
+          } catch (_) { /* ignore malformed tail */ }
+        }
+        finish(null);
+      });
+
+      stream.on("error", (err) => {
+        if (
+          options.budgetMs != null &&
+          (err.code === "ECONNABORTED" || err.message === "canceled" || err.name === "CanceledError")
+        ) {
+          return finish(
+            new BudgetExhaustedError(
+              "Ollama stream call exceeded budget (" + options.budgetMs + "ms, elapsed " + (Date.now() - startMs) + "ms)",
+              { baseUrl: options.baseUrl || this.baseUrl, model: options.model || this.model, budgetMs: options.budgetMs }
+            )
+          );
+        }
+        finish(err);
+      });
+    });
+  }
+
   async isHealthy() {
     try {
       const r = await axios.get(this.baseUrl + "/api/version", this._axiosOpts(this.baseUrl, 3000));

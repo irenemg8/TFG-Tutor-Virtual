@@ -20,6 +20,15 @@ class AgentContext {
     this.interaccionId = request.interaccionId || null;
     this.budgetMs = request.budgetMs || null;           // optional time budget
     this.reqId = request.reqId || null;                  // optional trace id
+    // Optional per-token callback. When set, TutorAgent uses streaming so
+    // the user sees text appearing live instead of waiting for the full
+    // 10-25s LLM response. Signature: (token: string) => void.
+    this.tokenStreamHandler =
+      typeof request.tokenStreamHandler === "function" ? request.tokenStreamHandler : null;
+    // Accumulator of what we actually streamed to the user, so the HTTP
+    // adapter can decide whether the post-pipeline finalResponse differs
+    // from the streamed text and emit a {replace:true} correction envelope.
+    this.streamedText = "";
 
     // --- Populated by ContextAgent ---
     this.ejercicio = null;

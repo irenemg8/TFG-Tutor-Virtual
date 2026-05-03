@@ -121,7 +121,13 @@ async function enviarMensajeStream({
           return;
         }
         if (typeof msg?.chunk === "string" && msg.chunk.length > 0) {
-          onChunk?.(msg.chunk);
+          // {replace:true} signals that the backend's pedagogicalReviewer or
+          // guardrail rewrote the answer after streaming partial tokens —
+          // the frontend must REPLACE the accumulated text rather than
+          // append, otherwise the user sees the original draft followed by
+          // the corrected one. {partial:true} is informational and treated
+          // as a normal append.
+          onChunk?.(msg.chunk, { replace: msg.replace === true, partial: msg.partial === true });
         }
       } catch {
         // ignore
@@ -631,7 +637,7 @@ export default function Interacciones() {
           setCurrentInteraccionId(id);
         },
 
-        onChunk: (piece) => {
+        onChunk: (piece, meta) => {
           lastDataAt = Date.now();
 
           if (!firstChunkRef.current) {
@@ -639,7 +645,13 @@ export default function Interacciones() {
             setIsTutorThinking(false);
           }
 
-          acc += piece;
+          // Backend marks {replace:true} on the post-pipeline canonical text
+          // when a guardrail/pedagogicalReviewer rewrote the streamed draft.
+          if (meta && meta.replace) {
+            acc = piece;
+          } else {
+            acc += piece;
+          }
 
           // ✅ Detectar FIN una sola vez
           if (!finHandledRef.current && containsFinishToken(acc)) {

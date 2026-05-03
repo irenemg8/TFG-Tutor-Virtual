@@ -273,6 +273,18 @@ router.post("/chat/stream", async function (req, res, next) {
       sseSend(res, { interaccionId: iid });
     }
 
+    // Token stream handler — emits SSE per-token as soon as Ollama produces
+    // them. Without this, the user stares at a spinner for 10-25s while the
+    // entire response is buffered server-side. The handler is opt-in: if
+    // the env var ORCHESTRATOR_STREAM_TOKENS=0 we keep the legacy single-chunk
+    // behaviour (useful for load tests / smoke tests that diff the body).
+    const streamTokens = process.env.ORCHESTRATOR_STREAM_TOKENS !== "0";
+    const tokenStreamHandler = streamTokens
+      ? (token) => {
+          try { sseSend(res, { chunk: token, partial: true }); } catch (_) {}
+        }
+      : null;
+
     // Process through orchestrator
     const ctx = await container.orchestrator.process({
       userId: userId,
@@ -281,6 +293,7 @@ router.post("/chat/stream", async function (req, res, next) {
       interaccionId: iid,
       budgetMs: budgetMs,
       reqId: reqId,
+      tokenStreamHandler: tokenStreamHandler,
     });
 
     // Attach the KG patterns and budget the orchestrator's agents need
@@ -300,7 +313,7 @@ router.post("/chat/stream", async function (req, res, next) {
       return;
     }
 
-    // Send response as a single chunk (same as ragMiddleware).
+    // Resolve the final response (post pedagogical reviewer + guardrails).
     // Belt-and-suspenders: orchestrator's catch already fills finalResponse on
     // error, but if anything still slips through with an empty payload, send a
     // localized fallback so the chat never goes silent on the user.
@@ -314,7 +327,33 @@ router.post("/chat/stream", async function (req, res, next) {
       };
       responseText = fallbacks[lang] || fallbacks.es;
     }
-    sseSend(res, { chunk: responseText });
+    // Two paths:
+    // 1. We streamed tokens AND finalResponse matches what we streamed:
+    //    nothing else to send — the user already has the right text.
+    // 2. We did NOT stream (legacy mode, or pipeline early-exited before
+    //    tutorAgent ran), OR finalResponse differs from streamedText
+    //    (pedagogicalReviewer/guardrail rewrote the answer): send the
+    //    canonical text. When streaming was on, mark it replace:true so
+    //    the frontend overwrites the partial chunks instead of appending.
+    const streamed = ctx.streamedText || "";
+    if (!streamed) {
+      sseSend(res, { chunk: responseText });
+    } else if (responseText !== streamed) {
+      sseSend(res, { chunk: responseText, replace: true, correction: true });
+    }
+    // Always emit a terminator envelope with the canonical full text and
+    // useful timing metadata. Frontends that don't recognise these fields
+    // simply ignore them; the {chunk:[DONE]} terminator below still fires.
+    sseSend(res, {
+      done: true,
+      fullText: responseText,
+      timing: {
+        totalMs: Date.now() - (ctx.timing.pipelineStartMs || Date.now()),
+        ollamaMs: ctx.timing.ollamaMs,
+        firstTokenMs: ctx.timing.firstTokenMs || null,
+        pipelineMs: ctx.timing.pipelineMs || null,
+      },
+    });
     trace.traceResponse(reqId, {
       len: responseText.length,
       containsFIN: responseText.includes(FIN_TOKEN),
