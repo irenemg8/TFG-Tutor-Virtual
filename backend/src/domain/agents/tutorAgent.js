@@ -270,12 +270,37 @@ class TutorAgent extends AgentInterface {
     const remainingBudget = stageBudget != null
       ? Math.min(stageBudget, totalRemaining != null ? totalRemaining : stageBudget)
       : totalRemaining;
-    context.llmResponse = await this.llmService.chatCompletion(messages, {
+    const llmOptions = {
       temperature: this.config.OLLAMA_TEMPERATURE,
       numPredict: this.config.OLLAMA_NUM_PREDICT,
       numCtx: this.config.OLLAMA_NUM_CTX,
       budgetMs: remainingBudget,
-    });
+    };
+    // When the HTTP adapter installed a tokenStreamHandler we use the
+    // native Ollama stream and emit one SSE envelope per token, so the
+    // user sees text appearing live instead of waiting 10-25s. The
+    // accumulated full text is still returned for the downstream
+    // pedagogicalReviewer + guardrail stages, which need the complete
+    // message before they can validate or rewrite it.
+    if (
+      typeof context.tokenStreamHandler === "function" &&
+      typeof this.llmService.chatCompletionStreamWithCallback === "function"
+    ) {
+      let firstTokenAt = null;
+      const onToken = (token) => {
+        if (firstTokenAt == null) firstTokenAt = Date.now();
+        context.streamedText += token;
+        try { context.tokenStreamHandler(token); } catch (_) { /* never let SSE errors crash the pipeline */ }
+      };
+      context.llmResponse = await this.llmService.chatCompletionStreamWithCallback(
+        messages,
+        llmOptions,
+        onToken
+      );
+      if (firstTokenAt != null) context.timing.firstTokenMs = firstTokenAt - ollamaStart;
+    } else {
+      context.llmResponse = await this.llmService.chatCompletion(messages, llmOptions);
+    }
     context.timing.ollamaMs = Date.now() - ollamaStart;
 
     trace.traceLlmCall(context.reqId, "end", {

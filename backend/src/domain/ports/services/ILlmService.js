@@ -40,6 +40,21 @@ class ILlmService {
     throw new Error("Not implemented");
   }
 
+  /**
+   * Streaming chat completion with a per-token callback.
+   * Calls onChunk(token) for each piece as it arrives and resolves with
+   * the accumulated full text when the stream ends. Implementations may
+   * fall back to chatCompletion if streaming is unavailable, in which
+   * case onChunk is invoked once with the whole response.
+   * @param {Array<{role: string, content: string}>} messages
+   * @param {object} [options]
+   * @param {(token: string) => void} [onChunk]
+   * @returns {Promise<string>} accumulated assistant content
+   */
+  async chatCompletionStreamWithCallback(messages, options, onChunk) {
+    throw new Error("Not implemented");
+  }
+
   /** @returns {Promise<boolean>} */
   async isHealthy() {
     throw new Error("Not implemented");
