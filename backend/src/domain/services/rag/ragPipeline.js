@@ -176,7 +176,7 @@ function formatClassificationHint(classification, correctAnswer, lang) {
   lang = lang || "es";
 
   var hints = {
-    dont_know: "The student does not know where to start. Ask ONE question about a fundamental concept (e.g., 'What conditions does a component need for current to flow through it?'). Do NOT mention specific elements.",
+    dont_know: "The student is stuck. Defer to the [STUDENT DOESN'T KNOW] block above for the exact response shape — do NOT add a generic concept question here.",
     closed_answer: "The student answered yes/no to a diagnostic question (e.g., '¿tienes dudas?'). Acknowledge briefly and either close gracefully or move to the next step. Do NOT escalate or demand reasoning for this turn.",
     wrong_answer: "The student gave an incorrect answer. Ask them to explain their reasoning. If you detect an alternative conception (AC), focus on challenging THAT concept with a Socratic question. Do NOT mention specific elements or reveal states.",
     correct_no_reasoning: "The student got the right answer but has not explained why. Ask them to justify their answer using concepts. Do NOT accept the answer as correct until they reason. Do NOT use phrases like 'Perfect', 'Correct', 'Very good', 'Exactly'. Indicate they are on the right track but you need them to explain their reasoning.",
