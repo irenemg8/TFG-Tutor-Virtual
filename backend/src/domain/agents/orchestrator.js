@@ -210,6 +210,7 @@ class TutoringOrchestrator {
       // prematurely. The legacy ragMiddleware did this; without it the
       // orchestrator path could close mid-conversation.
       this._stripUnauthorizedFinToken(ctx);
+      this._normaliseWhitespace(ctx);
 
       ctx.timing.pipelineMs = Date.now() - ctx.timing.pipelineStartMs;
 
@@ -274,6 +275,36 @@ class TutoringOrchestrator {
    * this in ragMiddleware:981-986; the orchestrator path was missing it,
    * so the LLM could close the session by emitting the token on its own.
    */
+  /**
+   * Defense in depth against qwen2.5 occasionally producing pasted-together
+   * sentences like "...avances!ese elemento..." or "...importante.Vamos a..."
+   * (no space after punctuation). We also fix this when guardrails substitute
+   * a sentence into the response without a leading space. Idempotent: never
+   * collapses legitimate whitespace, only inserts when missing.
+   */
+  _normaliseWhitespace(ctx) {
+    const txt = ctx && ctx.finalResponse;
+    if (typeof txt !== "string" || txt.length === 0) return;
+    let out = txt;
+    // 1. Insert a space after sentence terminators that are immediately
+    //    followed by an uppercase / lowercase letter or "¿"/"¡"/digit.
+    out = out.replace(/([.!?…])([A-Za-zÁÉÍÓÚÜÑáéíóúüñ¿¡0-9])/g, "$1 $2");
+    // 1b. Insert a space when a lowercase letter is followed directly by
+    //     an uppercase one — qwen2.5 sometimes produces "identificarAhora"
+    //     (missing space when concatenating placeholder + LLM continuation).
+    //     Skip CamelCase identifiers and acronym-like patterns by requiring
+    //     the lowercase token to be at least 4 chars.
+    out = out.replace(/([a-záéíóúñü]{4,})([A-ZÁÉÍÓÚÑÜ¿¡])/g, "$1 $2");
+    // 2. Collapse runs of whitespace to a single space (but keep newlines).
+    out = out.replace(/[ \t]+/g, " ");
+    // 3. Trim leading whitespace.
+    out = out.replace(/^\s+/, "");
+    if (out !== txt) {
+      ctx.finalResponse = out;
+      ctx.whitespaceNormalised = true;
+    }
+  }
+
   _stripUnauthorizedFinToken(ctx) {
     const FIN = "<FIN_EJERCICIO>";
     const final = ctx && ctx.finalResponse;

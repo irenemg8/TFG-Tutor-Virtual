@@ -453,6 +453,10 @@ function redactStateRevealSentence(response, evaluableElements, pattern, lang) {
   if (!pattern || !Array.isArray(evaluableElements) || evaluableElements.length === 0) {
     return { text: response, redacted: false };
   }
+  // Sin punto final intencionalmente: el normaliser de
+  // orchestrator._normaliseWhitespace separa por punctuación O por
+  // pegoteo letraMinusLetraMayúsc, así que esto se cubre genéricamente
+  // sin tener que mantener puntos en cada placeholder/idioma.
   var placeholders = {
     es: "ese elemento tiene una propiedad relevante que debes identificar",
     val: "eixe element té una propietat rellevant que has d'identificar",
@@ -470,7 +474,19 @@ function redactStateRevealSentence(response, evaluableElements, pattern, lang) {
     var mentions = extractElementMentions(sent, evaluableElements);
     if (mentions.length === 0) continue;
 
-    sentences[i] = placeholder + (sent.endsWith(" ") ? " " : "");
+    // Capitalise the first letter of the placeholder when it follows a
+    // sentence terminator so the rendered text reads "...avances! Ese
+    // elemento..." instead of "...avances!ese elemento...".
+    var p = placeholder;
+    if (i > 0) {
+      var prev = sentences[i - 1].trimEnd();
+      if (/[.!?…]$/.test(prev)) {
+        p = " " + p.charAt(0).toUpperCase() + p.slice(1);
+      } else if (!prev.endsWith(" ")) {
+        p = " " + p;
+      }
+    }
+    sentences[i] = p + (sent.endsWith(" ") ? " " : "");
     redacted = true;
   }
   return { text: sentences.join(""), redacted: redacted };
