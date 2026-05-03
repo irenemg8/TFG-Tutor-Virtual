@@ -131,6 +131,51 @@ class TutorAgent extends AgentInterface {
         "4. Do NOT provide the reasoning yourself. The student must produce it.\n\n";
     }
 
+    // 1d. AC DETECTADA banner — el AcDetectorAgent cruzó la propuesta del
+    //    alumno con los acPatterns del ejercicio y devolvió matches por
+    //    confianza. Cuando hay un match fuerte (>= 0.6) inyectamos el
+    //    misconception y la estrategia específica para que el LLM no se
+    //    quede en preguntas genéricas y aborde el error real del alumno.
+    let acDetectedBanner = "";
+    const detectedACs = (context.detectedACs || []).filter((a) => a.confidence >= 0.6);
+    if (detectedACs.length > 0) {
+      const ac = detectedACs[0];
+      // Extract the SPECIFIC element this AC flags (R3, R5, R1...) so the
+      // tutor can name it under the system-prompt EXCEPTION clause. Falls
+      // back to "ese elemento" if the misconception text doesn't mention one.
+      const elementMatch = (ac.misconception || "").match(/R\d+|V\d+|I\d+/i);
+      const targetElement = elementMatch ? elementMatch[0].toUpperCase() : null;
+      const proposed = (context.classification && context.classification.proposed) || [];
+      const correct = context.correctAnswer || [];
+      const correctlyProposed = proposed.filter((p) => correct.indexOf(p) >= 0);
+      const wronglyProposed = proposed.filter((p) => correct.indexOf(p) < 0);
+
+      acDetectedBanner =
+        "[AC DETECTADA EN ESTE TURNO — PRIORIDAD MÁXIMA, IGNORA OTROS HINTS GENÉRICOS]\n" +
+        "El alumno está mostrando " + ac.id + ": " + ac.name + ".\n" +
+        "Misconception concreta: " + ac.misconception + "\n";
+      if (correctlyProposed.length > 0) {
+        acDetectedBanner +=
+          "Elementos bien propuestos: " + correctlyProposed.join(", ") +
+          ". RECONÓCELOS explícitamente y diles brevemente por qué SÍ contribuyen (sin revelar estados).\n";
+      }
+      if (wronglyProposed.length > 0) {
+        acDetectedBanner +=
+          "Elementos mal propuestos: " + wronglyProposed.join(", ") +
+          ". CUESTIÓNALOS específicamente.\n";
+      }
+      acDetectedBanner +=
+        "Estrategia obligatoria: " + ac.strategy + "\n" +
+        "PUEDES nombrar " + (targetElement || "ese elemento concreto") +
+        " en tu pregunta — el system prompt te lo permite cuando hay AC detectada.\n" +
+        "Mantén la pregunta corta y socrática. NO repitas la pregunta del turno anterior.\n\n";
+      if (detectedACs.length > 1) {
+        acDetectedBanner +=
+          "[AC SECUNDARIA] También aparece " + detectedACs[1].id + " (" + detectedACs[1].name + "). " +
+          "Trata la principal ahora y deja la secundaria para el siguiente turno.\n\n";
+      }
+    }
+
     // 2. Build conversation progress hint
     const progressHint = this._buildProgressHint(context.history);
 
@@ -202,6 +247,7 @@ class TutorAgent extends AgentInterface {
 
     const dynamicContext =
       langBanner +
+      acDetectedBanner +
       conceptsBanner +
       dontKnowHint +
       demandJustificationHint +
@@ -357,30 +403,31 @@ class TutorAgent extends AgentInterface {
   _buildProgressHint(history) {
     if (!Array.isArray(history) || history.length < 2) return "";
 
-    let lastAssistant = null;
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].role === "assistant") {
-        lastAssistant = history[i].content;
-        break;
+    // Recoge las ÚLTIMAS hasta 2 preguntas del tutor (en turnos distintos)
+    // para que el LLM pueda contrastar y NO repetir literalmente. La regla
+    // "NEVER repeat a question" del system prompt no se cumple a menos que
+    // la pregunta concreta esté visible en el turn-context.
+    const recentQuestions = [];
+    for (let i = history.length - 1; i >= 0 && recentQuestions.length < 2; i--) {
+      if (history[i].role !== "assistant") continue;
+      const content = history[i].content || "";
+      const matches = content.match(/[^.!?]*\?/g);
+      if (matches && matches.length > 0) {
+        recentQuestions.push(matches[matches.length - 1].trim());
       }
     }
-    if (!lastAssistant) return "";
+    if (recentQuestions.length === 0) return "";
 
-    const questions = lastAssistant.match(/[^.!?]*\?/g);
-    const lastQuestion =
-      questions && questions.length > 0
-        ? questions[questions.length - 1].trim()
-        : null;
-    if (!lastQuestion) return "";
-
-    return (
-      "[CONVERSATION CONTEXT]\n" +
-      'Your last question to the student was: "' +
-      lastQuestion +
-      '"\n' +
-      "Evaluate the student's current response as an answer to THIS question.\n" +
-      "If they answered it correctly, acknowledge and advance. Do NOT re-ask.\n\n"
-    );
+    let block = "[CONVERSATION CONTEXT — DO NOT REPEAT THESE QUESTIONS]\n";
+    block += 'Your last question to the student was: "' + recentQuestions[0] + '"\n';
+    if (recentQuestions.length >= 2) {
+      block += 'Two turns ago you also asked: "' + recentQuestions[1] + '"\n';
+    }
+    block +=
+      "Evaluate the student's current response as an answer to those questions.\n" +
+      "If they answered correctly, acknowledge and advance — do NOT re-ask.\n" +
+      "If their answer is wrong/partial, your NEXT question MUST differ in wording AND in angle from the questions above (different concept, different node, or a more concrete level).\n\n";
+    return block;
   }
 }
 

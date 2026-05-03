@@ -102,6 +102,21 @@ class TutoringOrchestrator {
         classification: ctx.classification?.type,
       });
 
+      // Stage 3.5: AC detection (per-turn, structural). Cruza la propuesta
+      // del alumno contra los acPatterns del ejercicio actual y deja
+      // ctx.detectedACs ordenados por confianza para que tutorAgent inyecte
+      // el banner [AC DETECTADA] con misconception y estrategia específicas.
+      if (this.agents.acDetector) {
+        this.emitEvent("agent_start", "ac_detect", { agent: "acDetectorAgent" });
+        await this.agents.acDetector.execute(ctx);
+        this.emitEvent("agent_end", "ac_detect", {
+          agent: "acDetectorAgent",
+          detectedACs: (ctx.detectedACs || []).map(function (a) {
+            return { id: a.id, confidence: a.confidence };
+          }),
+        });
+      }
+
       // Early exit: greeting or off-topic → let fallback handler deal with it
       if (
         ctx.classification?.type === "greeting" ||

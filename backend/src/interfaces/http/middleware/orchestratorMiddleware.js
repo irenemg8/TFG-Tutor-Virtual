@@ -70,6 +70,7 @@ function dumpOrchestratorContext(reqId, ctx) {
     correctAnswer: ctx.correctAnswer,
     evaluableElements: ctx.evaluableElements,
     loopState: ctx.loopState,
+    detectedACs: ctx.detectedACs || [],
     ragResult: {
       decision: ctx.ragResult && ctx.ragResult.decision,
       sourcesCount: (ctx.ragResult && ctx.ragResult.sources && ctx.ragResult.sources.length) || 0,

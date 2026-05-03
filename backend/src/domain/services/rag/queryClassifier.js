@@ -562,6 +562,26 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
         return { type: types.partialCorrect, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
       }
     }
+
+    // 5b. Mixed proposal: at least one CORRECT element and at least one WRONG one.
+    //     Treating this as plain wrong_answer wastes the alumno's correct insight
+    //     (e.g. "R4 y R5" cuando la correcta es R1,R2,R4: R4 sí va, R5 no). El
+    //     tutor necesita reconocer lo bueno y cuestionar lo malo, igual que con
+    //     partial_correct puro. El AcDetectorAgent + el banner [PER-ELEMENT
+    //     ANALYSIS] aprovechan esta señal para guiar específicamente.
+    var someCorrect = false;
+    var someWrong = false;
+    for (var i = 0; i < proposed.length; i++) {
+      var found = false;
+      for (var j = 0; j < correctAnswer.length; j++) {
+        if (proposed[i] === correctAnswer[j]) { found = true; break; }
+      }
+      if (found) someCorrect = true; else someWrong = true;
+      if (someCorrect && someWrong) break;
+    }
+    if (someCorrect && someWrong) {
+      return { type: types.partialCorrect, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
+    }
   }
 
   // 6. Wrong elements with concept keywords -> wrong concept

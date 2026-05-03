@@ -4,6 +4,7 @@ const ContextAgent = require("./contextAgent");
 const AcTrackerAgent = require("./acTrackerAgent");
 const InputGuardrailAgent = require("./inputGuardrailAgent");
 const ClassifierAgent = require("./classifierAgent");
+const AcDetectorAgent = require("./acDetectorAgent");
 const RetrievalAgent = require("./retrievalAgent");
 const TutorAgent = require("./tutorAgent");
 const PedagogicalReviewerAgent = require("./pedagogicalReviewerAgent");
@@ -52,6 +53,8 @@ function createAgentRegistry(deps) {
       classifyQuery: deps.classifyQuery,
       debugLogger: deps.debugLogger,
     }),
+
+    acDetector: new AcDetectorAgent({}),
 
     retrieval: new RetrievalAgent({
       runFullPipeline: deps.runFullPipeline,
