@@ -23,6 +23,18 @@ function normId(s) {
     .trim();
 }
 
+// Element IDs (R1, V1, I3, AC9...) are normalised to uppercase no-whitespace
+// for stable matching. Free-form text answers ("por todas las resistencias
+// circula la misma corriente") must be preserved verbatim, otherwise the
+// system prompt shows an unreadable run-on string and the LLM can't parse it.
+function normAnswerToken(s) {
+  const raw = String(s || "").trim();
+  if (!raw) return "";
+  // Treat as element ID only when it's short and matches a typical SPICE id.
+  if (raw.length <= 6 && /^[A-Za-z]+\d*$/.test(raw)) return normId(raw);
+  return raw;
+}
+
 function formatList(arr) {
   if (!Array.isArray(arr) || arr.length === 0) return "";
   return arr.filter(Boolean).join(", ");
@@ -109,7 +121,7 @@ function buildTutorSystemPrompt(ejercicio, lang) {
 
   // ✅ Respuesta correcta (lista cerrada para este ejercicio)
   const respuestaCorrecta = Array.isArray(tc?.respuestaCorrecta)
-    ? tc.respuestaCorrecta.map(normId).filter(Boolean)
+    ? tc.respuestaCorrecta.map(normAnswerToken).filter(Boolean)
     : [];
 
   // Compact rules (was ~5300 chars before the latency audit, now ~1400).
@@ -156,25 +168,40 @@ ${getLanguageRules(lang)}
 
   const resistanceSummary = buildResistanceSummary(netlist);
 
-  const contexto = `
-OBJECTIVE:
-${objetivo || "(not defined)"}
-
-${resistanceSummary}
-EXPERT REASONING (how a professional thinks — use this as an internal guide, NEVER reveal it):
-${modoExpertoSafe || "(not defined)"}
-
-IMPORTANT: Use the topology and the expert reasoning to VERIFY internally what the student says. If they say something incorrect, do not correct them directly: ask them a question about the underlying concept that forces them to reconsider. Always think in terms of the GLOBAL path of the current.
-
-RELEVANT ACs (IDs):
-${acRefs.length ? formatList(acRefs) : "(none)"}
-
-CORRECT ANSWER (ELEMENTS):
-${respuestaCorrecta.length ? formatList(respuestaCorrecta) : "(not defined)"}
-
-CONTEXT VERSION:
-${version || "(not defined)"}
-`.trim();
+  // Build the contexto block only with sections that have real data.
+  // Previously we emitted "(not defined)" placeholders that poisoned the
+  // system prompt for exercises with incomplete tutorContext (Ej 2/3/7
+  // before the 2026-05-03 cleanup). The placeholders contradicted the
+  // tutor rules ("CORRECT ANSWER below is your ground truth") and made
+  // the LLM hallucinate. Now: if a field is missing we omit the section.
+  const contextoBlocks = [];
+  if (objetivo) {
+    contextoBlocks.push("OBJECTIVE:\n" + objetivo);
+  }
+  if (resistanceSummary) {
+    contextoBlocks.push(resistanceSummary.trimEnd());
+  }
+  if (modoExpertoSafe) {
+    contextoBlocks.push(
+      "EXPERT REASONING (how a professional thinks — use this as an internal guide, NEVER reveal it):\n" +
+        modoExpertoSafe
+    );
+    contextoBlocks.push(
+      "IMPORTANT: Use the topology and the expert reasoning to VERIFY internally what the student says. If they say something incorrect, do not correct them directly: ask them a question about the underlying concept that forces them to reconsider. Always think in terms of the GLOBAL path of the current."
+    );
+  }
+  if (acRefs.length) {
+    contextoBlocks.push("RELEVANT ACs (IDs):\n" + formatList(acRefs));
+  }
+  if (respuestaCorrecta.length) {
+    contextoBlocks.push(
+      "CORRECT ANSWER (ELEMENTS):\n" + formatList(respuestaCorrecta)
+    );
+  }
+  if (version) {
+    contextoBlocks.push("CONTEXT VERSION:\n" + version);
+  }
+  const contexto = contextoBlocks.join("\n\n");
 
   const ejercicioInfo = `
 CURRENT EXERCISE:
