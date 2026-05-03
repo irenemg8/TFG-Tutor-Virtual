@@ -34,15 +34,18 @@ Student: "R5"
 Tutor: "¿Por qué piensas que R5 ...?"
 -------------------------------------------------------------------------*/
 
-  // Top-2 max — more examples just inflate the prompt without changing
-  // the LLM's pedagogical style noticeably. The dataset's tone is already
-  // set by 1-2 well-chosen pairs.
-  const limited = results.slice(0, 2);
-  let text = "[REFERENCE EXAMPLES — match this tone, adapt to the actual context]\n";
+  // Top-1 only and ONLY the student side as a tone reference. Including the
+  // tutor response inside the prompt made qwen2.5 regurgitate it verbatim —
+  // observed in production where multiple turns produced identical replies
+  // copied from the dataset (e.g. "Razona tu respuesta, para ello piensa por
+  // donde circula la corriente..."). The LLM has its own pedagogical rules
+  // in the system prompt; the example is now just context, not a template.
+  const limited = results.slice(0, 1);
+  let text = "[STUDENT TONE REFERENCE — for context only, DO NOT copy phrases]\n";
   for (let i = 0; i < limited.length; i++) {
-    text += 'Student: "' + limited[i].student + '"\n';
-    text += 'Tutor: "' + limited[i].tutor + '"\n\n';
+    text += 'A previous student in this exercise wrote: "' + limited[i].student + '"\n';
   }
+  text += "Use this only to gauge the student's level. Write your OWN response in your own words.\n";
   return text;
 }
 
@@ -213,30 +216,13 @@ function formatClassificationHint(classification, correctAnswer, lang) {
     text += "The student mentions: " + classification.concepts.join(", ") + ".\n";
   }
 
-  // Inject intermediate feedback phrases for wrong/partial classifications (hybrid approach)
-  // Skip injecting "wrong" starter phrases when hints were softened (no elements mentioned)
-  if ((classification.type === "wrong_answer" || classification.type === "wrong_concept") && !(noElementsMentioned && isAggressiveType)) {
-    var wrongPhrases = getIntermediateFeedback("wrong", lang);
-    if (wrongPhrases.length > 0) {
-      text += "\nSTART your response with one of these phrases (choose the most appropriate):\n";
-      for (var i = 0; i < wrongPhrases.length; i++) {
-        text += '- "' + wrongPhrases[i] + '"\n';
-      }
-      text += "NEVER start with 'Perfecto', 'Correcto', 'Interesante', 'Muy bien' or similar positive confirmation.\n";
-    }
-  }
-
-  if (classification.type === "partial_correct" || classification.type === "correct_no_reasoning" || classification.type === "correct_wrong_reasoning") {
-    var partialPhrases = getIntermediateFeedback("partial", lang);
-    if (partialPhrases.length > 0) {
-      text += "\nSTART your response with one of these phrases (choose the most appropriate):\n";
-      for (var i = 0; i < partialPhrases.length; i++) {
-        text += '- "' + partialPhrases[i] + '"\n';
-      }
-      text += "Do NOT say 'Perfecto' or 'Correcto' until reasoning is validated.\n";
-    }
-  }
-
+  // Removed: el bloque de "intermediate feedback phrases" (lista de frases
+  // candidatas tipo "Estás cerca", "Pero hay que pulir algunos conceptos")
+  // hacía que qwen2.5 a veces repitiera la misma frase dos veces seguidas
+  // ("Pero hay que pulir algunos conceptos. Pero hay que pulir algunos
+  // conceptos.") y añadía 300-500 bytes al prompt. La regla "no confirmes
+  // wrong como Perfecto" ya está en el system prompt y en el hint de cada
+  // classification, así que el LLM elige la apertura sin repetición.
   text += "\nFollow the reference examples below to guide your response style.\n\n";
 
   // Add per-element analysis when the student mentions specific elements (with negation awareness)

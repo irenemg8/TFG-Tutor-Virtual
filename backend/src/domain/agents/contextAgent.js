@@ -83,11 +83,18 @@ class ContextAgent extends AgentInterface {
 
     const [
       prevCorrectTurns,
+      prevGoodReasoningTurns,
       consecutiveWrongTurns,
       totalAssistantTurns,
       lastAssistantMessages,
     ] = await Promise.all([
       this._countClassifications(context.interaccionId, correctTypes),
+      // STRICT count: only correct_good_reasoning counts towards
+      // _shouldFinishDeterministically. partial_correct, correct_no_reasoning
+      // and correct_wrong_reasoning are NOT enough to close the exercise —
+      // the student must give the right elements WITH a justification (real
+      // reasoning) at least twice in a row before we end the session.
+      this._countClassifications(context.interaccionId, ["correct_good_reasoning"]),
       this.messageRepo.countConsecutiveFromEnd(
         context.interaccionId,
         wrongTypes
@@ -104,6 +111,7 @@ class ContextAgent extends AgentInterface {
 
     context.loopState = {
       prevCorrectTurns,
+      prevGoodReasoningTurns,
       consecutiveWrongTurns,
       totalAssistantTurns,
       tutorRepeating,

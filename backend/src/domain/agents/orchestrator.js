@@ -52,8 +52,13 @@ class TutoringOrchestrator {
     // guardrails ≤10%. Each agent that supports a budget reads its slice; the
     // ones that don't (retrieval today) just log when they exceed it.
     if (typeof ctx.budgetMs === "number" && ctx.budgetMs > 0) {
-      ctx.retrievalBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.30));
-      ctx.tutorBudgetMs     = Math.max(5000, Math.floor(ctx.budgetMs * 0.60));
+      // Distribución 25/65/10. Subir el slice del tutor (era 60%) deja
+      // holgura suficiente para que Ollama UPV procese prefill grandes
+      // (system + history + augmentation puede llegar a 5-7KB) sin caer
+      // al fallback. Retrieval baja a 25% — los avg observados están en
+      // 2-4s, suficiente para Chroma + BM25.
+      ctx.retrievalBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.25));
+      ctx.tutorBudgetMs     = Math.max(5000, Math.floor(ctx.budgetMs * 0.65));
       ctx.guardrailBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.10));
     }
 
@@ -253,9 +258,13 @@ class TutoringOrchestrator {
    */
   _shouldFinishDeterministically(ctx) {
     const cls = ctx && ctx.classification && ctx.classification.type;
-    const prevCorrectTurns = (ctx && ctx.loopState && ctx.loopState.prevCorrectTurns) || 0;
-
-    return cls === "correct_good_reasoning" && prevCorrectTurns >= 2;
+    // We require at least ONE prior correct_good_reasoning turn so the
+    // exercise closes only after the student justified TWICE (this turn +
+    // a previous one). The old check used prevCorrectTurns which counted
+    // partial_correct / correct_no_reasoning too — leading to premature
+    // closures the very first time the student finally gave a good answer.
+    const prevGoodReasoning = (ctx && ctx.loopState && ctx.loopState.prevGoodReasoningTurns) || 0;
+    return cls === "correct_good_reasoning" && prevGoodReasoning >= 1;
   }
 
   /**
@@ -271,8 +280,8 @@ class TutoringOrchestrator {
     if (typeof final !== "string" || final.indexOf(FIN) === -1) return;
     if (ctx.deterministicFinish) return;
     const cls = ctx.classification && ctx.classification.type;
-    const prevCorrect = (ctx.loopState && ctx.loopState.prevCorrectTurns) || 0;
-    const authorized = cls === "correct_good_reasoning" && prevCorrect >= 2;
+    const prevGoodReasoning = (ctx.loopState && ctx.loopState.prevGoodReasoningTurns) || 0;
+    const authorized = cls === "correct_good_reasoning" && prevGoodReasoning >= 1;
     if (authorized) return;
     ctx.finalResponse = final.split(FIN).join("").trimEnd();
     ctx.finStripped = true;

@@ -194,9 +194,13 @@ class TutorAgent extends AgentInterface {
     let frustrationHint = "";
     if (context.loopState.studentFrustrated) {
       frustrationHint =
-        "[STUDENT FRUSTRATED] The student is expressing frustration. " +
-        "Acknowledge their effort, be encouraging, and provide a more " +
-        "concrete hint to help them make progress.\n\n";
+        "[STUDENT FRUSTRATED — ACKNOWLEDGE + CHANGE ANGLE]\n" +
+        "El alumno está mostrando frustración (\"te he dicho que\", \"ya lo he dicho\", etc.).\n" +
+        "OBLIGATORIO en esta respuesta:\n" +
+        "1. Empieza acusando recibo de su frustración con UNA frase corta y empática (\"Entiendo que insistas en eso, vamos a verlo juntos paso a paso.\"). NO le digas \"tienes razón\" si no la tiene.\n" +
+        "2. CAMBIA EL ÁNGULO respecto a tu última pregunta — si antes preguntaste por los terminales, ahora pregunta por una propiedad del netlist; si antes pediste justificar, ahora da UN hecho concreto del expert reasoning y pregunta sí/no.\n" +
+        "3. NO repitas literalmente tu pregunta anterior. NO uses las mismas palabras de apertura.\n" +
+        "4. Mantén la posición pedagógica si el alumno se equivoca — un alumno frustrado por una respuesta equivocada necesita cambio de explicación, NO que cedas.\n\n";
     }
 
     let stuckHint = "";
