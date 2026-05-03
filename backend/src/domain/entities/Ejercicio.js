@@ -56,9 +56,19 @@ class Ejercicio {
   }
 
   hasValidTutorContext() {
-    return (
-      this.tutorContext !== null && this.getCorrectAnswer().length > 0
-    );
+    if (this.tutorContext === null) return false;
+    if (this.getCorrectAnswer().length === 0) return false;
+    const objetivo = (this.tutorContext.objetivo || "").trim();
+    const netlist = (this.tutorContext.netlist || "").trim();
+    const modoExperto = (this.tutorContext.modoExperto || "").trim();
+    // Thresholds protect against historic data poisoning where seeds
+    // produced rows with empty objetivo/netlist/modoExperto, sending
+    // "(not defined)" placeholders into the tutor system prompt and
+    // contradicting the "CORRECT ANSWER is your ground truth" rule.
+    if (objetivo.length < 30) return false;
+    if (netlist.length < 10) return false;
+    if (modoExperto.length < 50) return false;
+    return true;
   }
 
   /**
