@@ -547,21 +547,13 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
     result.augmentation += history;
   }
 
-  // Append guardrail reminder
-  result.augmentation += "[GUARDRAIL]\n";
-  result.augmentation += "CRITICAL RULES FOR YOUR RESPONSE:\n";
-  result.augmentation += "1. Do NOT reveal the correct answer or list the correct elements together.\n";
-  result.augmentation += "2. Do NOT confirm incorrect answers ('Perfect', 'Correct', 'Interesting', 'Very good'). If the student is wrong, use nuanced language like 'Not quite', 'Let's reconsider', 'There are concepts to review'.\n";
-  result.augmentation += "3. Do NOT name specific elements for the student to analyze ('What about R5?', 'Look at R3').\n";
-  result.augmentation += "4. Do NOT reveal element states (short-circuited, open), switch positions, or internal connections.\n";
-  result.augmentation += "5. Ask ONE Socratic question about a CONCEPT, not about a specific component.\n";
-  result.augmentation += "6. If the student shows an AC (alternative conception), focus on challenging THAT concept.\n";
-  result.augmentation += "7. If the student gets the right answer but without reasoning or with wrong reasoning, do NOT confirm as complete. Acknowledge progress but ask for justification or challenge the wrong concept.\n";
-  result.augmentation += "8. If the student REJECTS an element that IS in the correct answer, do NOT agree. Guide them to reconsider.\n";
-  result.augmentation += "9. NEVER repeat a question the student has already answered correctly. If they demonstrated understanding, move forward to the next step.\n";
-  result.augmentation += "10. Evaluate the student considering the FULL conversation history, not just their last message. They may have justified their reasoning in previous messages.\n";
+  // NS-22: the 10-rule [GUARDRAIL] block was a verbatim duplicate of the
+  // system prompt's RULES section (~1500 bytes per turn). The system block
+  // already covers don't-reveal, don't-confirm-wrong, don't-name-elements,
+  // ground-truth and history-aware evaluation. Removed here to keep the
+  // user-message turn payload small and let Ollama prefill faster.
 
-  emitEvent("augmentation_built", "end", { augmentationLength: result.augmentation.length, decision: result.decision, classification: result.classification, sourcesCount: result.sources.length, sections: ["hint", history.length > 0 ? "history" : null, result.sources.length > 0 ? "examples" : null, "guardrail_reminder"].filter(Boolean), augmentationPreview: result.augmentation });
+  emitEvent("augmentation_built", "end", { augmentationLength: result.augmentation.length, decision: result.decision, classification: result.classification, sourcesCount: result.sources.length, sections: ["hint", history.length > 0 ? "history" : null, result.sources.length > 0 ? "examples" : null].filter(Boolean), augmentationPreview: result.augmentation });
 
   return result;
 }
