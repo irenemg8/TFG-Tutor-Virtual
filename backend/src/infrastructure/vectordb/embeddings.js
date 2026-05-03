@@ -15,14 +15,19 @@ function axiosOpts() {
 }
 
 // Generate a single embedding vector for the given text -> Returns an array of 768 dimensions for nomic-embed-text
-async function generateEmbedding(text) {
+// `options.signal` lets the retrieval pipeline abort the embedding call when
+// the per-stage budget runs out, freeing up time for the tutor LLM.
+async function generateEmbedding(text, options) {
+  options = options || {};
+  const reqConfig = { timeout: 30000, ...axiosOpts() };
+  if (options.signal) reqConfig.signal = options.signal;
   const response = await axios.post(
     `${config.OLLAMA_EMBED_URL}/api/embed`,
     {
       model: config.EMBEDDING_MODEL,
       input: text,
     },
-    { timeout: 30000, ...axiosOpts() }
+    reqConfig
   );
   return response.data.embeddings[0];
 }

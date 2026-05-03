@@ -45,12 +45,41 @@ async function addDocuments(collectionName, {ids, documents, embeddings, metadat
 }
 
 // Semantic search using query embedding -> Returns results sorted by similarity (highest first)
-async function searchSemantic(queryEmbedding, collectionName, topK = config.TOP_K_RETRIEVAL) {
+// `options.signal` lets the retrieval pipeline abort a slow Chroma query when
+// the per-stage budget runs out. Chroma's JS client doesn't expose AbortSignal
+// natively, so we race the query against signal abort and surface AbortError.
+async function searchSemantic(queryEmbedding, collectionName, topK = config.TOP_K_RETRIEVAL, options) {
+  options = options || {};
   const collection = await getCollection(collectionName);
-  const results = await collection.query({
+  const queryPromise = collection.query({
     queryEmbeddings: [queryEmbedding],
     nResults: topK,
   });
+
+  let results;
+  if (options.signal) {
+    if (options.signal.aborted) {
+      const err = new Error("searchSemantic aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+    let abortHandler;
+    const abortPromise = new Promise((_, reject) => {
+      abortHandler = () => {
+        const err = new Error("searchSemantic aborted");
+        err.name = "AbortError";
+        reject(err);
+      };
+      options.signal.addEventListener("abort", abortHandler, { once: true });
+    });
+    try {
+      results = await Promise.race([queryPromise, abortPromise]);
+    } finally {
+      if (abortHandler) options.signal.removeEventListener("abort", abortHandler);
+    }
+  } else {
+    results = await queryPromise;
+  }
 
   // Convert ChromaDB arrays to results with similarity scores
   // ChromaDB cosine distance = 1 - cosine_similarity
