@@ -122,6 +122,14 @@ function flattenInteraccion(inter, messages, usuario, ejercicio) {
       guardrailPath: md.guardrailPath || "",
       guardrailLlmRetries: md.guardrailLlmRetries ?? 0,
       guardrailSurgicalFixes: surgicalFixesStr,
+      // Raw LLM output before any guardrail rewrite + chronological list of
+      // {guardrailId,before,after,...} rewrites. The list is JSON-encoded
+      // because per-row arrays of objects don't fit a CSV cell otherwise;
+      // pandas can json.loads(df["guardrailRewrites"]) trivially.
+      llmResponseOriginal: md.llmResponseOriginal || "",
+      guardrailRewrites: Array.isArray(md.guardrailSurgicalFixDetails)
+        ? JSON.stringify(md.guardrailSurgicalFixDetails)
+        : "",
       fallbackUsed: md.fallbackUsed ?? false,
       deterministicFinish: md.deterministicFinish ?? false,
     });

@@ -66,6 +66,13 @@ class PersistenceAgent extends AgentInterface {
       guardrailSurgicalFixes: Array.isArray(context.guardrailSurgicalFixes)
         ? context.guardrailSurgicalFixes
         : [],
+      // The raw model output (pre-guardrail) and the chronological list of
+      // surgical rewrites this turn. Both end up in messages.extra_metadata
+      // so the export surfaces what the model said BEFORE any redaction.
+      llmResponseOriginal: context.llmResponse || null,
+      guardrailSurgicalFixDetails: Array.isArray(context.guardrailSurgicalFixDetails)
+        ? context.guardrailSurgicalFixDetails
+        : [],
       fallbackUsed: context.fallbackUsed || false,
       deterministicFinish: context.deterministicFinish || false,
     });

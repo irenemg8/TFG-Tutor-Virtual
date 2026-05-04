@@ -69,6 +69,11 @@ class GuardrailAgent extends AgentInterface {
     context.guardrailPath = result.path;
     context.guardrailLlmRetries = result.llmRetryCount;
     context.guardrailSurgicalFixes = result.surgicalFixesApplied || [];
+    // Chronological list of {guardrailId, before, after, durationMs, phase}
+    // for every surgical rewrite the pipeline applied. Persisted to
+    // messages.extra_metadata so the export endpoint can show the analyst
+    // exactly what the LLM was about to say before the redaction.
+    context.guardrailSurgicalFixDetails = result.surgicalFixDetails || [];
 
     // Map pipeline violations/fixes to the legacy triggered-flags object so that
     // PersistenceAgent keeps writing the SAME Interaccion metadata shape. This

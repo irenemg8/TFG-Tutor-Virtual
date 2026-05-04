@@ -53,6 +53,10 @@ function rowToDomain(row) {
         guardrailSurgicalFixes: Array.isArray(extra.guardrailSurgicalFixes)
           ? extra.guardrailSurgicalFixes
           : [],
+        llmResponseOriginal: extra.llmResponseOriginal || null,
+        guardrailSurgicalFixDetails: Array.isArray(extra.guardrailSurgicalFixDetails)
+          ? extra.guardrailSurgicalFixDetails
+          : [],
         fallbackUsed: extra.fallbackUsed || false,
         deterministicFinish: extra.deterministicFinish || false,
       }
@@ -102,6 +106,10 @@ class PgMessageRepository extends IMessageRepository {
       guardrailLlmRetries: meta?.guardrailLlmRetries || 0,
       guardrailSurgicalFixes: Array.isArray(meta?.guardrailSurgicalFixes)
         ? meta.guardrailSurgicalFixes
+        : [],
+      llmResponseOriginal: meta?.llmResponseOriginal || null,
+      guardrailSurgicalFixDetails: Array.isArray(meta?.guardrailSurgicalFixDetails)
+        ? meta.guardrailSurgicalFixDetails
         : [],
       fallbackUsed: meta?.fallbackUsed || false,
       deterministicFinish: meta?.deterministicFinish || false,

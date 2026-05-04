@@ -53,6 +53,13 @@ class MessageMetadata {
     this.guardrailSurgicalFixes = Array.isArray(props.guardrailSurgicalFixes)
       ? props.guardrailSurgicalFixes
       : [];
+    // Raw LLM output before any guardrail/surgical-fix rewrite. Lets the
+    // export endpoint show analysts what the model was about to say,
+    // alongside the chronological list of rewrites below.
+    this.llmResponseOriginal = props.llmResponseOriginal || null;
+    this.guardrailSurgicalFixDetails = Array.isArray(props.guardrailSurgicalFixDetails)
+      ? props.guardrailSurgicalFixDetails
+      : [];
     this.fallbackUsed = props.fallbackUsed || false;
     this.deterministicFinish = props.deterministicFinish || false;
   }

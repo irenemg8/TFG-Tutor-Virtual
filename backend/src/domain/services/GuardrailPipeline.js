@@ -74,6 +74,12 @@ class GuardrailPipeline {
     const remainingBudget = () => this.budgetMs - (Date.now() - startMs);
 
     const surgicalFixesApplied = [];
+    // Chronological detail of every surgical rewrite applied this turn.
+    // Each entry: {guardrailId, before, after, durationMs, phase}.
+    // The pipeline already had the before/after in hand for the logger but
+    // dropped them — now we keep them so the export endpoint can surface
+    // what the LLM was about to say before the redaction kicked in.
+    const surgicalFixDetails = [];
 
     // === Phase A: initial parallel check ===
     let currentResponse = response;
@@ -83,7 +89,9 @@ class GuardrailPipeline {
     if (violations.length === 0) {
       return _result({
         response: currentResponse, violated: false, path: "primary_ok",
-        residualViolations: [], llmRetryCount: 0, surgicalFixesApplied: surgicalFixesApplied,
+        residualViolations: [], llmRetryCount: 0,
+        surgicalFixesApplied: surgicalFixesApplied,
+        surgicalFixDetails: surgicalFixDetails,
       });
     }
 
@@ -99,6 +107,13 @@ class GuardrailPipeline {
         this._safe(() => this.logger.traceSurgicalFix && this.logger.traceSurgicalFix(reqId, g.id, {
           applied: true, durationMs: dur, before: fix.before, after: fix.after,
         }));
+        surgicalFixDetails.push({
+          guardrailId: g.id,
+          before: fix.before != null ? fix.before : currentResponse,
+          after: fix.after != null ? fix.after : fix.text,
+          durationMs: dur,
+          phase: "B",
+        });
         currentResponse = fix.text;
         surgicalFixesApplied.push(g.id);
       } else {
@@ -114,7 +129,9 @@ class GuardrailPipeline {
     if (violations.length === 0) {
       return _result({
         response: currentResponse, violated: false, path: "surgical_ok",
-        residualViolations: [], llmRetryCount: 0, surgicalFixesApplied: surgicalFixesApplied,
+        residualViolations: [], llmRetryCount: 0,
+        surgicalFixesApplied: surgicalFixesApplied,
+        surgicalFixDetails: surgicalFixDetails,
       });
     }
 
@@ -123,7 +140,9 @@ class GuardrailPipeline {
     if (budget < this.minRetryBudgetMs) {
       return _result({
         response: currentResponse, violated: true, path: "budget_exhausted",
-        residualViolations: violations, llmRetryCount: 0, surgicalFixesApplied: surgicalFixesApplied,
+        residualViolations: violations, llmRetryCount: 0,
+        surgicalFixesApplied: surgicalFixesApplied,
+        surgicalFixDetails: surgicalFixDetails,
       });
     }
 
@@ -136,7 +155,9 @@ class GuardrailPipeline {
     if (hints.length === 0) {
       return _result({
         response: currentResponse, violated: true, path: "no_retry_hints",
-        residualViolations: violations, llmRetryCount: 0, surgicalFixesApplied: surgicalFixesApplied,
+        residualViolations: violations, llmRetryCount: 0,
+        surgicalFixesApplied: surgicalFixesApplied,
+        surgicalFixDetails: surgicalFixDetails,
       });
     }
 
@@ -161,7 +182,9 @@ class GuardrailPipeline {
       return _result({
         response: currentResponse, violated: true,
         path: err instanceof BudgetExhaustedError ? "budget_exhausted" : "retry_error",
-        residualViolations: violations, llmRetryCount: 0, surgicalFixesApplied: surgicalFixesApplied,
+        residualViolations: violations, llmRetryCount: 0,
+        surgicalFixesApplied: surgicalFixesApplied,
+        surgicalFixDetails: surgicalFixDetails,
       });
     }
 
@@ -171,7 +194,9 @@ class GuardrailPipeline {
     if (violations.length === 0) {
       return _result({
         response: retryResponse, violated: false, path: "llm_retry_ok",
-        residualViolations: [], llmRetryCount: 1, surgicalFixesApplied: surgicalFixesApplied,
+        residualViolations: [], llmRetryCount: 1,
+        surgicalFixesApplied: surgicalFixesApplied,
+        surgicalFixDetails: surgicalFixDetails,
       });
     }
 
@@ -188,6 +213,13 @@ class GuardrailPipeline {
         this._safe(() => this.logger.traceSurgicalFix && this.logger.traceSurgicalFix(reqId, g2.id, {
           applied: true, durationMs: dur2, before: fix2.before, after: fix2.after,
         }));
+        surgicalFixDetails.push({
+          guardrailId: g2.id,
+          before: fix2.before != null ? fix2.before : finalResponse,
+          after: fix2.after != null ? fix2.after : fix2.text,
+          durationMs: dur2,
+          phase: "D",
+        });
         finalResponse = fix2.text;
         if (surgicalFixesApplied.indexOf(g2.id) < 0) surgicalFixesApplied.push(g2.id);
       }
@@ -203,6 +235,7 @@ class GuardrailPipeline {
       residualViolations: finalViolations,
       llmRetryCount: 1,
       surgicalFixesApplied: surgicalFixesApplied,
+      surgicalFixDetails: surgicalFixDetails,
     });
   }
 
