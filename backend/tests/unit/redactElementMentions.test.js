@@ -13,8 +13,15 @@ describe("redactElementMentions — run collapse + spacing", () => {
     const input = "¿Por qué R3, R5 y R1 contribuyen al voltaje?";
     const { text, redacted } = redactElementMentions(input, correctAnswer, "es");
     expect(redacted).toBe(true);
-    // No debe contener placeholders repetidos
-    expect(text.match(/ese conjunto de elementos/g) || []).toHaveLength(1);
+    // No debe contener placeholders repetidos. Tras BUG-004, el placeholder
+    // singular puede haberse promovido a "esos elementos" si el verbo era
+    // plural ("contribuyen") — el contrato es: aparece UN solo placeholder
+    // de cualquier forma.
+    const placeholderCount =
+      (text.match(/ese conjunto de elementos/g) || []).length +
+      (text.match(/esos elementos/g) || []).length +
+      (text.match(/esas resistencias/g) || []).length;
+    expect(placeholderCount).toBe(1);
     // No debe quedar ningún Rn suelto
     expect(text).not.toMatch(/\bR\d+\b/);
   });
@@ -22,10 +29,12 @@ describe("redactElementMentions — run collapse + spacing", () => {
   test("preserva los espacios alrededor del placeholder", () => {
     const input = "¿Por qué crees que R1, R2 y R4 afectan al voltaje?";
     const { text } = redactElementMentions(input, correctAnswer, "es");
-    expect(text).toContain(" ese conjunto de elementos ");
-    // No debe haber "queese conjunto" pegado sin espacios
-    expect(text).not.toMatch(/[a-z]ese conjunto de elementos/);
-    expect(text).not.toMatch(/ese conjunto de elementos[a-z]/);
+    // Tras BUG-004 el placeholder se promueve a "esos elementos" cuando
+    // el verbo es plural ("afectan"), pero el contrato de espaciado es
+    // el mismo: bordes con espacio, sin pegoteo.
+    expect(text).toMatch(/\s(ese conjunto de elementos|esos elementos|esas resistencias)\s/);
+    expect(text).not.toMatch(/[a-z](ese conjunto de elementos|esos elementos|esas resistencias)/);
+    expect(text).not.toMatch(/(ese conjunto de elementos|esos elementos|esas resistencias)[a-z]/);
   });
 
   test("colapsa con paréntesis envolventes", () => {
@@ -63,7 +72,8 @@ describe("redactElementMentions — run collapse + spacing", () => {
   test("placeholder inglés cuando lang=en", () => {
     const input = "Why do R1, R2 and R4 contribute to the voltage?";
     const { text } = redactElementMentions(input, correctAnswer, "en");
-    expect(text).toContain("that set of elements");
+    // BUG-004: el verbo plural "contribute" promueve a "those elements".
+    expect(text).toMatch(/that set of elements|those elements/);
   });
 
   // Regression: el split por sentence consumía el whitespace separador y el

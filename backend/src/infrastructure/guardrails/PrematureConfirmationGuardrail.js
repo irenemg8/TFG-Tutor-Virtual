@@ -3,7 +3,7 @@
 const IGuardrail = require("../../domain/ports/services/IGuardrail");
 const { stripAccents, includesAsWord } = require("../../domain/services/text/accentNormalizer");
 const { isNegatedInContext } = require("../../domain/services/text/negationDetector");
-const { getAllPatterns, confirmPhrases: confirmDict, getPartialConfirmationInstruction, getRandomIntermediatePhrase } = require("../../domain/services/languageManager");
+const { getAllPatterns, confirmPhrases: confirmDict, getPartialConfirmationInstruction, getRandomIntermediatePhrase, startsWithIntermediatePhrase } = require("../../domain/services/languageManager");
 
 const confirmPhrases = getAllPatterns(confirmDict);
 
@@ -48,12 +48,15 @@ class PrematureConfirmationGuardrail extends IGuardrail {
 
   surgicalFix(response, ctx) {
     if (typeof response !== "string") return null;
+    // NS-34: idempotency — see FalseConfirmationGuardrail.
+    if (startsWithIntermediatePhrase(response)) return { applied: false, text: response };
     const lang = (ctx && ctx.lang) || "es";
     const { removeOpeningConfirmation } = require("../../domain/services/rag/guardrails");
     const prefix = getRandomIntermediatePhrase("partial", lang);
     if (!prefix) return { applied: false, text: response };
     const cleaned = removeOpeningConfirmation(response, lang);
     const secondPass = removeOpeningConfirmation(cleaned, lang);
+    if (secondPass.trim() === response.trim()) return { applied: false, text: response };
     const fixed = prefix + " " + secondPass;
     if (fixed === response) return { applied: false, text: response };
     return { applied: true, text: fixed, before: response, after: fixed };

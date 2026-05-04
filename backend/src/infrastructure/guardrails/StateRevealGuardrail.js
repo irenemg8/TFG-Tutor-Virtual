@@ -102,8 +102,20 @@ class StateRevealGuardrail extends IGuardrail {
     if (!res.violated) return { applied: false, text: response };
     const pattern = res.metadata && res.metadata.pattern;
     if (!pattern) return { applied: false, text: response };
-    const { redactStateRevealSentence } = require("../../domain/services/rag/guardrails");
-    const r = redactStateRevealSentence(response, evaluableElements, pattern, lang);
+    const { redactStateRevealSentence, STATE_REVEAL_PLACEHOLDER_REGEX } =
+      require("../../domain/services/rag/guardrails");
+    // BUG-009-B: contar disparos previos del placeholder en mensajes
+    // assistant anteriores para rotar el wording (3 variantes y luego
+    // supresión).
+    var priorHits = 0;
+    var msgs = (ctx && ctx.messages) || [];
+    for (var i = 0; i < msgs.length; i++) {
+      var m = msgs[i];
+      if (m && m.role === "assistant" && typeof m.content === "string") {
+        if (STATE_REVEAL_PLACEHOLDER_REGEX.test(m.content)) priorHits++;
+      }
+    }
+    const r = redactStateRevealSentence(response, evaluableElements, pattern, lang, priorHits);
     if (!r || !r.redacted) return { applied: false, text: response };
     return { applied: true, text: r.text, before: response, after: r.text };
   }

@@ -49,6 +49,14 @@ class GuardrailAgent extends AgentInterface {
       // partial-wrong answers (e.g. "R4 no contribuye" when R4 IS correct).
       proposed: (context.classification && context.classification.proposed) || [],
       negated: (context.classification && context.classification.negated) || [],
+      // NS-33: AdherenceGuardrail uses turnVerdict.hits to detect
+      // missed_affirmation (LLM ignored the hits the banner declared).
+      turnVerdict: context.turnVerdict || null,
+      // BUG-009-B (2026-05-03): StateRevealGuardrail rotates the redaction
+      // placeholder based on how many times it has already fired in this
+      // conversation, so the student doesn't see the same generic phrase 3
+      // turns in a row. Needs the prior assistant messages to count hits.
+      messages: context.llmMessages || [],
     };
 
     const result = await this.pipeline.validate(context.llmResponse, guardrailCtx, {
@@ -75,7 +83,11 @@ class GuardrailAgent extends AgentInterface {
       prematureConfirmation: anyFor("premature_confirmation"),
       completeSolution: anyFor("complete_solution"),
       stateReveal: anyFor("state_reveal"),
-      elementNaming: anyFor("element_naming"),
+      // elementNaming retired (NS-32) — kept as false in the metadata
+      // shape so historical Interaccion docs still parse with the same
+      // schema; PersistenceAgent and downstream consumers are unaffected.
+      elementNaming: false,
+      adherence: anyFor("adherence"),
       didacticExplanation: anyFor("didactic_explanation"),
       datasetStyle: anyFor("dataset_style"),
     };

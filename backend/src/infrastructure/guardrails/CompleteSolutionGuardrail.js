@@ -8,6 +8,7 @@ const {
   confirmPhrases: confirmDict,
   getCompleteSolutionInstruction,
   getRandomIntermediatePhrase,
+  startsWithIntermediatePhrase,
 } = require("../../domain/services/languageManager");
 
 const confirmPhrases = getAllPatterns(confirmDict);
@@ -81,12 +82,15 @@ class CompleteSolutionGuardrail extends IGuardrail {
 
   surgicalFix(response, ctx) {
     if (typeof response !== "string") return null;
+    // NS-34: idempotency — same rationale as FalseConfirmationGuardrail.
+    if (startsWithIntermediatePhrase(response)) return { applied: false, text: response };
     const lang = (ctx && ctx.lang) || "es";
     const { removeOpeningConfirmation } = require("../../domain/services/rag/guardrails");
     const prefix = getRandomIntermediatePhrase("wrong", lang);
     if (!prefix) return { applied: false, text: response };
     const cleaned = removeOpeningConfirmation(response, lang);
     const secondPass = removeOpeningConfirmation(cleaned, lang);
+    if (secondPass.trim() === response.trim()) return { applied: false, text: response };
     const fixed = prefix + " " + secondPass;
     if (fixed === response) return { applied: false, text: response };
     return { applied: true, text: fixed, before: response, after: fixed };

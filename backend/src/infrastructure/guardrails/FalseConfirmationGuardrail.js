@@ -3,7 +3,7 @@
 const IGuardrail = require("../../domain/ports/services/IGuardrail");
 const { stripAccents, includesAsWord } = require("../../domain/services/text/accentNormalizer");
 const { isNegatedInContext } = require("../../domain/services/text/negationDetector");
-const { getAllPatterns, confirmPhrases: confirmDict, getFalseConfirmationInstruction, getRandomIntermediatePhrase } = require("../../domain/services/languageManager");
+const { getAllPatterns, confirmPhrases: confirmDict, getFalseConfirmationInstruction, getRandomIntermediatePhrase, startsWithIntermediatePhrase } = require("../../domain/services/languageManager");
 
 const confirmPhrases = getAllPatterns(confirmDict);
 
@@ -82,12 +82,24 @@ class FalseConfirmationGuardrail extends IGuardrail {
    */
   surgicalFix(response, ctx) {
     if (typeof response !== "string") return null;
+    // NS-34: idempotency. The pipeline runs surgical fixes for every violated
+    // guardrail in sequence with currentResponse mutating between iterations.
+    // If a sibling guardrail (CompleteSolutionGuardrail) already prepended a
+    // corrective prefix, prepending another would stack ("No es exactamente
+    // así. Hay conceptos que debemos revisar. <rest>"). Some intermediate
+    // phrases overlap with confirmPhrases ("Vas por buen camino"), so we
+    // can't rely on this.check() — we detect the prefix structurally.
+    if (startsWithIntermediatePhrase(response)) return { applied: false, text: response };
     const lang = (ctx && ctx.lang) || "es";
     const { removeOpeningConfirmation } = require("../../domain/services/rag/guardrails");
     const prefix = getRandomIntermediatePhrase("wrong", lang);
     if (!prefix) return { applied: false, text: response };
     const cleaned = removeOpeningConfirmation(response, lang);
     const secondPass = removeOpeningConfirmation(cleaned, lang);
+    // If nothing was actually stripped from the head, the opening "confirmation"
+    // never reached the surface (e.g. it was inside a quote or the response
+    // already starts with a corrective prefix) — bail out instead of double-prefixing.
+    if (secondPass.trim() === response.trim()) return { applied: false, text: response };
     const fixed = prefix + " " + secondPass;
     if (fixed === response) return { applied: false, text: response };
     return { applied: true, text: fixed, before: response, after: fixed };

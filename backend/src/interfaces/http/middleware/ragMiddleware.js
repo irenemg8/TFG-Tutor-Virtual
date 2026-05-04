@@ -868,7 +868,17 @@ router.post("/chat/stream", async function (req, res, next) {
       // the offending sentence only, keeping the rest of the response intact.
       if (stateCheck.revealed) {
         var _tSurg0 = Date.now();
-        var stateRedact = redactStateRevealSentence(fullResponse, evaluableElements, stateCheck.pattern, lang);
+        // BUG-009-B: rotar wording según disparos previos en la
+        // conversación. Contamos en `history` (assistant turns).
+        var _placeholderRe = require("../../../domain/services/rag/guardrails").STATE_REVEAL_PLACEHOLDER_REGEX;
+        var _priorHits = 0;
+        for (var _hi = 0; _hi < history.length; _hi++) {
+          var _hm = history[_hi];
+          if (_hm && _hm.role === "assistant" && typeof _hm.content === "string") {
+            if (_placeholderRe.test(_hm.content)) _priorHits++;
+          }
+        }
+        var stateRedact = redactStateRevealSentence(fullResponse, evaluableElements, stateCheck.pattern, lang, _priorHits);
         trace.traceSurgicalFix(reqId, "state_reveal", { applied: stateRedact.redacted, durationMs: Date.now() - _tSurg0, before: fullResponse, after: stateRedact.text });
         if (stateRedact.redacted) {
           guardrailTriggered = true;
@@ -878,44 +888,11 @@ router.post("/chat/stream", async function (req, res, next) {
         }
       }
 
-      // 11d. Check if the LLM names specific evaluable elements in questions/directives
-      // Iterative: up to 2 retries. Final fallback: deterministic redaction.
-      var _tNaming0 = Date.now();
-      var namingCheck = checkElementNaming(fullResponse, evaluableElements);
-      trace.traceGuardrailCheck(reqId, "element_naming", { violated: namingCheck.named, checkMs: Date.now() - _tNaming0, evidence: namingCheck.details });
-      emitEvent("guardrail_element_naming", "end", { responsePreview: fullResponse, result: namingCheck, passed: !namingCheck.named, check: "Checks if LLM names specific elements in questions or directives" });
-      for (var namingAttempt = 1; namingAttempt <= 2 && namingCheck.named; namingAttempt++) {
-        guardrailTriggered = true;
-        console.log("[RAG] Guardrail triggered (element naming) attempt " + namingAttempt + ": " + namingCheck.details);
-        trace.traceLlmRetry(reqId, "element_naming", namingAttempt);
-        emitEvent("ollama_retry", "start", { reason: "element_naming", retryCount: namingAttempt });
-
-        var namingPrompt = augmentedPrompt + getElementNamingInstruction(lang);
-        var namingRetry = [{ role: "system", content: namingPrompt }];
-        for (var ni = 0; ni < history.length; ni++) {
-          namingRetry.push(history[ni]);
-        }
-        var _tNR = Date.now();
-        fullResponse = await callOllama(namingRetry);
-        trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - _tNR, responseLen: fullResponse.length, reason: "retry_element_naming_" + namingAttempt, response: fullResponse });
-        emitEvent("ollama_retry", "end", { reason: "element_naming", responseLength: fullResponse.length });
-        namingCheck = checkElementNaming(fullResponse, evaluableElements);
-      }
-
-      // 11d-bis. Deterministic redaction fallback: if after the retries the
-      // response STILL names correct elements in questions/directives, rewrite
-      // them with a generic placeholder. Prefer clunky-but-safe over leaking.
-      if (namingCheck.named) {
-        var _tSurgN = Date.now();
-        var redactResult = redactElementMentions(fullResponse, correctAnswer, lang);
-        trace.traceSurgicalFix(reqId, "element_naming", { applied: redactResult.redacted, durationMs: Date.now() - _tSurgN, before: fullResponse, after: redactResult.text });
-        if (redactResult.redacted) {
-          guardrailTriggered = true;
-          console.log("[RAG] Deterministic redaction applied (element naming could not be fixed by LLM)");
-          emitEvent("guardrail_redaction", "end", { reason: "element_naming_fallback", before: fullResponse, after: redactResult.text });
-          fullResponse = redactResult.text;
-        }
-      }
+      // 11d. element_naming check + retry RETIRED 2026-05-03 (NS-32). Permitir
+      //      "Resistencia R1" textual queda mejor que sustitutos vagos como
+      //      "ese conjunto de elementos". El SolutionLeakGuardrail (11d-ter)
+      //      sigue capturando el caso real peligroso (todos los elementos
+      //      correctos juntos en una afirmación).
 
       // 11d-ter. Extra safety: if the response still literally contains ALL
       // correct elements together (e.g. "R1, R2, R4") redact them even when

@@ -10,9 +10,15 @@ const FalseConfirmationGuardrail = require("./FalseConfirmationGuardrail");
 const PrematureConfirmationGuardrail = require("./PrematureConfirmationGuardrail");
 const CompleteSolutionGuardrail = require("./CompleteSolutionGuardrail");
 const StateRevealGuardrail = require("./StateRevealGuardrail");
-const ElementNamingGuardrail = require("./ElementNamingGuardrail");
+// ElementNamingGuardrail retired 2026-05-03 (NS-32): redactaba "Rn" →
+// "ese conjunto de elementos", lo que generaba respuestas vagas como
+// "Vamos a pensar en los dos terminales de ese conjunto de elementos".
+// Decidimos que el tutor pueda decir "Resistencia R1" textual.
+const AdherenceGuardrail = require("./AdherenceGuardrail");
 const DidacticExplanationGuardrail = require("./DidacticExplanationGuardrail");
 const DatasetStyleGuardrail = require("./DatasetStyleGuardrail");
+const LanguageDriftGuardrail = require("./LanguageDriftGuardrail");
+const RepeatedQuestionGuardrail = require("./RepeatedQuestionGuardrail");
 
 /**
  * Build the DEFAULT guardrail list — only hard safety checks. The
@@ -27,11 +33,13 @@ const DatasetStyleGuardrail = require("./DatasetStyleGuardrail");
  */
 function createDefaultGuardrails() {
   return [
+    new LanguageDriftGuardrail(),      // high — BUG-002: scripts no-latinos en mid-respuesta
     new SolutionLeakGuardrail(),       // high — leaks the answer
     new FalseConfirmationGuardrail(),  // high — confirms a wrong answer
     new CompleteSolutionGuardrail(),   // high — validates a wrong PART of the answer
     new StateRevealGuardrail(),        // high — exposes internal state
-    new ElementNamingGuardrail(),      // med  — directs attention to specific elements
+    new AdherenceGuardrail(),          // med  — NS-33: contradicción Rn + multi-pregunta
+    new RepeatedQuestionGuardrail(),   // med  — BUG-010-C: pregunta socrática repetida literal
   ];
 }
 
@@ -43,12 +51,14 @@ function createDefaultGuardrails() {
  */
 function createLegacyGuardrails() {
   return [
+    new LanguageDriftGuardrail(),
     new SolutionLeakGuardrail(),
     new FalseConfirmationGuardrail(),
     new PrematureConfirmationGuardrail(),
     new CompleteSolutionGuardrail(),
     new StateRevealGuardrail(),
-    new ElementNamingGuardrail(),
+    new AdherenceGuardrail(),
+    new RepeatedQuestionGuardrail(),
     new DidacticExplanationGuardrail(),
     new DatasetStyleGuardrail(),
   ];
@@ -74,7 +84,9 @@ module.exports = {
   PrematureConfirmationGuardrail: PrematureConfirmationGuardrail,
   CompleteSolutionGuardrail: CompleteSolutionGuardrail,
   StateRevealGuardrail: StateRevealGuardrail,
-  ElementNamingGuardrail: ElementNamingGuardrail,
+  AdherenceGuardrail: AdherenceGuardrail,
   DidacticExplanationGuardrail: DidacticExplanationGuardrail,
   DatasetStyleGuardrail: DatasetStyleGuardrail,
+  LanguageDriftGuardrail: LanguageDriftGuardrail,
+  RepeatedQuestionGuardrail: RepeatedQuestionGuardrail,
 };

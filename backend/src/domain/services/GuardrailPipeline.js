@@ -130,7 +130,7 @@ class GuardrailPipeline {
     const hints = violations
       .map(v => this._findGuardrail(v.id))
       .filter(Boolean)
-      .map(g => g.buildRetryHint(ctx && ctx.lang))
+      .map(g => g.buildRetryHint(ctx && ctx.lang, ctx))
       .filter(Boolean);
 
     if (hints.length === 0) {

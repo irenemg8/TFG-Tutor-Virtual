@@ -445,24 +445,135 @@ function removeOpeningConfirmation(response, lang) {
   return result || response;
 }
 
+// If the redaction stripped the only sentence that carried a question (or
+// the LLM never produced one), append a generic Socratic question so the
+// student still has something to react to. Without this, hardcoded patterns
+// firing inside questions ("circula corriente por R5?") get redacted into a
+// pure affirmation and the turn ends without a prompt for the student.
+function ensureResponseHasQuestion(text, lang) {
+  if (typeof text !== "string" || text.length === 0) return text;
+  if (text.includes("?")) return text;
+  var fallback = {
+    es: "¿Qué propiedad de ese elemento podrías analizar para decidirlo?",
+    val: "Quina propietat d'eixe element podries analitzar per a decidir-ho?",
+    en: "What property of that element could you analyse to decide?",
+  };
+  var q = fallback[lang] || fallback.es;
+  var trimmed = text.replace(/\s+$/, "");
+  if (trimmed.length === 0) return q;
+  // Make sure we end the previous sentence cleanly before appending the
+  // question. The sentence may end in punctuation already; if not, add a
+  // period so the two sentences don't pegote.
+  if (!/[.!?…]$/.test(trimmed)) trimmed = trimmed + ".";
+  return trimmed + " " + q;
+}
+
 // Surgical redaction: locate the sentence that reveals element state and
 // replace the element mention + the state/concept pattern with a generic
 // placeholder, keeping the rest of the response intact. Used as the last
 // resort when the LLM retries couldn't clean a state-reveal.
-function redactStateRevealSentence(response, evaluableElements, pattern, lang) {
+//
+// NS-31 (2026-05-03): only the FIRST matching sentence is redacted. Before
+// this, when the LLM emitted the same state-reveal twice in one response
+// (a common echo pattern with qwen2.5 7B), the placeholder was injected
+// twice, producing visible duplicates like:
+//   "Bien encaminado. Ese elemento tiene una propiedad relevante. Ahora
+//    piensa en R1. Ese elemento tiene una propiedad relevante."
+// If the LLM still has additional reveals after the first redaction, the
+// outer pipeline can either retry once more or the surrounding tutor
+// banner (NS-30) will catch the structural violation on the next turn.
+// BUG-009-B (2026-05-03): tres variantes de placeholder por idioma + supresión
+// tras 3 disparos. Antes el alumno leía la misma frase
+// "Ese elemento tiene una propiedad relevante…" 3 turnos seguidos. Ahora
+// rotamos el wording según priorHits (cuántos turnos previos dispararon ya
+// el redactor en esta conversación). Con priorHits >= 3 devolvemos cadena
+// vacía: la frase con state-reveal se elimina sin sustituto y
+// ensureResponseHasQuestion garantiza que sigue habiendo pregunta socrática.
+var STATE_REVEAL_PLACEHOLDERS = {
+  es: [
+    "ese elemento tiene una propiedad relevante que debes identificar.",
+    "hay una característica clave de ese elemento que aún no has nombrado.",
+    "falta una pieza concreta del análisis para llegar a la conclusión.",
+  ],
+  val: [
+    "eixe element té una propietat rellevant que has d'identificar.",
+    "hi ha una característica clau d'eixe element que encara no has anomenat.",
+    "falta una peça concreta de l'anàlisi per arribar a la conclusió.",
+  ],
+  en: [
+    "that element has a relevant property you should identify.",
+    "there is a key characteristic of that element you haven't named yet.",
+    "a specific piece of the analysis is missing to reach the conclusion.",
+  ],
+};
+
+// Cualquiera de las variantes anteriores en cualquier idioma — usado por
+// callers para contar disparos previos en la historia de la conversación.
+var STATE_REVEAL_PLACEHOLDER_REGEX = (function () {
+  var all = [];
+  Object.keys(STATE_REVEAL_PLACEHOLDERS).forEach(function (k) {
+    STATE_REVEAL_PLACEHOLDERS[k].forEach(function (p) {
+      // sin el "." final para tolerar variantes con/sin punto
+      all.push(p.replace(/\.$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    });
+  });
+  return new RegExp("(" + all.join("|") + ")", "i");
+})();
+
+// BUG-012 (2026-05-03): keywords de estado interno que NO deben aparecer
+// junto a un Rn evaluable. Lista compartida por es/val/en porque el matching
+// es lowercase y la mayoría de términos son cognados o muy similares. Si en
+// el futuro hay falsos positivos por idioma se puede separar por lang.
+var STATE_LEAK_KEYWORDS = [
+  // ES
+  "cortocircuitada", "cortocircuitado", "en cortocircuito", "está corto",
+  "abierta", "abierto", "en abierto", "no contribuye", "no aporta",
+  "no influye", "no afecta", "no funciona", "fuera del circuito",
+  "sin función", "no juega ningún papel", "no participa",
+  // VAL
+  "curtcircuitada", "curtcircuitat", "en curtcircuit", "oberta", "obert",
+  "no contribueix", "no aporta", "no influeix", "no afecta",
+  // EN
+  "shorted", "short-circuited", "open-circuited", "is shorted",
+  "doesn't contribute", "does not contribute", "doesn't affect",
+  "out of circuit", "plays no role",
+];
+
+function _sentenceLeaksElementState(sentence, evaluableElements) {
+  if (typeof sentence !== "string" || sentence.length === 0) return false;
+  if (!Array.isArray(evaluableElements) || evaluableElements.length === 0) {
+    return false;
+  }
+  var lower = sentence.toLowerCase();
+  var hasStateKw = false;
+  for (var i = 0; i < STATE_LEAK_KEYWORDS.length; i++) {
+    if (lower.indexOf(STATE_LEAK_KEYWORDS[i]) !== -1) { hasStateKw = true; break; }
+  }
+  if (!hasStateKw) return false;
+  var mentions = extractElementMentions(sentence, evaluableElements);
+  return mentions.length > 0;
+}
+
+function _pickStatePlaceholder(lang, priorHits) {
+  var bank = STATE_REVEAL_PLACEHOLDERS[lang] || STATE_REVEAL_PLACEHOLDERS.es;
+  var hits = typeof priorHits === "number" && priorHits >= 0 ? priorHits : 0;
+  if (hits >= bank.length) return ""; // suprimir tras 3 disparos
+  return bank[hits];
+}
+
+function redactStateRevealSentence(response, evaluableElements, pattern, lang, priorHits) {
   if (!pattern || !Array.isArray(evaluableElements) || evaluableElements.length === 0) {
     return { text: response, redacted: false };
   }
-  // Sin punto final intencionalmente: el normaliser de
-  // orchestrator._normaliseWhitespace separa por punctuación O por
-  // pegoteo letraMinusLetraMayúsc, así que esto se cubre genéricamente
-  // sin tener que mantener puntos en cada placeholder/idioma.
-  var placeholders = {
-    es: "ese elemento tiene una propiedad relevante que debes identificar",
-    val: "eixe element té una propietat rellevant que has d'identificar",
-    en: "that element has a relevant property you should identify",
-  };
-  var placeholder = placeholders[lang] || placeholders.es;
+  // BUG-009 (2026-05-03): el placeholder DEBE terminar en "." porque la
+  // continuación que añade el LLM (o la pregunta socrática que añade
+  // ensureResponseHasQuestion) suele empezar por mayúscula sin signo de
+  // apertura. Antes confiábamos en _normaliseWhitespace para insertar el
+  // espacio entre placeholder y siguiente frase, pero el normaliser no
+  // añade puntuación, sólo espacios — el alumno acababa leyendo
+  // "identificar Podrías decirme..." sin separación frástica ni "¿".
+  var placeholder = _pickStatePlaceholder(lang || "es", priorHits || 0);
+  var suppress = placeholder === "";
 
   var sentences = response.split(/(?<=[.!?\n])\s*/);
   var redacted = false;
@@ -474,11 +585,25 @@ function redactStateRevealSentence(response, evaluableElements, pattern, lang) {
     var mentions = extractElementMentions(sent, evaluableElements);
     if (mentions.length === 0) continue;
 
-    // Capitalise the first letter of the placeholder when it follows a
-    // sentence terminator so the rendered text reads "...avances! Ese
-    // elemento..." instead of "...avances!ese elemento...".
+    // BUG-009-B: con priorHits >= 3 suprimimos la frase entera (sin
+    // placeholder) — el alumno ha visto el banner ya 3 veces, mejor
+    // dejar sólo la pregunta socrática que el LLM continúa. La función
+    // ensureResponseHasQuestion garantiza que sigue habiendo "?".
+    if (suppress) {
+      sentences[i] = "";
+      redacted = true;
+      break;
+    }
+    // Capitalise the first letter of the placeholder. When it is the
+    // first sentence of the response (i === 0) we still need to start
+    // with a capital — otherwise the rendered text reads "ese elemento
+    // tiene…" which Vicente flagged as broken. When it follows another
+    // sentence we additionally need a leading space so we don't pegote
+    // ("…avances!Ese elemento…").
     var p = placeholder;
-    if (i > 0) {
+    if (i === 0) {
+      p = p.charAt(0).toUpperCase() + p.slice(1);
+    } else {
       var prev = sentences[i - 1].trimEnd();
       if (/[.!?…]$/.test(prev)) {
         p = " " + p.charAt(0).toUpperCase() + p.slice(1);
@@ -486,10 +611,37 @@ function redactStateRevealSentence(response, evaluableElements, pattern, lang) {
         p = " " + p;
       }
     }
-    sentences[i] = p + (sent.endsWith(" ") ? " " : "");
+    // Trailing space garantizado: la siguiente frase puede empezar por
+    // "¿"/letra y no queremos pegoteo "identificar.¿Podrías…". El
+    // normaliser colapsa cualquier doble espacio resultante.
+    sentences[i] = p + " ";
     redacted = true;
+    // BUG-012 (2026-05-03): NS-31 paraba tras la primera redacción para no
+    // duplicar el placeholder. Pero qwen2.5 a veces emite DOS frases con
+    // state-reveal y elementos DISTINTOS en la misma respuesta (ej.
+    // "A R1 contribuye [estado]. R5 no lo hace debido a estar cortocircuitada").
+    // El primer redactado convierte la frase de R1 en placeholder y NS-31 paraba
+    // ahí, dejando la frase de R5 intacta — leak de R5 al alumno. Solución:
+    // tras el primer placeholder NO paramos; recorremos las restantes y
+    // ELIMINAMOS (sin reinyectar placeholder) cualquier frase que mencione
+    // un Rn evaluable + un keyword de estado conocido. Conservamos la regla
+    // de no duplicar placeholders y a la vez eliminamos los leaks secundarios.
+    for (var j = i + 1; j < sentences.length; j++) {
+      if (_sentenceLeaksElementState(sentences[j], evaluableElements)) {
+        sentences[j] = "";
+      }
+    }
+    break;
   }
-  return { text: sentences.join(""), redacted: redacted };
+  var out = sentences.join("");
+  if (redacted) {
+    // NS-34: hardcoded state patterns can fire inside questions (e.g. "¿No es
+    // raro que pase corriente por R5?"). When the redacted sentence WAS the
+    // only one carrying a "?" the student is left without any prompt — append
+    // a generic Socratic continuation so the turn still asks something.
+    out = ensureResponseHasQuestion(out, lang);
+  }
+  return { text: out, redacted: redacted };
 }
 
 // Deterministic last-resort redaction: if after retries the response still
@@ -633,7 +785,54 @@ function redactElementMentions(response, correctAnswer, lang) {
   }
   text = sentences.join("");
 
+  if (changed) {
+    // NS-34: when the LLM listed the correct elements as a pure affirmation
+    // ("La respuesta es R1, R2 y R4."), the redacted sentence loses any
+    // pedagogical scaffold and the response ends without a question. Append
+    // a generic Socratic continuation in that case.
+    text = ensureResponseHasQuestion(text, lang);
+    // BUG-004: post-pass de concordancia. "ese conjunto de elementos" es
+    // singular pero el verbo cercano suele estar en plural ("contribuyen",
+    // "afectan", "son"). Detectamos la combinación y promovemos a "esos
+    // elementos" (genérico, plural, gramatical). No tocamos los casos en
+    // singular que sí concuerdan ("ese conjunto de elementos contribuye").
+    text = fixPlaceholderAgreement(text, lang);
+  }
   return { text: text, redacted: changed };
+}
+
+// Concordancia placeholder ↔ verbo. Sólo actúa cuando el placeholder
+// singular se combina con un verbo claramente plural en la misma frase.
+function fixPlaceholderAgreement(text, lang) {
+  if (typeof text !== "string" || text.length === 0) return text;
+  // Pares (regex sing → plural)
+  var rules = {
+    es: [
+      // "ese conjunto de elementos contribuyen|afectan|aportan|son|cuentan|determinan"
+      [/\bese\s+conjunto\s+de\s+elementos\b(?=[^.?!]{0,80}\b(?:contribuyen|afectan|aportan|son|cuentan|determinan|importan|forman|tienen|incluyen|están)\b)/gi,
+        "esos elementos"],
+      // pegado entre Es y verbo cercano: "...son ese conjunto de elementos..."
+      [/\b(?:son|eran|están|estaban)\s+ese\s+conjunto\s+de\s+elementos\b/gi,
+        function (m) {
+          // Mantén el verbo, sólo cambia el sintagma nominal.
+          return m.replace(/ese\s+conjunto\s+de\s+elementos/i, "esos elementos");
+        }],
+    ],
+    val: [
+      [/\beixe\s+conjunt\s+d['e]\s*elements\b(?=[^.?!]{0,80}\b(?:contribueixen|afecten|aporten|són|determinen|importen|tenen|inclouen|estan)\b)/gi,
+        "eixos elements"],
+    ],
+    en: [
+      [/\bthat\s+set\s+of\s+elements\b(?=[^.?!]{0,80}\b(?:contribute|affect|matter|are|count|determine|include|have)\b)/gi,
+        "those elements"],
+    ],
+  };
+  var langRules = rules[lang] || rules.es;
+  for (var i = 0; i < langRules.length; i++) {
+    var rule = langRules[i];
+    text = text.replace(rule[0], rule[1]);
+  }
+  return text;
 }
 
 // Detect when the tutor is EXPLAINING a concept instead of asking. Pedagogically,
@@ -757,7 +956,10 @@ module.exports = {
   checkStateReveal, getStateRevealInstruction,
   checkElementNaming, removeOpeningConfirmation,
   redactElementMentions,
+  fixPlaceholderAgreement,
   redactStateRevealSentence,
+  STATE_REVEAL_PLACEHOLDER_REGEX,
+  ensureResponseHasQuestion,
   extractElementMentions,
   loadConceptPatternsFromKG,
   enforceDatasetStyle,

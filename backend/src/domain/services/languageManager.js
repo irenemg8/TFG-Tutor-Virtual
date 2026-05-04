@@ -41,16 +41,97 @@ function detectLanguageSwitch(message) {
   return null;
 }
 
-// Scan conversation history (most recent first) to find the active language
-// Returns the last explicitly requested language, or "es" by default
+// =====================
+// BUG-003: passive language heuristic — sostenir el idioma orgánicamente
+// sin esperar a que el usuario diga "habla en X". Cuenta tokens cortos
+// muy frecuentes en cada idioma (stopwords) y devuelve el dominante.
+// Conservador: requiere ≥2 stopwords del idioma candidato y ratio ≥1.5x
+// sobre el siguiente idioma para evitar disparos en mensajes ambiguos
+// como "R3?" o "no sé".
+// =====================
+const HEURISTIC_STOPWORDS = {
+  es: [
+    "el", "la", "los", "las", "un", "una", "que", "qué", "es", "son",
+    "y", "o", "pero", "porque", "por", "para", "con", "sin", "de", "del",
+    "en", "se", "su", "sus", "no", "sí", "creo", "pienso", "yo", "tú",
+    "esto", "eso", "aquí", "allí", "cómo", "cuál", "cuándo", "dónde",
+    "está", "están", "tiene", "hay",
+  ],
+  val: [
+    "el", "la", "els", "les", "un", "una", "que", "què", "és", "són",
+    "i", "o", "però", "perquè", "per", "amb", "sense", "de", "del",
+    "en", "es", "no", "sí", "crec", "pense", "jo", "tu", "açò", "això",
+    "ací", "allí", "com", "quin", "quan", "on", "està", "estan", "té",
+    "hi ha", "moltes", "moltes vegades", "mentre",
+  ],
+  en: [
+    "the", "a", "an", "of", "to", "and", "or", "but", "because", "for",
+    "with", "without", "in", "on", "at", "is", "are", "was", "were",
+    "i", "you", "he", "she", "it", "we", "they", "this", "that", "these",
+    "those", "what", "which", "when", "where", "how", "do", "does",
+    "did", "have", "has", "think", "guess", "yes", "no",
+  ],
+};
+
+function _countMatches(tokens, words) {
+  const set = {};
+  for (let i = 0; i < words.length; i++) set[words[i]] = true;
+  let n = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    if (set[tokens[i]]) n++;
+  }
+  return n;
+}
+
+function detectLanguageHeuristic(message) {
+  if (typeof message !== "string" || message.trim().length === 0) return null;
+  // Tokeniza por whitespace + signos de puntuación; pasa a lowercase.
+  const tokens = message
+    .toLowerCase()
+    .replace(/[.,;:!?¿¡()"'`´‘’“”]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length < 3) return null; // mensajes ultra-cortos no detectan
+
+  const counts = {
+    es: _countMatches(tokens, HEURISTIC_STOPWORDS.es),
+    val: _countMatches(tokens, HEURISTIC_STOPWORDS.val),
+    en: _countMatches(tokens, HEURISTIC_STOPWORDS.en),
+  };
+  // Ranking
+  const sorted = Object.keys(counts)
+    .map((k) => ({ k: k, v: counts[k] }))
+    .sort((a, b) => b.v - a.v);
+  const top = sorted[0];
+  const second = sorted[1];
+  if (top.v < 2) return null;          // muy poca señal
+  if (top.v < second.v * 1.5) return null; // empate técnico (es/val)
+  return top.k;
+}
+
+// Scan conversation history (most recent first) to find the active language.
+// Returns the last EXPLICITLY requested language; if none found, falls back
+// to the heuristic on the most recent user message (BUG-003 fix). Defaults
+// to "es" when neither path yields a result.
 function resolveLanguage(conversationHistory) {
   if (!Array.isArray(conversationHistory)) return DEFAULT_LANG;
 
+  // 1) Switch explícito en cualquier turno previo (más reciente primero).
   for (let i = conversationHistory.length - 1; i >= 0; i--) {
     const msg = conversationHistory[i];
     if (msg.role !== "user") continue;
     const detected = detectLanguageSwitch(msg.content);
     if (detected) return detected;
+  }
+  // 2) Heurística pasiva sobre el ÚLTIMO mensaje del usuario. Si la
+  //    heurística da una señal clara (≥2 stopwords del idioma + ratio
+  //    1.5x sobre el siguiente), usamos ese idioma. Si no, default.
+  for (let i = conversationHistory.length - 1; i >= 0; i--) {
+    const msg = conversationHistory[i];
+    if (msg.role !== "user") continue;
+    const heur = detectLanguageHeuristic(msg.content);
+    if (heur) return heur;
+    break; // sólo miramos el último mensaje del usuario para la heurística
   }
   return DEFAULT_LANG;
 }
@@ -651,6 +732,40 @@ function getRandomIntermediatePhrase(type, lang) {
   return phrases[Math.floor(Math.random() * phrases.length)];
 }
 
+// NS-34: detect whether a response already starts with one of the corrective
+// "intermediate feedback" phrases that surgical fixes prepend. Used by the
+// guardrail surgical fixes to avoid stacking a second prefix on top of one
+// that a sibling guardrail already added in the same pipeline pass. Some of
+// those intermediate phrases overlap with confirmPhrases ("Vas por buen
+// camino" is BOTH), so re-running the guardrail check is not enough to detect
+// the already-corrected state.
+function _normaliseForPrefixMatch(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/^[¡¿!\s]+/, "")
+    .trim();
+}
+
+function startsWithIntermediatePhrase(response) {
+  if (typeof response !== "string" || response.length === 0) return false;
+  var head = _normaliseForPrefixMatch(response);
+  if (!head) return false;
+  for (var li = 0; li < SUPPORTED_LANGS.length; li++) {
+    var lang = SUPPORTED_LANGS[li];
+    var pools = [getIntermediateFeedback("wrong", lang), getIntermediateFeedback("partial", lang)];
+    for (var pi = 0; pi < pools.length; pi++) {
+      var phrases = pools[pi];
+      for (var i = 0; i < phrases.length; i++) {
+        var p = _normaliseForPrefixMatch(phrases[i]);
+        if (p && head.startsWith(p)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // =====================
 // Element naming guardrail instruction (generic, not resistance-specific)
 // =====================
@@ -794,6 +909,7 @@ module.exports = {
   SUPPORTED_LANGS,
   DEFAULT_LANG,
   detectLanguageSwitch,
+  detectLanguageHeuristic,
   resolveLanguage,
   getLanguageRules,
   getFinishMessages,
@@ -806,6 +922,7 @@ module.exports = {
   getElementNamingInstruction,
   getIntermediateFeedback,
   getRandomIntermediatePhrase,
+  startsWithIntermediatePhrase,
   normalizeToSpanish,
   getAllPatterns,
   greetingPatterns,
