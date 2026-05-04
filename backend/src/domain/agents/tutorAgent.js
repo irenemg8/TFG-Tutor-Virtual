@@ -119,16 +119,83 @@ class TutorAgent extends AgentInterface {
 
     let demandJustificationHint = "";
     if ((cls === "correct_no_reasoning" || cls === "correct_wrong_reasoning") && prevCorrect >= 1) {
+      // NS-31: describir intención, no proporcionar frases literales.
+      // Antes el banner contenía "'Explica por qué' / 'Explain why'"
+      // como ejemplo, lo cual qwen2.5 7B copia verbatim a la respuesta.
       demandJustificationHint =
         "[DEMAND JUSTIFICATION]\n" +
-        "CRITICAL: The student has given the CORRECT elements " + prevCorrect +
-        " time(s) WITHOUT justifying them, or with INCORRECT reasoning.\n" +
-        "You MUST NOT accept the answer as final. You MUST NOT emit <FIN_EJERCICIO>.\n" +
-        "Your ONLY task this turn is:\n" +
-        "1. Briefly acknowledge they have the right elements (do NOT say 'Perfect' / 'Correcto').\n" +
-        "2. Ask DIRECTLY: 'Explica por qué' / 'Explain why', requiring them to use a concept such as cortocircuito, circuito abierto, divisor de tensión, ley de Ohm or Kirchhoff.\n" +
-        "3. Do NOT name the correct elements in your question. Use generic wording like 'esos elementos' / 'those elements'.\n" +
-        "4. Do NOT provide the reasoning yourself. The student must produce it.\n\n";
+        "CRITICAL: the student has given the CORRECT elements " + prevCorrect +
+        " time(s) without justifying them or with incorrect reasoning.\n" +
+        "Do NOT accept the answer as final. Do NOT emit <FIN_EJERCICIO>.\n" +
+        "This turn must do exactly two things:\n" +
+        "1. A short acknowledgement that they have the right elements (avoid generic praise).\n" +
+        "2. ONE Socratic question that forces them to justify their choice using a concept " +
+          "from the EXPERT REASONING (cortocircuito, circuito abierto, divisor de tensión, " +
+          "ley de Ohm, Kirchhoff). The question must require a conceptual reason, not a yes/no.\n" +
+        "Phrase the question yourself; do not use a fixed template. Refer to the elements " +
+          "with their resistor name (e.g. R1) — not generic placeholders.\n\n";
+    }
+
+    // 1c-bis. NS-30 — VEREDICTO DEL TURNO (verdad estructurada).
+    //    AcDetectorAgent computó context.turnVerdict con la descomposición
+    //    canónica per-elemento contra correctAnswer:
+    //      hits    = lo que el alumno propuso Y es correcto      → afirmar
+    //      errors  = lo que propuso pero NO es correcto          → cuestionar
+    //      missing = lo correcto que NO ha mencionado            → pista
+    //    Antes el LLM tenía que deducir esto del prompt en prosa y fallaba
+    //    sistemáticamente en partial_correct (decía "casi" + repetía R1
+    //    sin afirmar nada y sin atacar el error específico). El banner le
+    //    entrega la descomposición ya hecha + la estructura obligatoria de
+    //    respuesta para qwen2.5 7B. Cuando hay AC fuerte, kgRegistry añade
+    //    estrategia + razonamiento experto del catálogo y del KG.
+    let verdictBanner = "";
+    const verdict = context.turnVerdict;
+    if (verdict && verdict.proposed && verdict.proposed.length > 0) {
+      const { getStrategyForAC, getExpertReasoningForAC } = require("../services/kgRegistry");
+      const detectedForBanner = (context.detectedACs || []).filter((a) => a.confidence >= 0.6);
+      const topAC = detectedForBanner[0] || null;
+
+      verdictBanner =
+        "[VEREDICTO DEL TURNO — verdad estructurada del backend, OBLIGATORIO]\n" +
+        "Verdict: " + verdict.verdict + "\n";
+      if (verdict.hits.length > 0) {
+        verdictBanner +=
+          "Hits (lo que el alumno acertó — AFÍRMALO POR NOMBRE en una frase corta): " +
+          verdict.hits.join(", ") + "\n";
+      }
+      if (verdict.errors.length > 0) {
+        verdictBanner +=
+          "Errors (lo que propuso y NO contribuye — CUESTIÓNALO con UNA pregunta socrática del tipo " +
+          "\"¿por qué pensaste que también ___?\", usando su nombre): " + verdict.errors.join(", ") + "\n";
+      }
+      if (verdict.missing.length > 0) {
+        verdictBanner +=
+          "Missing (correcto que el alumno no ha tocado — NO lo reveles; si das pista, hazla " +
+          "conceptual y sin nombrarlo): " + verdict.missing.join(", ") + "\n";
+      }
+      if (verdict.wronglyNegated && verdict.wronglyNegated.length > 0) {
+        verdictBanner +=
+          "Wrongly rejected (correcto que el alumno descartó — RETA su rechazo, no cedas): " +
+          verdict.wronglyNegated.join(", ") + "\n";
+      }
+      if (topAC) {
+        const strat = getStrategyForAC(topAC.id);
+        const expert = getExpertReasoningForAC(topAC.id);
+        if (strat) verdictBanner += "Estrategia (" + topAC.id + " catálogo): " + strat + "\n";
+        if (expert) {
+          // Trim to ~280 chars: enough conceptual signal without inflating prompt.
+          const trimmed = expert.length > 280 ? expert.slice(0, 280).trim() + "…" : expert;
+          verdictBanner += "Razonamiento experto (KG, uso INTERNO, NO copies literal): " + trimmed + "\n";
+        }
+      }
+
+      verdictBanner +=
+        "Estructura obligatoria de tu respuesta:\n" +
+        "1) UNA frase corta confirmando los Hits por nombre (si los hay). Sin elogio genérico.\n" +
+        "2) UNA SOLA pregunta socrática sobre el primer Error (si lo hay), nombrándolo. " +
+          "No dos preguntas, no encadenes interrogativos.\n" +
+        "3) Si no hay Errors pero sí Missing, da UNA sola pista conceptual sobre un Missing sin nombrarlo.\n" +
+        "Total: 1-3 frases cortas, exactamente UN signo de interrogación.\n\n";
     }
 
     // 1d. AC DETECTADA banner — el AcDetectorAgent cruzó la propuesta del
@@ -191,6 +258,71 @@ class TutorAgent extends AgentInterface {
         "3. Ask a NEW, DIFFERENT question that the student has NOT been asked before.\n\n";
     }
 
+    // BUG-010-C (2026-05-03): prevenir que el LLM repita LITERALMENTE su
+    // última pregunta socrática. La traza real mostraba al tutor pidiendo
+    // dos turnos seguidos "¿Podrías decirme a qué nodo está conectada la
+    // otra terminal de R1?" — palabras idénticas. Con la pregunta previa
+    // entre comillas el LLM tiene una referencia explícita de qué evitar.
+    let doNotRepeatHint = "";
+    const lastQ = (context.loopState && context.loopState.lastAssistantQuestion) || "";
+    if (lastQ && lastQ.length > 10) {
+      doNotRepeatHint =
+        "[DO NOT REPEAT YOUR PREVIOUS QUESTION]\n" +
+        "Your previous Socratic question was LITERALLY:\n" +
+        "  «" + lastQ.replace(/\s+/g, " ").trim() + "»\n" +
+        "Do NOT repeat that question, even with synonyms. " +
+        "If the student didn't answer it, it means the question was unhelpful — " +
+        "change angle: ask about a DIFFERENT element, a DIFFERENT property, or " +
+        "give a concrete factual hint and ask a yes/no follow-up.\n\n";
+    }
+
+    // BUG-011-D (2026-05-03): hechos ya establecidos por el tutor en
+    // turnos previos. Antes el LLM confirmaba "Sí, R1 conecta N1 con N2"
+    // y al turno siguiente repreguntaba "¿a qué nodo está conectada la
+    // otra terminal de R1?" — frustrante para el alumno. Este banner le
+    // recuerda al LLM lo que él mismo ya ha dicho y le ordena avanzar.
+    let establishedFactsHint = "";
+    const establishedFacts =
+      (context.loopState && context.loopState.establishedFacts) || [];
+    if (establishedFacts.length > 0) {
+      establishedFactsHint =
+        "[ESTABLISHED FACTS — already confirmed in previous tutor turns]\n" +
+        establishedFacts.map(function (f) { return "  • " + f; }).join("\n") +
+        "\nDo NOT re-ask about these facts. ADVANCE the analysis: build on " +
+        "them to introduce a NEW question about a different element, a " +
+        "different property, or the next step in the reasoning chain.\n\n";
+    }
+
+    // BUG-007 (2026-05-03): cuando el tutor menciona el MISMO Rn en sus
+    // últimas 2-3 preguntas se queda atascado. El banner de abajo le
+    // PROHÍBE volver a preguntar sobre ese Rn y le obliga a saltar a otro
+    // elemento del netlist.
+    let stuckOnElementHint = "";
+    const stuckRn = context.loopState && context.loopState.tutorStuckOnElement;
+    if (stuckRn) {
+      const evaluables = (context.evaluableElements || []).filter(
+        (e) => /^R\d+$/i.test(e) && e.toUpperCase() !== stuckRn
+      );
+      const altRn = evaluables.length > 0 ? evaluables[0] : null;
+      stuckOnElementHint =
+        "[STUCK ON " + stuckRn + " — STRATEGY MUST CHANGE]\n" +
+        "You have asked about " + stuckRn + " in the last 2+ tutor turns. " +
+        "The student already understands the position of " + stuckRn + ".\n" +
+        "OBLIGATORY this turn:\n" +
+        "1. Acknowledge in <6 words what is established about " + stuckRn + ".\n" +
+        "2. PIVOT to a DIFFERENT element from the netlist — do NOT mention " +
+            stuckRn + " in your next question.\n" +
+        (altRn
+          ? "3. Suggested pivot target: " + altRn + ". Frame ONE concrete factual " +
+            "yes/no question about " + altRn + "'s topology (its terminals, what node " +
+            "it connects to, whether it forms a closed path).\n"
+          : "3. Frame ONE concrete factual yes/no question about ANOTHER element's topology.\n") +
+        "4. NEVER use the verb shape 'explica/describe cómo X afecta/contribuye/influye' — " +
+            "that question shape is exhausted.\n" +
+        "5. If you cannot find a new angle, say ONE concrete fact about the global " +
+            "current path (V1 → ... → 0) and ask whether the student can trace it.\n\n";
+    }
+
     let frustrationHint = "";
     if (context.loopState.studentFrustrated) {
       frustrationHint =
@@ -251,12 +383,16 @@ class TutorAgent extends AgentInterface {
 
     const dynamicContext =
       langBanner +
+      verdictBanner +
       acDetectedBanner +
       conceptsBanner +
       dontKnowHint +
       demandJustificationHint +
       progressHint +
       repetitionHint +
+      doNotRepeatHint +
+      establishedFactsHint +
+      stuckOnElementHint +
       frustrationHint +
       stuckHint +
       strategyHint +

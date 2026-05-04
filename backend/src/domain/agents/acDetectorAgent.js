@@ -4,14 +4,25 @@ const AgentInterface = require("./base/AgentInterface");
 const { matchACs, getPatternsForExercise } = require("../services/acRegistry");
 
 /**
- * AcDetectorAgent: cruza la propuesta del alumno (context.classification.proposed
- * / negated) con los acPatterns del ejercicio actual (context.ejercicio.tutorContext.acPatterns)
- * y guarda en context.detectedACs los matches ordenados por confianza.
+ * AcDetectorAgent: dos cómputos deterministas por turno.
  *
- * Se ejecuta DESPUÉS de classifierAgent (que rellena classification.proposed/negated)
- * y ANTES de tutorAgent (que lee detectedACs para inyectar el banner [AC DETECTADA]).
+ *   1. detectedACs — cruza proposed/negated contra los acPatterns del
+ *      ejercicio (delega en acRegistry.matchACs). Lista ordenada por
+ *      confianza, consumida por tutorAgent para el banner [AC DETECTADA].
  *
- * Es puro: no hace I/O, no llama al LLM. Coste despreciable.
+ *   2. turnVerdict (NS-30) — descomposición canónica per-elemento contra
+ *      la respuesta correcta del ejercicio:
+ *        hits    = proposed ∩ correctAnswer
+ *        errors  = proposed \ correctAnswer
+ *        missing = correctAnswer \ proposed (ignorando negated)
+ *        verdict ∈ {correct, partial_correct, incorrect, only_negation}
+ *      Esta descomposición es la "verdad estructurada" que el banner
+ *      [VEREDICTO DEL TURNO] entrega al LLM para que cumpla el protocolo
+ *      pedagógico de Irene (afirmar hits + cuestionar errors + pista para
+ *      missing) sin tener que deducirlo del prompt en prosa.
+ *
+ * Se ejecuta DESPUÉS de classifierAgent y ANTES de tutorAgent.
+ * Puro: no I/O, no LLM. Coste despreciable.
  */
 class AcDetectorAgent extends AgentInterface {
   constructor(deps) {
@@ -29,29 +40,71 @@ class AcDetectorAgent extends AgentInterface {
   async execute(context) {
     if (this.canSkip(context)) {
       context.detectedACs = [];
+      context.turnVerdict = null;
       return;
     }
-    // acPatterns NO se persisten en la entidad TutorContext / DB (decisión
-    // NS-1.b: evitar migrar el schema). Se cargan del JSON via acRegistry.
     const exerciseNum = context.exerciseNum != null
       ? context.exerciseNum
       : (context.ejercicio && context.ejercicio.getExerciseNumber && context.ejercicio.getExerciseNumber());
-    const patterns = exerciseNum != null ? getPatternsForExercise(exerciseNum) : [];
-    if (patterns.length === 0) {
-      context.detectedACs = [];
-      return;
-    }
     const correctAnswer = context.correctAnswer ||
       (context.ejercicio && context.ejercicio.tutorContext && context.ejercicio.tutorContext.respuestaCorrecta) ||
       [];
-    const matches = matchACs(
-      patterns,
-      context.classification.proposed || [],
-      context.classification.negated || [],
-      correctAnswer
-    );
-    context.detectedACs = matches;
+
+    const proposed = (context.classification.proposed || []).map(_norm).filter(Boolean);
+    const negated = (context.classification.negated || []).map(_norm).filter(Boolean);
+    const correct = (correctAnswer || []).map(_norm).filter(Boolean);
+
+    // 1. AC matches (existing behaviour)
+    const patterns = exerciseNum != null ? getPatternsForExercise(exerciseNum) : [];
+    if (patterns.length > 0) {
+      context.detectedACs = matchACs(patterns, proposed, negated, correct);
+    } else {
+      context.detectedACs = [];
+    }
+
+    // 2. NS-30 — turn verdict (deterministic)
+    context.turnVerdict = _computeVerdict(proposed, negated, correct);
   }
+}
+
+function _norm(x) {
+  if (typeof x !== "string") return "";
+  return x.toUpperCase().replace(/\s+/g, "");
+}
+
+function _computeVerdict(proposed, negated, correct) {
+  const correctSet = new Set(correct);
+  const proposedSet = new Set(proposed);
+  const negatedSet = new Set(negated);
+
+  const hits = [];
+  const errors = [];
+  for (const p of proposed) {
+    if (correctSet.has(p)) hits.push(p);
+    else errors.push(p);
+  }
+  const missing = [];
+  for (const c of correct) {
+    if (!proposedSet.has(c) && !negatedSet.has(c)) missing.push(c);
+  }
+  // Negated elements that ARE in the correct answer = wrong rejections.
+  const wronglyNegated = [];
+  for (const n of negated) {
+    if (correctSet.has(n)) wronglyNegated.push(n);
+  }
+
+  let verdict;
+  if (proposed.length === 0 && negated.length > 0) {
+    verdict = "only_negation";
+  } else if (errors.length === 0 && missing.length === 0 && wronglyNegated.length === 0 && hits.length > 0) {
+    verdict = "correct";
+  } else if (hits.length > 0) {
+    verdict = "partial_correct";
+  } else {
+    verdict = "incorrect";
+  }
+
+  return { verdict, hits, errors, missing, wronglyNegated, correct, proposed, negated };
 }
 
 module.exports = AcDetectorAgent;

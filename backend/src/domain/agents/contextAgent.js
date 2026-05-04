@@ -108,6 +108,24 @@ class ContextAgent extends AgentInterface {
     const lastClassificationStreak = await this._lastClassificationStreak(
       context.interaccionId
     );
+    // BUG-007 (2026-05-03): cuando el tutor menciona el MISMO Rn en sus
+    // últimas 2-3 preguntas se queda en bucle conceptual sobre ese
+    // elemento, ignorando que el alumno ya respondió a la topología y
+    // pidió pasar a otro tema. tutorStuckOnElement = el Rn dominante en
+    // las últimas 3 preguntas si aparece >= 2 veces; null si no hay
+    // dominante claro.
+    const tutorStuckOnElement = this._detectStuckOnElement(lastAssistantMessages);
+    // BUG-010-C (2026-05-03): la pregunta socrática literal del último
+    // turno del tutor para que el banner de tutorAgent pueda decirle al
+    // LLM "NO repitas exactamente esta pregunta: «...»". Sin esto el LLM
+    // a veces produce respuestas idénticas turno-tras-turno.
+    const lastAssistantQuestion = this._extractLastQuestion(lastAssistantMessages);
+    // BUG-011-D (2026-05-03): hechos ya establecidos por el tutor en turnos
+    // previos (afirmaciones tipo "Sí, R1 conecta N1 con N2"). El alumno
+    // se frustraba cuando el tutor confirmaba algo y al turno siguiente
+    // repreguntaba sobre lo mismo. Usamos esto para inyectar un banner
+    // ESTABLISHED FACTS que ordena al LLM avanzar en vez de repetir.
+    const establishedFacts = this._extractEstablishedFacts(lastAssistantMessages);
 
     context.loopState = {
       prevCorrectTurns,
@@ -116,12 +134,53 @@ class ContextAgent extends AgentInterface {
       totalAssistantTurns,
       tutorRepeating,
       studentFrustrated,
+      tutorStuckOnElement,
+      lastAssistantQuestion,
+      establishedFacts,
       // { type, streak } — how many consecutive prior assistant turns shared
       // the same classification. Used by TutorAgent to escalate strategy
       // when the same situation repeats (e.g. correct_no_reasoning x3).
       lastClassification: lastClassificationStreak.type,
       sameClassificationStreak: lastClassificationStreak.streak,
     };
+  }
+
+  // BUG-007: detecta cuando el tutor está obsesionado con el mismo Rn.
+  // Examina las preguntas (último '?' de cada mensaje del tutor) en los
+  // últimos N mensajes; si el mismo Rn aparece ≥2 veces → devuelve ese Rn.
+  // Si hay múltiples Rn empatados → devuelve el más reciente.
+  _detectStuckOnElement(lastAssistantMessages) {
+    if (!Array.isArray(lastAssistantMessages) || lastAssistantMessages.length < 2) {
+      return null;
+    }
+    const counts = {};
+    let mostRecent = null;
+    for (let i = 0; i < lastAssistantMessages.length; i++) {
+      const m = lastAssistantMessages[i];
+      const content = (m && m.content) || "";
+      // Extrae el último fragmento interrogativo del mensaje.
+      const qs = content.match(/[^.!?]*\?/g);
+      const lastQ = qs && qs.length > 0 ? qs[qs.length - 1] : "";
+      const rns = lastQ.match(/\bR\d+\b/gi);
+      if (!rns) continue;
+      const seenInThisQ = {};
+      for (let k = 0; k < rns.length; k++) {
+        const rn = rns[k].toUpperCase();
+        if (seenInThisQ[rn]) continue;
+        seenInThisQ[rn] = true;
+        counts[rn] = (counts[rn] || 0) + 1;
+        mostRecent = rn;
+      }
+    }
+    let best = null;
+    let bestCount = 1;
+    const keys = Object.keys(counts);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (counts[k] > bestCount) { best = k; bestCount = counts[k]; }
+    }
+    if (best == null) return null;
+    return best; // Rn que apareció >=2 veces en preguntas recientes.
   }
 
   /**
@@ -176,6 +235,57 @@ class ContextAgent extends AgentInterface {
       }
     }
     return count;
+  }
+
+  // BUG-011-D: extrae afirmaciones que el tutor ya ha establecido en
+  // turnos previos. Heurística regex sobre frases assistant que:
+  //   - empiezan por "Sí, R\d+ ..." (confirmación explícita), o
+  //   - contienen "R\d+ (está|conecta|forma|es) ..." en cláusula afirmativa
+  // Devuelve hasta 5 hechos únicos en orden de aparición (más antiguo
+  // primero). No es un parser semántico — es una red de seguridad
+  // pragmática para que el banner ESTABLISHED FACTS recuerde al LLM lo
+  // que ya ha dicho él mismo.
+  _extractEstablishedFacts(lastAssistantMessages) {
+    if (!Array.isArray(lastAssistantMessages) || lastAssistantMessages.length === 0) {
+      return [];
+    }
+    const facts = [];
+    const seen = new Set();
+    const FACT_RE = /(?:^|[.!?\n]\s*|sí[,]\s*)((?:R\d+|N\d+)[^.!?\n]{0,120}?(?:está|conecta|forma|es parte|es la|es el|se conecta|se sitúa|sale|llega)[^.!?\n]{0,80}[.!?\n])/gi;
+    for (let i = 0; i < lastAssistantMessages.length; i++) {
+      const m = lastAssistantMessages[i];
+      const content = (m && m.content) || "";
+      let match;
+      FACT_RE.lastIndex = 0;
+      while ((match = FACT_RE.exec(content)) !== null) {
+        const raw = match[1].trim().replace(/\s+/g, " ");
+        const key = raw.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        facts.push(raw);
+        if (facts.length >= 5) return facts;
+      }
+    }
+    return facts;
+  }
+
+  // BUG-010-C: extrae la pregunta socrática literal más reciente del tutor
+  // (último "?" del mensaje assistant más reciente que tenga uno). Devuelve
+  // string trimmed o "" si no hay.
+  _extractLastQuestion(lastAssistantMessages) {
+    if (!Array.isArray(lastAssistantMessages) || lastAssistantMessages.length === 0) {
+      return "";
+    }
+    // Recorrer del más reciente al más antiguo.
+    for (let i = lastAssistantMessages.length - 1; i >= 0; i--) {
+      const m = lastAssistantMessages[i];
+      const content = (m && m.content) || "";
+      const qs = content.match(/[¿]?[^.!?]*\?/g);
+      if (qs && qs.length > 0) {
+        return qs[qs.length - 1].trim();
+      }
+    }
+    return "";
   }
 
   _detectRepetition(lastAssistantMessages) {
