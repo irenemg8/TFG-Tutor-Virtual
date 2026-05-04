@@ -149,26 +149,47 @@ class PedagogicalReviewerAgent extends AgentInterface {
 
   _reframeDefinitionRequest(text, lang) {
     if (typeof text !== "string") return text;
-    // Patterns where the tutor explicitly asks the student to define a concept.
-    // Multilingual: es / val / en. We only intervene when one is the LAST
-    // sentence of the tutor response — otherwise we may corrupt valid prose.
-    const patterns = [
-      /\b(define|defíne(?:lo|la|me)?|defineix|definix)\b[^.?!]*[.?!]/i,
-      /\b(qué|que|què)\s+(entiendes|entens|understand)\b[^.?!]*[.?!]/i,
-      /\b(c[oó]mo\s+definir[íi]as|how\s+would\s+you\s+define)\b[^.?!]*[.?!]/i,
-      /\bqu[eé]\s+(es|és|is)\b[^.?!]*\?/i,
+    // BUG-014 (2026-05-03): los patrones anteriores se aplicaban con un
+    // simple .replace() sobre el texto entero, lo que provocaba que
+    // "que es parte de un divisor de tensión?" dentro de la frase
+    // "¿Cómo afecta R1 ... si consideramos que es parte de un divisor de
+    // tensión?" fuera tragado como si fuera una pregunta del tutor
+    // pidiendo definición, dejando la apertura "¿Cómo afecta R1..."
+    // colgando seguida del canned "¿Cómo se aplica ese concepto a ESTE
+    // circuito?" — output corrupto con dos ¿ anidados.
+    //
+    // Solución: trabajar frase a frase. Una frase es candidata a
+    // reframe SOLO si:
+    //   - empieza con ¿ o "?"  (pregunta directa), Y
+    //   - todo el contenido de la frase encaja con un patrón de
+    //     definición (qué es X, define X, cómo definirías X, etc.).
+    // Si no es la frase completa la que es una pregunta-definición, no
+    // tocamos. Esto preserva sub-cláusulas como "...si consideramos que
+    // es parte de un divisor..." porque "que es" está embebido y no es
+    // la pregunta principal.
+    const wholeSentencePatterns = [
+      /^\s*¿?\s*\b(define|defíne(?:lo|la|me)?|defineix|definix)\b[^.?!]*[.?!]\s*$/i,
+      /^\s*¿?\s*\b(qué|que|què)\s+(entiendes|entens|understand)\b[^.?!]*[.?!]\s*$/i,
+      /^\s*¿?\s*\b(c[oó]mo\s+definir[íi]as|how\s+would\s+you\s+define)\b[^.?!]*[.?!]\s*$/i,
+      // ES/VAL: "¿Qué/Què/Que es/és X?" como pregunta directa.
+      /^\s*¿\s*qu[eéè]\s+(es|és)\b[^.?!]*\?\s*$/i,
+      // EN: "What is X?" como pregunta directa.
+      /^\s*\??\s*what\s+is\b[^.?!]*\?\s*$/i,
     ];
+    const sentences = text.split(/(?<=[.!?])\s+/);
     let modified = false;
-    let out = text;
-    for (let i = 0; i < patterns.length; i++) {
-      if (patterns[i].test(out)) {
-        // Replace the offending sentence with a redirect that pushes the
-        // student to APPLY the concept to the circuit.
-        out = out.replace(patterns[i], this._reframePromptForLang(lang));
-        modified = true;
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i];
+      for (let p = 0; p < wholeSentencePatterns.length; p++) {
+        if (wholeSentencePatterns[p].test(s)) {
+          sentences[i] = this._reframePromptForLang(lang);
+          modified = true;
+          break;
+        }
       }
     }
-    return modified ? out.replace(/\s{2,}/g, " ").trim() : text;
+    if (!modified) return text;
+    return sentences.join(" ").replace(/\s{2,}/g, " ").trim();
   }
 
   _reframePromptForLang(lang) {
