@@ -107,9 +107,9 @@ class TutorAgent extends AgentInterface {
       // sentences, ONE question, never name elements, never define concepts".
       dontKnowHint =
         "[STUDENT DOESN'T KNOW]\n" +
-        "Pick the next step from EXPERT REASONING that they have not covered. " +
-        "State it as ONE short fact + ONE simple question about that step. " +
-        "Use 'esa rama' / 'ese nodo'; do not name elements or repeat past questions.\n\n";
+        "Take the initiative: pick the next concrete step along the global current path that the student has not covered yet. " +
+        "Reply with ONE short observable fact about that step (e.g. 'la corriente sale del + de V1 y llega al primer nudo') + ONE simple yes/no or 'where does it go next?' question. " +
+        "Use 'esa rama' / 'ese nodo'; do not name elements, do not mention internal labels, do not repeat past questions, do not throw the question back open.\n\n";
       if (sameClsStreak >= 2) {
         dontKnowHint +=
           "[NO-SÉ STREAK x" + (sameClsStreak + 1) + " — DROP A LEVEL] " +
@@ -129,9 +129,9 @@ class TutorAgent extends AgentInterface {
         "Do NOT accept the answer as final. Do NOT emit <FIN_EJERCICIO>.\n" +
         "This turn must do exactly two things:\n" +
         "1. A short acknowledgement that they have the right elements (avoid generic praise).\n" +
-        "2. ONE Socratic question that forces them to justify their choice using a concept " +
-          "from the EXPERT REASONING (cortocircuito, circuito abierto, divisor de tensión, " +
-          "ley de Ohm, Kirchhoff). The question must require a conceptual reason, not a yes/no.\n" +
+        "2. ONE Socratic question that forces them to justify their choice using a circuit concept " +
+          "(cortocircuito, circuito abierto, divisor de tensión, ley de Ohm, Kirchhoff). " +
+          "The question must require a conceptual reason, not a yes/no. Do NOT mention internal labels.\n" +
         "Phrase the question yourself; do not use a fixed template. Refer to the elements " +
           "with their resistor name (e.g. R1) — not generic placeholders.\n\n";
     }

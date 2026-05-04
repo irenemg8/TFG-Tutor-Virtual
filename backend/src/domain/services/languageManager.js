@@ -13,17 +13,26 @@ const switchPatterns = {
     "habla en español", "responde en español", "en castellano",
     "cambia a español", "puedes hablar en español", "habla español",
     "en español por favor", "vuelve al español",
+    "podemos seguir en español", "podemos continuar en español",
+    "continúa en español", "sigue en español", "continuemos en español",
+    "seguimos en español", "contesta en español", "respóndeme en español",
   ],
   val: [
     "parla en valencià", "en valencià", "respon en valencià",
     "parla'm en valencià", "pots parlar en valencià", "cambia a valencià",
     "podem parlar en valencià", "podem en valencià", "en valencià per favor",
     "parla valencià",
+    "podem continuar en valencià", "continua en valencià",
+    "seguim en valencià", "contesta en valencià", "respon-me en valencià",
   ],
   en: [
     "speak in english", "respond in english", "switch to english",
     "in english please", "can you speak english", "talk in english",
     "let's speak english", "english please",
+    "can we continue in english", "continue in english",
+    "let's continue in english", "go on in english",
+    "shall we continue in english", "reply in english", "answer in english",
+    "write in english", "use english", "lets continue in english",
   ],
 };
 
@@ -142,7 +151,8 @@ function resolveLanguage(conversationHistory) {
 
 function getLanguageRules(lang) {
   if (lang === "val") {
-    return `- Respon SEMPRE en valencià (varietat formal/estàndard).
+    return `- Respon en valencià (varietat formal/estàndard) en aquest torn.
+- Si l'alumne demana canviar d'idioma (ex: "habla en español", "speak in english", "can we continue in english"), CANVIA immediatament i confirma breument en el nou idioma. Mai rebutges un canvi d'idioma. L'idioma per defecte és el castellà, però l'alumne pot triar.
 - GRAMÀTICA VALENCIANA OBLIGATÒRIA:
   - El verb "fluir" es conjuga: "flueix" (NO "fluxiga", NO "fluïx").
   - "circuit" s'escriu sense accent (NO "cìrcuit", NO "circùit").
@@ -168,13 +178,15 @@ function getLanguageRules(lang) {
   }
 
   if (lang === "en") {
-    return `- ALWAYS respond in English.
+    return `- Reply in English in this turn.
+- If the student asks to switch language (e.g., "habla en español", "parla en valencià"), switch IMMEDIATELY and briefly confirm in the new language. Never refuse a language switch. Default is Spanish, but the student may choose.
 - Use correct technical terminology: ground (not floor), node, capacitor, voltage source, resistance, current, short circuit, open circuit, voltage divider.
 - Maintain a clear, patient, and technical tone.`;
   }
 
   // Default: Spanish (current behavior)
-  return `- Responde SIEMPRE en español.
+  return `- Responde en español en este turno.
+- Si el alumno pide cambiar de idioma (por ejemplo "speak in english", "can we continue in english", "parla en valencià"), CAMBIA inmediatamente y confírmaselo brevemente en el nuevo idioma. Nunca te niegues a cambiar de idioma. El idioma por defecto es el español, pero el alumno puede elegir.
 - Usa terminología correcta en español: di "tierra" (no "suelo"), "nudo" (no "nodo"), "condensador" (no "capacitor").
 - Mantén un tono claro, paciente y técnico.`;
 }
