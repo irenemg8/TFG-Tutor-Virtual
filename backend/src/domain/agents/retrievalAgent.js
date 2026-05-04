@@ -24,10 +24,29 @@ class RetrievalAgent extends AgentInterface {
   }
 
   canSkip(context) {
-    return (
+    if (
       context.classification?.type === "greeting" ||
       context.classification?.type === "off_topic"
-    );
+    ) {
+      return true;
+    }
+    // BUG-013 (2026-05-03): el embedding (Ollama UPV remoto) tarda 10-18s
+    // en cold-start. Solo las clasificaciones que disparan hybridSearch
+    // (que usa embedding) sufren esa latencia: partial_correct y
+    // wrong_answer. Las demás (dont_know, closed_answer) usan KG/hint
+    // local, son rápidas y aportan scaffold pedagógico necesario para
+    // que el LLM no produzca preguntas arbitrarias — NO se deben skipear.
+    //
+    // Skipeamos solo cuando: query <=5 chars (Rn corto) Y clasificación
+    // dispara embedding. En ese caso BM25/Chroma sobre 1-2 tokens no
+    // aporta info útil que el LLM no tenga por el clasificador + system.
+    var msg = (context.userMessage || "").trim();
+    if (msg.length === 0) return true;
+    if (msg.length <= 5) {
+      var embedHeavy = ["partial_correct", "wrong_answer", "only_negation", "correct"];
+      if (embedHeavy.includes(context.classification?.type)) return true;
+    }
+    return false;
   }
 
   async execute(context) {

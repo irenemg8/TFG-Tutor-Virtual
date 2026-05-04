@@ -16,7 +16,7 @@ describe("RetrievalAgent NS-5 DI inversion", () => {
     });
     const context = {
       classification: { type: "wrong_answer" },
-      userMessage: "x",
+      userMessage: "explicación detallada de por qué",
       canonicalExerciseNum: 1,
       exerciseNum: 1,
       correctAnswer: ["R1"],
@@ -38,7 +38,7 @@ describe("RetrievalAgent NS-5 DI inversion", () => {
     const agent = new RetrievalAgent({ runFullPipeline: stubRunFullPipeline });
     const context = {
       classification: { type: "wrong_answer" },
-      userMessage: "x",
+      userMessage: "explicación detallada de por qué",
       canonicalExerciseNum: 1,
       exerciseNum: 1,
       correctAnswer: ["R1"],

@@ -13,7 +13,7 @@ describe("RetrievalAgent forwards budgetMs to runFullPipeline", () => {
     const agent = new RetrievalAgent({ runFullPipeline: stubRunFullPipeline });
     const context = {
       classification: { type: "wrong_answer" },
-      userMessage: "no sé",
+      userMessage: "necesito una pista más concreta sobre el circuito",
       canonicalExerciseNum: 1,
       exerciseNum: 1,
       correctAnswer: ["R1"],
@@ -39,7 +39,7 @@ describe("RetrievalAgent forwards budgetMs to runFullPipeline", () => {
     const agent = new RetrievalAgent({ runFullPipeline: stubRunFullPipeline });
     const context = {
       classification: { type: "wrong_answer" },
-      userMessage: "x",
+      userMessage: "una respuesta detallada que requiere búsqueda",
       canonicalExerciseNum: 1,
       exerciseNum: 1,
       correctAnswer: ["R1"],
@@ -63,7 +63,7 @@ describe("RetrievalAgent forwards budgetMs to runFullPipeline", () => {
     const agent = new RetrievalAgent({ runFullPipeline: stubRunFullPipeline });
     const context = {
       classification: { type: "wrong_answer" },
-      userMessage: "no sé",
+      userMessage: "necesito una pista más concreta sobre el circuito",
       canonicalExerciseNum: 1,
       exerciseNum: 1,
       correctAnswer: ["R1"],
