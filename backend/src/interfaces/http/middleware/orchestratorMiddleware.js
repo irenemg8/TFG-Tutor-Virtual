@@ -328,16 +328,21 @@ router.post("/chat/stream", async function (req, res, next) {
       };
       responseText = fallbacks[lang] || fallbacks.es;
     }
-    // Two paths:
-    // 1. We streamed tokens AND finalResponse matches what we streamed:
-    //    nothing else to send — the user already has the right text.
-    // 2. We did NOT stream (legacy mode, or pipeline early-exited before
-    //    tutorAgent ran), OR finalResponse differs from streamedText
-    //    (pedagogicalReviewer/guardrail rewrote the answer): send the
-    //    canonical text. When streaming was on, mark it replace:true so
-    //    the frontend overwrites the partial chunks instead of appending.
+    // Three paths:
+    // 1. Tokens WERE pushed to the client AND finalResponse matches what we
+    //    streamed: nothing else to send — the user already has the right text.
+    // 2. Tokens WERE pushed AND finalResponse differs (pedagogicalReviewer or
+    //    guardrails rewrote the answer): emit a replace:true chunk so the
+    //    frontend overwrites the partial text instead of appending.
+    // 3. Tokens were NOT pushed to the client (streamTokens=false, OR pipeline
+    //    early-exited before tutorAgent): the client has an empty buffer, so
+    //    send the canonical text as a normal chunk. NEVER use replace:true
+    //    here — it makes the frontend flicker between a stale text and the
+    //    rewrite (the "stream-then-replace" visual bug).
     const streamed = ctx.streamedText || "";
-    if (!streamed) {
+    const tokensSentToClient = streamTokens && streamed.length > 0;
+    if (!tokensSentToClient) {
+      // No partials were emitted to the client; just send the final text.
       sseSend(res, { chunk: responseText });
     } else if (responseText !== streamed) {
       sseSend(res, { chunk: responseText, replace: true, correction: true });
