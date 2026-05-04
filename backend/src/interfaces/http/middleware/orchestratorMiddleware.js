@@ -23,7 +23,27 @@ const container = require("../../../container");
 const trace = require("../../../infrastructure/events/pipelineDebugLogger");
 const ragBus = require("../../../infrastructure/events/ragEventBus");
 const Message = require("../../../domain/entities/Message");
-const { resolveLanguage, getGreetingResponse } = require("../../../domain/services/languageManager");
+const { resolveLanguage, getGreetingResponse, greetingPatterns } = require("../../../domain/services/languageManager");
+
+// First-turn helper: when the student's only signal is a single greeting
+// ("hello", "hola", "bon dia"), `resolveLanguage` cannot tell — the explicit
+// switch dictionary doesn't list bare greetings and the heuristic needs ≥3
+// tokens. Look the greeting up in greetingPatterns directly so we don't
+// answer "hello" with a Spanish "¡Hola!". Returns null when no greeting
+// pattern matches (caller falls back to history-based resolveLanguage).
+function detectGreetingLang(message) {
+  if (typeof message !== "string") return null;
+  const lower = message.toLowerCase().trim().replace(/[¿?¡!.,]/g, "");
+  if (!lower) return null;
+  for (const lang of Object.keys(greetingPatterns)) {
+    for (const pat of greetingPatterns[lang]) {
+      if (lower === pat || lower.startsWith(pat + " ") || lower.endsWith(" " + pat)) {
+        return lang;
+      }
+    }
+  }
+  return null;
+}
 
 // DEBUG_DUMP_CONTEXT — replica de ollamaChatRoutes.dumpToFile() para que el
 // dump funcione también bajo USE_ORCHESTRATOR=1. Sin esto, /tmp/tv_dump
@@ -148,12 +168,16 @@ async function handleGreeting(req, res, hb, userId, exerciseId, interaccionId) {
     interaccionId: iid, role: "user", content: userText,
   }));
 
-  // Resolve language from prior turns; fall back to Spanish on first turn.
+  // Resolve language: prefer the bare greeting itself ("hello" → en,
+  // "bon dia" → val) before falling back to history-based resolution.
+  // Without this, a first-turn "hello" still got the Spanish greeting
+  // because resolveLanguage's heuristic refuses to fire on a single token.
   const prior = await container.messageRepo.getLastMessages(iid, 6);
   if (!isFirstTurn) {
     isFirstTurn = prior.filter(m => m.isAssistant()).length === 0;
   }
-  const lang = resolveLanguage(prior.map(m => m.toOllamaFormat()));
+  const greetingLang = detectGreetingLang(userText);
+  const lang = greetingLang || resolveLanguage(prior.map(m => m.toOllamaFormat()));
 
   const greeting = getGreetingResponse(lang, isFirstTurn);
 

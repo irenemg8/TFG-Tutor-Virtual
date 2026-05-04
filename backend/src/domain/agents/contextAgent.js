@@ -69,8 +69,16 @@ class ContextAgent extends AgentInterface {
     );
     context.history = messages.map((m) => m.toOllamaFormat());
 
-    // 4. Resolve language
-    context.lang = this._resolveLanguage(context.history);
+    // 4. Resolve language. The current user message is NOT yet in history
+    //    (PersistenceAgent appends it at the end of the pipeline), so we
+    //    fold it into the resolver as a synthetic last-user-turn. Without
+    //    this, the very turn where the student writes "can we continue in
+    //    english?" still resolved to Spanish — they had to ask twice for
+    //    the switch to actually take effect.
+    const historyWithCurrent = context.userMessage
+      ? context.history.concat([{ role: "user", content: context.userMessage }])
+      : context.history;
+    context.lang = this._resolveLanguage(historyWithCurrent);
 
     // 5. Compute loop state
     const correctTypes = [

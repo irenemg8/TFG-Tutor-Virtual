@@ -274,7 +274,11 @@ const greetingPatterns = {
 const dontKnowPatterns = {
   es: ["no lo sé", "no sé", "ni idea", "no tengo ni idea", "no tengo idea", "yo qué sé"],
   val: ["no ho sé", "no sé", "ni idea", "no tinc ni idea", "no tinc idea"],
-  en: ["i don't know", "no idea", "i have no idea", "no clue", "beats me"],
+  en: [
+    "i don't know", "i dont know", "no idea", "i have no idea",
+    "no clue", "beats me", "not sure", "i'm not sure", "im not sure",
+    "i don't get it", "i dont get it", "i don't understand", "i dont understand",
+  ],
 };
 
 const reasoningPatterns = {
