@@ -3,19 +3,21 @@
 const IMessageRepository = require("../../../domain/ports/repositories/IMessageRepository");
 const Message = require("../../../domain/entities/Message");
 
+function parseJsonbColumn(val, fallback) {
+  if (val == null) return fallback;
+  if (typeof val === "string") {
+    try { return JSON.parse(val); } catch { return fallback; }
+  }
+  return val;
+}
+
 function rowToDomain(row) {
   if (!row) return null;
-  // concepts is JSONB. node-postgres parses jsonb to JS automatically when
-  // the row comes back from a regular SELECT, but defensive parsing here
-  // tolerates the rare case where it's still a string.
-  let concepts = [];
-  if (row.concepts != null) {
-    if (Array.isArray(row.concepts)) {
-      concepts = row.concepts;
-    } else if (typeof row.concepts === "string") {
-      try { concepts = JSON.parse(row.concepts); } catch { concepts = []; }
-    }
-  }
+  // node-postgres parses JSONB automatically; the helper tolerates the
+  // rare case where the driver hands us a raw string.
+  const concepts = parseJsonbColumn(row.concepts, []);
+  const extra = parseJsonbColumn(row.extra_metadata, {}) || {};
+
   const metadata = row.classification
     ? {
         classification: row.classification,
@@ -25,16 +27,34 @@ function rowToDomain(row) {
         studentResponseMs: row.student_response_ms,
         concepts: concepts,
         guardrails: {
+          // Legacy four (DB columns):
           solutionLeak: row.guardrail_solution_leak,
           falseConfirmation: row.guardrail_false_confirmation,
           prematureConfirmation: row.guardrail_premature_confirmation,
           stateReveal: row.guardrail_state_reveal,
+          // New (extra_metadata.guardrails):
+          languageDrift: extra.guardrails?.languageDrift || false,
+          completeSolution: extra.guardrails?.completeSolution || false,
+          adherence: extra.guardrails?.adherence || false,
+          repeatedQuestion: extra.guardrails?.repeatedQuestion || false,
+          didacticExplanation: extra.guardrails?.didacticExplanation || false,
+          datasetStyle: extra.guardrails?.datasetStyle || false,
+          elementNaming: extra.guardrails?.elementNaming || false,
         },
         timing: {
           pipelineMs: row.timing_pipeline_ms,
           ollamaMs: row.timing_ollama_ms,
           totalMs: row.timing_total_ms,
+          firstTokenMs: extra.firstTokenMs ?? null,
         },
+        detectedACs: Array.isArray(extra.detectedACs) ? extra.detectedACs : [],
+        guardrailPath: extra.guardrailPath || null,
+        guardrailLlmRetries: extra.guardrailLlmRetries || 0,
+        guardrailSurgicalFixes: Array.isArray(extra.guardrailSurgicalFixes)
+          ? extra.guardrailSurgicalFixes
+          : [],
+        fallbackUsed: extra.fallbackUsed || false,
+        deterministicFinish: extra.deterministicFinish || false,
       }
     : null;
 
@@ -61,6 +81,33 @@ class PgMessageRepository extends IMessageRepository {
     // parámetro cuando se usa en dos sitios (columna interaccion_id + WHERE
     // del subselect). Sin el cast, PG da error 42P08 "inconsistent types".
     const conceptsJson = JSON.stringify(Array.isArray(meta?.concepts) ? meta.concepts : []);
+
+    // Extra signals that don't have dedicated columns (migration 008).
+    // Mirrors PersistenceAgent → MessageMetadata so the export CSV/JSON
+    // can surface firstTokenMs, detectedACs, the new guardrails, and the
+    // diagnostic counters.
+    const extraMetadata = {
+      firstTokenMs: meta?.timing?.firstTokenMs ?? null,
+      detectedACs: Array.isArray(meta?.detectedACs) ? meta.detectedACs : [],
+      guardrails: {
+        languageDrift: meta?.guardrails?.languageDrift || false,
+        completeSolution: meta?.guardrails?.completeSolution || false,
+        adherence: meta?.guardrails?.adherence || false,
+        repeatedQuestion: meta?.guardrails?.repeatedQuestion || false,
+        didacticExplanation: meta?.guardrails?.didacticExplanation || false,
+        datasetStyle: meta?.guardrails?.datasetStyle || false,
+        elementNaming: meta?.guardrails?.elementNaming || false,
+      },
+      guardrailPath: meta?.guardrailPath || null,
+      guardrailLlmRetries: meta?.guardrailLlmRetries || 0,
+      guardrailSurgicalFixes: Array.isArray(meta?.guardrailSurgicalFixes)
+        ? meta.guardrailSurgicalFixes
+        : [],
+      fallbackUsed: meta?.fallbackUsed || false,
+      deterministicFinish: meta?.deterministicFinish || false,
+    };
+    const extraMetadataJson = JSON.stringify(extraMetadata);
+
     await this.pool.query(
       `INSERT INTO messages (
         interaccion_id, sequence_num, role, content, timestamp,
@@ -68,7 +115,7 @@ class PgMessageRepository extends IMessageRepository {
         guardrail_solution_leak, guardrail_false_confirmation,
         guardrail_premature_confirmation, guardrail_state_reveal,
         timing_pipeline_ms, timing_ollama_ms, timing_total_ms,
-        concepts
+        concepts, extra_metadata
       ) VALUES (
         $1::text,
         COALESCE((SELECT MAX(sequence_num) + 1 FROM messages WHERE interaccion_id = $1::text), 0),
@@ -76,7 +123,7 @@ class PgMessageRepository extends IMessageRepository {
         $5, $6, $7, $8, $9,
         $10, $11, $12, $13,
         $14, $15, $16,
-        $17::jsonb
+        $17::jsonb, $18::jsonb
       )`,
       [
         interaccionId,
@@ -96,6 +143,7 @@ class PgMessageRepository extends IMessageRepository {
         meta?.timing?.ollamaMs || null,
         meta?.timing?.totalMs || null,
         conceptsJson,
+        extraMetadataJson,
       ]
     );
     // Also update interacciones.fin

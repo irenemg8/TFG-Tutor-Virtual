@@ -62,6 +62,22 @@ function flattenInteraccion(inter, messages, usuario, ejercicio) {
   const rows = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
+    const md = m.metadata || {};
+    const g = md.guardrails || {};
+    const t = md.timing || {};
+    // detectedACs is an array of {id, name, confidence, ...}; collapse
+    // to a stable string for CSV. Keep the raw array for JSON via a
+    // separate `_detectedACsArray` field below.
+    const detectedACsList = Array.isArray(md.detectedACs) ? md.detectedACs : [];
+    const detectedACsStr = detectedACsList
+      .map((a) => (a && a.id ? a.id + (a.confidence != null ? `(${a.confidence.toFixed(2)})` : "") : ""))
+      .filter(Boolean)
+      .join("; ");
+    const surgicalFixesStr = Array.isArray(md.guardrailSurgicalFixes)
+      ? md.guardrailSurgicalFixes.join("; ")
+      : "";
+    const conceptsStr = Array.isArray(md.concepts) ? md.concepts.join("; ") : "";
+
     rows.push({
       interaccionId: inter.id || inter.interaccionId,
       usuarioId: inter.usuarioId,
@@ -75,18 +91,39 @@ function flattenInteraccion(inter, messages, usuario, ejercicio) {
       role: m.role,
       content: m.content,
       timestamp: m.timestamp,
-      classification: m.metadata?.classification || m.classification || "",
-      decision: m.metadata?.decision || m.decision || "",
-      isCorrectAnswer: (m.metadata?.isCorrectAnswer ?? m.isCorrectAnswer) ?? "",
-      sourcesCount: (m.metadata?.sourcesCount ?? m.sourcesCount) ?? "",
-      studentResponseMs: (m.metadata?.studentResponseMs ?? m.studentResponseMs) ?? "",
-      pipelineMs: (m.metadata?.timing?.pipelineMs ?? m.timing?.pipelineMs) ?? "",
-      ollamaMs: (m.metadata?.timing?.ollamaMs ?? m.timing?.ollamaMs) ?? "",
-      totalMs: (m.metadata?.timing?.totalMs ?? m.timing?.totalMs) ?? "",
-      guardrail_solutionLeak: (m.metadata?.guardrails?.solutionLeak ?? m.guardrails?.solutionLeak) ?? false,
-      guardrail_falseConfirmation: (m.metadata?.guardrails?.falseConfirmation ?? m.guardrails?.falseConfirmation) ?? false,
-      guardrail_prematureConfirmation: (m.metadata?.guardrails?.prematureConfirmation ?? m.guardrails?.prematureConfirmation) ?? false,
-      guardrail_stateReveal: (m.metadata?.guardrails?.stateReveal ?? m.guardrails?.stateReveal) ?? false,
+      classification: md.classification || "",
+      decision: md.decision || "",
+      isCorrectAnswer: md.isCorrectAnswer ?? "",
+      sourcesCount: md.sourcesCount ?? "",
+      studentResponseMs: md.studentResponseMs ?? "",
+      // Timing
+      pipelineMs: t.pipelineMs ?? "",
+      ollamaMs: t.ollamaMs ?? "",
+      totalMs: t.totalMs ?? "",
+      firstTokenMs: t.firstTokenMs ?? "",
+      // Concepts (rule-based, from classifier)
+      concepts: conceptsStr,
+      // AC verdict (per-turn AC detection — feat/ac-detection feature)
+      detectedACs: detectedACsStr,
+      detectedACsCount: detectedACsList.length,
+      // Legacy four guardrails:
+      guardrail_solutionLeak: g.solutionLeak ?? false,
+      guardrail_falseConfirmation: g.falseConfirmation ?? false,
+      guardrail_prematureConfirmation: g.prematureConfirmation ?? false,
+      guardrail_stateReveal: g.stateReveal ?? false,
+      // New on feat/ac-detection:
+      guardrail_languageDrift: g.languageDrift ?? false,
+      guardrail_completeSolution: g.completeSolution ?? false,
+      guardrail_adherence: g.adherence ?? false,
+      guardrail_repeatedQuestion: g.repeatedQuestion ?? false,
+      guardrail_didacticExplanation: g.didacticExplanation ?? false,
+      guardrail_datasetStyle: g.datasetStyle ?? false,
+      // Pipeline diagnostics:
+      guardrailPath: md.guardrailPath || "",
+      guardrailLlmRetries: md.guardrailLlmRetries ?? 0,
+      guardrailSurgicalFixes: surgicalFixesStr,
+      fallbackUsed: md.fallbackUsed ?? false,
+      deterministicFinish: md.deterministicFinish ?? false,
     });
   }
   return rows;
@@ -218,3 +255,5 @@ router.get("/resultados", async (req, res) => {
 });
 
 module.exports = router;
+// Exposed for unit tests — keeps test files from having to spin up Express.
+module.exports._test = { flattenInteraccion, buildFilter, rowsToCsv };

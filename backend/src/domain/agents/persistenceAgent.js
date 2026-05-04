@@ -54,7 +54,20 @@ class PersistenceAgent extends AgentInterface {
         pipelineMs: context.timing.pipelineMs,
         ollamaMs: context.timing.ollamaMs,
         totalMs,
+        firstTokenMs: context.timing?.firstTokenMs || null,
       },
+      // Extra signals introduced after the original schema (migration 008
+      // — extra_metadata JSONB). These let the export CSV/JSON reflect
+      // the marquee features of feat/ac-detection without one DB column
+      // per field.
+      detectedACs: Array.isArray(context.detectedACs) ? context.detectedACs : [],
+      guardrailPath: context.guardrailPath || null,
+      guardrailLlmRetries: context.guardrailLlmRetries || 0,
+      guardrailSurgicalFixes: Array.isArray(context.guardrailSurgicalFixes)
+        ? context.guardrailSurgicalFixes
+        : [],
+      fallbackUsed: context.fallbackUsed || false,
+      deterministicFinish: context.deterministicFinish || false,
     });
 
     const assistantMsg = new Message({

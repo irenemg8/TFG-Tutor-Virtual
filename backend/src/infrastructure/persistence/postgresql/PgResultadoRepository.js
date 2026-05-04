@@ -128,6 +128,14 @@ class PgResultadoRepository extends IResultadoRepository {
       conditions.push(`r.ejercicio_id = $${idx++}`);
       vals.push(filter.ejercicioId);
     }
+    if (filter.from instanceof Date && !isNaN(filter.from.getTime())) {
+      conditions.push(`r.fecha >= $${idx++}`);
+      vals.push(filter.from);
+    }
+    if (filter.to instanceof Date && !isNaN(filter.to.getTime())) {
+      conditions.push(`r.fecha <= $${idx++}`);
+      vals.push(filter.to);
+    }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const { rows } = await this.pool.query(

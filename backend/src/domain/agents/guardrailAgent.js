@@ -90,6 +90,10 @@ class GuardrailAgent extends AgentInterface {
       adherence: anyFor("adherence"),
       didacticExplanation: anyFor("didactic_explanation"),
       datasetStyle: anyFor("dataset_style"),
+      // Added on feat/ac-detection — persisted in messages.extra_metadata
+      // (migration 008) so the export reflects when these fired.
+      languageDrift: anyFor("language_drift"),
+      repeatedQuestion: anyFor("repeated_question"),
     };
 
     trace.logGuardrail && trace.logGuardrail(context.guardrailsTriggered, context.finalResponse);
