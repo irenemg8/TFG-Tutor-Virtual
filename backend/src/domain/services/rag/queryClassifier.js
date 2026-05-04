@@ -411,6 +411,32 @@ function isYesNoAnswer(message) {
   return /^(s[ií]|no|vale|ok|okay|sip|nop|claro|por supuesto|nope|yep|yes|yeah|yup|nah|sure|of course|exactly|exacto|exacte)(?:[\s.,!?¡¿]|$)/.test(trimmed);
 }
 
+// BUG-006 (2026-05-03): extrae el ÚLTIMO Rn que el tutor nombra dentro de
+// la pregunta de cierre. Si la pregunta es "¿Crees que la resistencia R5
+// influya en la diferencia de potencial?", devuelve "R5". Si la pregunta
+// no nombra ningún Rn (o la pregunta del tutor es puramente conceptual),
+// devuelve null. Sólo mira la ÚLTIMA frase interrogativa para no capturar
+// elementos mencionados en la introducción de la respuesta del tutor.
+function _extractElementFromQuestion(lastAssistantText, evaluableElements) {
+  if (typeof lastAssistantText !== "string" || lastAssistantText.length === 0) return null;
+  var matches = lastAssistantText.match(/[^.!?]*\?/g);
+  if (!matches || matches.length === 0) return null;
+  var lastQ = matches[matches.length - 1];
+  // Acepta cualquier Rn (genérico, no restringido a evaluableElements)
+  // pero si tenemos la lista evaluable la usamos para filtrar matches que
+  // no estén en el set canónico (p. ej. R10 mencionado por error).
+  var rns = lastQ.match(/\bR\d+\b/gi);
+  if (!rns || rns.length === 0) return null;
+  // Devuelve el ÚLTIMO Rn de la pregunta (el más cercano al "?"). Es el
+  // sujeto pedagógico del enunciado en la mayoría de casos.
+  var candidate = rns[rns.length - 1].toUpperCase();
+  if (Array.isArray(evaluableElements) && evaluableElements.length > 0) {
+    var upper = evaluableElements.map(function (e) { return String(e).toUpperCase(); });
+    if (upper.indexOf(candidate) < 0) return null;
+  }
+  return candidate;
+}
+
 /*------------------------------------------------------
   Classify a student message based on:
     - correctAnswer: array of correct elements ["R1", "R2", "R4"]
@@ -469,8 +495,21 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
   //    at the tutor's last question. If it was a closed yes/no question and
   //    the student answered yes/no, the answer is VALID — we don't punish
   //    them for being concise. Diagnostic checks ("¿tienes dudas?") are
-  //    accepted as final; closed reasoning checks fall through to the
-  //    correct_no_reasoning path so the tutor still asks for the why.
+  //    accepted as final; closed reasoning checks evaluate the IMPLICIT
+  //    correctness based on the Rn the tutor named in the question.
+  //
+  //    BUG-006 (2026-05-03): antes esto devolvía correctNoReasoning sin
+  //    mirar QUÉ Rn había nombrado el tutor en su pregunta. Si el tutor
+  //    preguntaba "¿Influye R5?" y el alumno decía "Sí" (R5 NO influye),
+  //    la respuesta quedaba como correctNoReasoning y el LLM la confirmaba
+  //    con "¡Correcto!" — false_confirmation a un wrong implícito.
+  //    El fix extrae el Rn de la última pregunta del tutor y cruza el
+  //    yes/no con correctAnswer:
+  //
+  //                        sí + Rn∈correct      → correctNoReasoning
+  //                        sí + Rn∉correct      → wrong_concept (proposed=[Rn])
+  //                        no + Rn∈correct      → wrong_concept (negated=[Rn])
+  //                        no + Rn∉correct      → correctNoReasoning
   if (userMessage.trim().length < 15 && allMentioned.length === 0) {
     var ctxQ = detectClosedQuestion(lastAssistantText);
     var yesNo = isYesNoAnswer(userMessage);
@@ -478,6 +517,41 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
       if (ctxQ.isDiagnostic) {
         return { type: types.closedAnswer, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
       }
+      var lastQRn = _extractElementFromQuestion(lastAssistantText, evaluableElements);
+      var isYes = /^s[ií]|^yes|^yeah|^yep|^sip|^claro|^por supuesto|^exact/i.test(userMessage.trim());
+      var isNo = /^no|^nope|^nah/i.test(userMessage.trim());
+      if (lastQRn && (isYes || isNo)) {
+        var rnIsCorrect = Array.isArray(correctAnswer) &&
+          correctAnswer.indexOf(lastQRn) >= 0;
+        // sí + correcto, no + incorrecto → la afirmación implícita coincide
+        // con la verdad → correctNoReasoning. El resto → wrong_concept.
+        var implicitTrue = (isYes && rnIsCorrect) || (isNo && !rnIsCorrect);
+        if (implicitTrue) {
+          return {
+            type: types.correctNoReasoning,
+            resistances: [lastQRn],
+            proposed: isYes ? [lastQRn] : [],
+            negated: isNo ? [lastQRn] : [],
+            hasReasoning: reasoning,
+            concepts: concepts,
+          };
+        }
+        // Wrong implícito: el tutor preguntó por Rn, alumno dijo "sí" pero
+        // Rn NO está en correct (o "no" pero Rn SÍ está). La clasificación
+        // wrong_concept con proposed/negated rellenado dispara
+        // FalseConfirmationGuardrail si el LLM responde con "¡Correcto!".
+        return {
+          type: types.wrongConcept,
+          resistances: [lastQRn],
+          proposed: isYes ? [lastQRn] : [],
+          negated: isNo ? [lastQRn] : [],
+          hasReasoning: reasoning,
+          concepts: concepts,
+        };
+      }
+      // Sin Rn explícita en la pregunta del tutor (pregunta puramente
+      // conceptual: "¿hay corriente?"): conservar correctNoReasoning para
+      // no romper el flujo socrático de razonamiento abierto.
       return { type: types.correctNoReasoning, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
     }
     // No closed-question context (or non yes/no short answer): treat as a
