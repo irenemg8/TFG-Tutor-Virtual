@@ -8,6 +8,13 @@ import MessageRenderer from "../components/MessageRenderer";
 
 const FIN_TOKEN = "<FIN_EJERCICIO>";
 
+// Placeholder shown while the backend's guardrail is regenerating a response
+// it judged unsafe (e.g. solution leak). Replaces the live-typed draft so the
+// student doesn't read the leaked answer for the 2-5s the LLM retry takes.
+// Italic so it visually reads as system-status, not as the tutor speaking.
+const REWRITING_PLACEHOLDER =
+  "_El tutor estaba respondiendo, pero se ha filtrado parte de la solución que debes averiguar por ti. Está regenerando la respuesta…_";
+
 function containsFinishToken(text) {
   return typeof text === "string" && text.includes(FIN_TOKEN);
 }
@@ -67,6 +74,7 @@ async function enviarMensajeStream({
   signal,
   onInteraccionId,
   onChunk,
+  onRewriting,
   onDone,
   onError,
 }) {
@@ -118,6 +126,13 @@ async function enviarMensajeStream({
         }
         if (msg?.interaccionId) {
           onInteraccionId?.(msg.interaccionId);
+          return;
+        }
+        // Guardrail pipeline announced it's about to rewrite. Don't wait for
+        // the rewrite to finish to fix the UI — swap the leaked draft for a
+        // placeholder NOW so the student stops reading the leaked answer.
+        if (msg?.rewriting === true) {
+          onRewriting?.(msg.reason || "guardrail");
           return;
         }
         if (typeof msg?.chunk === "string" && msg.chunk.length > 0) {
@@ -649,6 +664,25 @@ export default function Interacciones() {
           newIdFromServer = id;
           interaccionIdRef.current = id;
           setCurrentInteraccionId(id);
+        },
+
+        // Backend signals that a guardrail is regenerating the answer.
+        // Swap the live-typed draft for the placeholder so the student stops
+        // reading the leaked content; the next {replace:true} chunk that
+        // arrives (with the sanitised text) will overwrite this placeholder.
+        onRewriting: () => {
+          lastDataAt = Date.now();
+          acc = REWRITING_PLACEHOLDER;
+          finHandledRef.current = false;
+          finDetected = false;
+          setCurrentChatMessages((prev) => {
+            const copy = [...prev];
+            const last = copy.length - 1;
+            if (copy[last]?.role === "assistant") {
+              copy[last] = { ...copy[last], content: REWRITING_PLACEHOLDER };
+            }
+            return copy;
+          });
         },
 
         onChunk: (piece, meta) => {

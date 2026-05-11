@@ -280,6 +280,16 @@ router.post("/chat/stream", async function (req, res, next) {
         ts: envelope.timestamp,
         data: envelope.data,
       });
+      // When the guardrail pipeline is about to invoke its consolidated LLM
+      // rewrite, emit an explicit {rewriting:true} chunk so the frontend can
+      // overwrite the leaked draft with a neutral placeholder while we wait
+      // 2-5s for the rewrite. The {chunk, replace:true} that follows when the
+      // orchestrator finishes will then replace the placeholder with the
+      // sanitised text. Without this signal the student reads the leaked
+      // answer for the full duration of the rewrite.
+      if (envelope.event === "guardrail_rewriting" && envelope.status === "start") {
+        sseSend(res, { rewriting: true, reason: "guardrail" });
+      }
     } catch (_) { /* response may already be closed */ }
   };
   ragBus.on("rag", onRagEvent);

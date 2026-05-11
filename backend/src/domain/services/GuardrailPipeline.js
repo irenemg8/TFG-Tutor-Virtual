@@ -54,6 +54,12 @@ class GuardrailPipeline {
     this.logger = opts.logger || _noopLogger();
     this.budgetMs = opts.budgetMs != null ? opts.budgetMs : 45000;
     this.minRetryBudgetMs = opts.minRetryBudgetMs != null ? opts.minRetryBudgetMs : 10000;
+    // Optional out-of-band event emitter (ragBus.emitEvent). Used to notify the
+    // SSE layer that the pipeline is about to call the LLM for a rewrite, so
+    // the frontend can swap the streamed (possibly leaked) draft for a neutral
+    // placeholder while the rewrite is in flight, instead of letting the user
+    // read the leaked draft for the 2-5s the rewrite takes.
+    this.emitEvent = typeof opts.emitEvent === "function" ? opts.emitEvent : function () {};
   }
 
   /**
@@ -207,6 +213,14 @@ class GuardrailPipeline {
     this._safe(() => this.logger.traceLlmRetry && this.logger.traceLlmRetry(
       reqId, "consolidated", 1, { guardrails: violations.map(v => v.id) }
     ));
+
+    // Fire an out-of-band event so the SSE bridge can tell the frontend to
+    // swap the leaked draft for a placeholder NOW, before we spend 2-5s
+    // generating the rewrite. The frontend that doesn't know about this
+    // event simply ignores it (additive change).
+    this._safe(() => this.emitEvent("guardrail_rewriting", "start", {
+      violations: violations.map(v => v.id),
+    }));
 
     let retryResponse;
     try {

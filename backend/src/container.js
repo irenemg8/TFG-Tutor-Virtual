@@ -163,6 +163,10 @@ const container = {
       budgetMs: Number(process.env.GUARDRAIL_BUDGET_MS || 20000),
       minRetryBudgetMs: Number(process.env.GUARDRAIL_MIN_RETRY_BUDGET_MS || 8000),
       logger: trace,
+      // Lets the pipeline notify the SSE layer (via ragBus) right before an
+      // LLM rewrite so the frontend can show a placeholder instead of the
+      // leaked draft. See GuardrailPipeline.emitEvent for details.
+      emitEvent: emitEvent,
     });
 
     // Build agent registry + orchestrator
