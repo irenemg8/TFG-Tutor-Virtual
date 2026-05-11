@@ -57,9 +57,19 @@ const container = {
       logger: function (event, payload) { emitEvent(event, "end", payload); },
     });
 
-    // LLM adapter (port: ILlmService)
-    const OllamaLlmAdapter = require("./infrastructure/llm/OllamaLlmAdapter");
-    this.llmService = new OllamaLlmAdapter();
+    // LLM adapter (port: ILlmService) — selected by LLM_PROVIDER env var.
+    //   - "poligpt" → PoliGptLlmAdapter (OpenAI-compatible LiteLLM proxy at UPV)
+    //   - "ollama"  → OllamaLlmAdapter (legacy direct Ollama; default)
+    const llmCfg = require("./infrastructure/llm/config");
+    if (llmCfg.LLM_PROVIDER === "poligpt") {
+      const PoliGptLlmAdapter = require("./infrastructure/llm/PoliGptLlmAdapter");
+      this.llmService = new PoliGptLlmAdapter();
+      console.log("[Container] LLM provider: poligpt (model=" + llmCfg.POLIGPT_MODEL + ")");
+    } else {
+      const OllamaLlmAdapter = require("./infrastructure/llm/OllamaLlmAdapter");
+      this.llmService = new OllamaLlmAdapter();
+      console.log("[Container] LLM provider: ollama (model=" + llmCfg.OLLAMA_MODEL + ")");
+    }
 
     // Load KG concept patterns (used by the StateRevealGuardrail)
     const { loadKG, getAllEntries } = require("./infrastructure/search/knowledgeGraph");

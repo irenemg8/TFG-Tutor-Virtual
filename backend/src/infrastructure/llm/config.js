@@ -31,6 +31,17 @@ module.exports = {
   // ChromaDB URL
   CHROMA_URL: process.env.CHROMA_URL || "http://localhost:8000",
 
+  // ─── Provider toggle ──────────────────────────────────────────────
+  // "ollama" → uses OllamaLlmAdapter against OLLAMA_CHAT_URL (legacy path)
+  // "poligpt" → uses PoliGptLlmAdapter against POLIGPT_BASE_URL (OpenAI-compat)
+  LLM_PROVIDER: (process.env.LLM_PROVIDER || "ollama").toLowerCase(),
+  // "ollama" (Ollama /api/embed format) or "openai" (OpenAI /v1/embeddings)
+  // Defaults to "openai" when LLM_PROVIDER=poligpt, else "ollama".
+  EMBEDDING_PROVIDER: (
+    process.env.EMBEDDING_PROVIDER ||
+    (process.env.LLM_PROVIDER === "poligpt" ? "openai" : "ollama")
+  ).toLowerCase(),
+
   // Embedding model
   EMBEDDING_MODEL: process.env.RAG_EMBEDDING_MODEL || "nomic-embed-text:latest",
   OLLAMA_EMBED_URL: ollamaEmbedUrl,
@@ -42,6 +53,14 @@ module.exports = {
   OLLAMA_NUM_CTX: Number(process.env.OLLAMA_NUM_CTX || 8192),
   OLLAMA_NUM_PREDICT: Number(process.env.OLLAMA_NUM_PREDICT || 220),
   OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || "60m",
+
+  // ─── PoliGPT (OpenAI-compatible LiteLLM proxy) ────────────────────
+  POLIGPT_BASE_URL: (process.env.POLIGPT_BASE_URL || "https://api.poligpt.upv.es").replace(/\/+$/, ""),
+  POLIGPT_API_KEY: process.env.POLIGPT_API_KEY || "",
+  POLIGPT_MODEL: process.env.POLIGPT_MODEL || "qwen3:32b",
+  // For embeddings via PoliGPT, the embed endpoint accepts the same
+  // model name list as /v1/models (nomic-embed-text, bge-m3, etc.).
+  POLIGPT_EMBED_MODEL: process.env.POLIGPT_EMBED_MODEL || "nomic-embed-text",
 
   // RAG thresholds for the similarity score for the retrieval process
   HIGH_THRESHOLD: Number(process.env.RAG_HIGH_THRESHOLD || 0.7),
