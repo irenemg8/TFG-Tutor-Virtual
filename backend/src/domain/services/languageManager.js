@@ -320,16 +320,33 @@ const frustrationPatterns = {
     "ya te dije", "me repites lo mismo", "siempre lo mismo",
     "otra vez lo mismo", "ya respondí a eso", "ya contesté a eso",
     "no me entiendes", "no me escuchas", "que sí", "que si",
+    // BUG-C (2026-05-11): nuevos patrones observados en logs de prod
+    // donde el alumno se frustraba y el tutor no se daba cuenta.
+    "eso ya me lo has preguntado", "ya me lo has preguntado",
+    "me has preguntado antes", "ya te lo he dicho antes",
+    "ya te lo dije", "te lo dije", "te lo estoy diciendo",
+    "he dicho que", "yo tengo la razón", "yo tengo razón",
+    "tengo la razón", "tengo razón",
+    "no puedes leer", "puedes leer los mensajes",
+    "lee los mensajes", "lee lo que", "léelo", "leelo",
+    "en serio", "en serio?", "es en serio", "estás de broma",
+    "no me estás escuchando", "no me lees", "vaya pregunta",
   ],
   val: [
     "ja t'ho he dit", "ja t'ho he explicat", "ja ho he dit",
     "ja ho he explicat", "perquè sí", "ja et vaig dir",
     "em repeteixes el mateix", "sempre el mateix", "altra vegada el mateix",
+    "tinc la raó", "jo tinc la raó", "ja t'ho he dit abans",
+    "no em llegeixes", "llig els missatges", "de veres",
   ],
   en: [
     "i already told you", "i already explained", "i said that already",
     "i already said", "you keep asking the same", "same question again",
     "i just told you", "already answered that", "stop repeating",
+    "i told you", "i told you already", "you asked me that",
+    "i'm right", "i am right", "can't you read", "cant you read",
+    "read the messages", "read what i", "are you serious",
+    "you're not listening", "you are not listening",
   ],
 };
 

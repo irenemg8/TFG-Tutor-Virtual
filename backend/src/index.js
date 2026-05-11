@@ -212,10 +212,16 @@ const server = app.listen(port, "0.0.0.0", () => {
       console.error("[Startup] Container initialization FAILED — orchestrator route disabled:", err.message);
     });
 
-  // Warmup Ollama (no bloquea)
+  // Warmup Ollama (no bloquea). Only runs when LLM_PROVIDER=ollama;
+  // skipped entirely when using PoliGPT (where the chat goes through
+  // PoliGptLlmAdapter and Ollama UPV is not in the request path).
   const axios = require("axios");
 
   async function warmupOllamaUPV() {
+    if ((process.env.LLM_PROVIDER || "ollama").toLowerCase() !== "ollama") {
+      console.log("[OLLAMA] Warmup SKIP (LLM_PROVIDER=" + process.env.LLM_PROVIDER + ").");
+      return;
+    }
     const upvUrl = process.env.OLLAMA_API_URL_UPV || process.env.OLLAMA_BASE_URL_UPV;
     if (!upvUrl) {
       console.log("[OLLAMA] Warmup SKIP (OLLAMA_API_URL_UPV no definido).");

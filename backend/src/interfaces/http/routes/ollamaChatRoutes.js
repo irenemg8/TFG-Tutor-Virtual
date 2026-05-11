@@ -179,26 +179,31 @@ function isCorrectAnswerForExercise({ userText, ejercicio }) {
 }
 
 // ==============================
-// Logs de arranque (solo informativos)
+// Logs de arranque (solo informativos). Suprimidos cuando el provider
+// activo es PoliGPT — esta ruta legacy Ollama sigue cargada por compat
+// pero no se usa, y los prints confundían al ver "MODEL=qwen2.5:latest"
+// junto al log real "[Container] LLM provider: poligpt (model=llama)".
 // ==============================
-console.log("[OLLAMA CFG] MODEL =", OLLAMA_MODEL);
-console.log("[OLLAMA CFG] KEEP_ALIVE =", OLLAMA_KEEP_ALIVE);
-console.log(
-  "[OLLAMA CFG] timeout(ms) =",
-  OLLAMA_TIMEOUT_MS,
-  "streamMax(ms) =",
-  OLLAMA_STREAM_MAX_MS,
-  "ctx =",
-  OLLAMA_NUM_CTX,
-  "predict =",
-  OLLAMA_NUM_PREDICT,
-  "history =",
-  HISTORY_MAX_MESSAGES
-);
-console.log("[OLLAMA CFG] fallback URL =", normalizeBaseUrl(OLLAMA_API_URL_FALLBACK));
-console.log("[OLLAMA CFG] local URL =", normalizeBaseUrl(process.env.OLLAMA_API_URL_LOCAL || process.env.OLLAMA_BASE_URL_LOCAL || ""));
-console.log("[OLLAMA CFG] upv URL   =", normalizeBaseUrl(process.env.OLLAMA_API_URL_UPV || process.env.OLLAMA_BASE_URL_UPV || ""));
-console.log("[OLLAMA CFG] insecureTLS =", ALLOW_INSECURE_TLS ? "ON (DEV)" : "OFF");
+if ((process.env.LLM_PROVIDER || "ollama").toLowerCase() === "ollama") {
+  console.log("[OLLAMA CFG] MODEL =", OLLAMA_MODEL);
+  console.log("[OLLAMA CFG] KEEP_ALIVE =", OLLAMA_KEEP_ALIVE);
+  console.log(
+    "[OLLAMA CFG] timeout(ms) =",
+    OLLAMA_TIMEOUT_MS,
+    "streamMax(ms) =",
+    OLLAMA_STREAM_MAX_MS,
+    "ctx =",
+    OLLAMA_NUM_CTX,
+    "predict =",
+    OLLAMA_NUM_PREDICT,
+    "history =",
+    HISTORY_MAX_MESSAGES
+  );
+  console.log("[OLLAMA CFG] fallback URL =", normalizeBaseUrl(OLLAMA_API_URL_FALLBACK));
+  console.log("[OLLAMA CFG] local URL =", normalizeBaseUrl(process.env.OLLAMA_API_URL_LOCAL || process.env.OLLAMA_BASE_URL_LOCAL || ""));
+  console.log("[OLLAMA CFG] upv URL   =", normalizeBaseUrl(process.env.OLLAMA_API_URL_UPV || process.env.OLLAMA_BASE_URL_UPV || ""));
+  console.log("[OLLAMA CFG] insecureTLS =", ALLOW_INSECURE_TLS ? "ON (DEV)" : "OFF");
+}
 
 // ==============================
 // Healthcheck Ollama (según modo)

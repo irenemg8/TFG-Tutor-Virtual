@@ -44,6 +44,14 @@ class StateRevealGuardrail extends IGuardrail {
     }
     if (evaluableElements.length === 0) return { violated: false };
 
+    // BUG-B (2026-05-11): elements the student has already named are
+    // "fair game" per the system-prompt EXCEPTION clause — the tutor may
+    // refer to them by id. Mentioning them next to a KG concept word
+    // (e.g. "R1 ... la corriente ...") is NOT a state reveal, it's a
+    // legitimate Socratic exchange. Hardcoded state patterns
+    // ("cortocircuitada", "circuito abierto") still fire even in that case.
+    const studentMentioned = _collectStudentMentions((ctx && ctx.messages) || []);
+
     const sentences = splitSentencesKeepEnd(response);
     for (let s = 0; s < sentences.length; s++) {
       const sentence = sentences[s];
@@ -78,14 +86,27 @@ class StateRevealGuardrail extends IGuardrail {
       // KG concept patterns ONLY fire in affirmations, not questions.
       // Rationale: "¿Por qué R1 contribuye a la diferencia de potencial?" is
       // a pedagogical question about a concept, not a state reveal.
+      //
+      // ALSO skip if ALL the elements named in this sentence have already
+      // been mentioned by the student in earlier turns. The system prompt's
+      // EXCEPTION clause lets the tutor refer to those by id; pairing the
+      // id with a KG concept word is part of a normal Socratic exchange,
+      // not a leak. Without this the guardrail thrashed against legitimate
+      // replies like "Has identificado correctamente a R1 como una de las
+      // resistencias relevantes." after the student wrote "a r1".
       if (!isQuestion) {
-        for (let p = 0; p < kgPatterns.length; p++) {
-          if (lower.includes(kgPatterns[p])) {
-            return {
-              violated: true,
-              evidence: "element '" + namedElements[0] + "' + KG concept '" + kgPatterns[p] + "'",
-              metadata: { element: namedElements[0], pattern: kgPatterns[p], fromKG: true },
-            };
+        const allFairGame = namedElements.every(function (el) {
+          return studentMentioned.has(String(el).toUpperCase());
+        });
+        if (!allFairGame) {
+          for (let p = 0; p < kgPatterns.length; p++) {
+            if (lower.includes(kgPatterns[p])) {
+              return {
+                violated: true,
+                evidence: "element '" + namedElements[0] + "' + KG concept '" + kgPatterns[p] + "'",
+                metadata: { element: namedElements[0], pattern: kgPatterns[p], fromKG: true },
+              };
+            }
           }
         }
       }
@@ -127,6 +148,24 @@ class StateRevealGuardrail extends IGuardrail {
 
 function _escape(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Collect every R\d+/V\d+/I\d+ token the student mentioned across the
+// conversation. Used to short-circuit KG-pattern hits when the element is
+// already "fair game" per the system prompt's EXCEPTION clause.
+function _collectStudentMentions(messages) {
+  const set = new Set();
+  if (!Array.isArray(messages)) return set;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (!m || m.role !== "user" || typeof m.content !== "string") continue;
+    const hits = m.content.match(/\b[RVI]\d+\b/gi);
+    if (!hits) continue;
+    for (let h = 0; h < hits.length; h++) {
+      set.add(hits[h].toUpperCase());
+    }
+  }
+  return set;
 }
 
 module.exports = StateRevealGuardrail;

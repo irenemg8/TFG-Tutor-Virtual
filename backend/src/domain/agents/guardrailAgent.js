@@ -59,10 +59,18 @@ class GuardrailAgent extends AgentInterface {
       messages: context.llmMessages || [],
     };
 
+    // BUG-D (2026-05-11): use Date.now() as guardrail startMs so the budget
+    // is relative to THIS phase, not to the whole pipeline. Previously we
+    // passed pipelineStartMs, which meant: when the tutor LLM took 14s, the
+    // pipeline thought the guardrail had already burned 14s of its 20s
+    // budget, leaving <10s — below minRetryBudgetMs — so the consolidated
+    // LLM retry never fired even on critical violations (complete_solution,
+    // state_reveal). The guardrail has its own slice (ctx.guardrailBudgetMs)
+    // and shouldn't inherit the tutor's latency.
     const result = await this.pipeline.validate(context.llmResponse, guardrailCtx, {
       messages: context.llmMessages,
       reqId: context.reqId || "",
-      startMs: context.timing.pipelineStartMs,
+      startMs: Date.now(),
     });
 
     context.finalResponse = result.response;

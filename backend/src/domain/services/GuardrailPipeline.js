@@ -137,24 +137,31 @@ class GuardrailPipeline {
 
     // === Phase C: consolidated LLM retry (if budget permits) ===
     //
-    // Quality-vs-latency gate: a consolidated retry costs another 15-20s
-    // against Ollama UPV. Reserve it only for pedagogically-critical
-    // violations where the surgical fix cannot reliably recover the meaning:
+    // Quality-vs-latency gate: a consolidated retry costs another 5-15s
+    // against PoliGPT. Reserve it for pedagogically-critical violations
+    // where the surgical fix cannot reliably recover the meaning:
     //   - solution_leak: tutor revealed the answer
     //   - false_confirmation: confirmed a wrong answer as right
     //   - premature_confirmation: confirmed without justification
     //   - state_reveal: revealed element state (short/open)
     //   - complete_solution: emitted a step-by-step worked solution
-    // For the rest (language_drift, repeated_question, adherence,
-    // didactic_explanation, dataset_style, element_naming), the surgical fix
-    // already rewrote the offending sentence in place; an LLM retry wastes
-    // a round-trip without measurable quality gain.
+    //   - repeated_question: literal repetition of previous Socratic question
+    //     (BUG-A 2026-05-11: added here because RepeatedQuestionGuardrail's
+    //     surgicalFix returns null on purpose — it cannot rewrite the question
+    //     without LLM knowledge of the AC; without retry, the repeated
+    //     question reached the student and they wrote "ya me lo has
+    //     preguntado antes" in production logs).
+    // For the rest (language_drift, adherence, didactic_explanation,
+    // dataset_style, element_naming), the surgical fix already rewrote the
+    // offending sentence in place; an LLM retry wastes a round-trip without
+    // measurable quality gain.
     const CRITICAL_GUARDRAILS = new Set([
       "solution_leak",
       "false_confirmation",
       "premature_confirmation",
       "state_reveal",
       "complete_solution",
+      "repeated_question",
     ]);
     const criticalViolations = violations.filter(function (v) {
       return CRITICAL_GUARDRAILS.has(v.id);
