@@ -597,7 +597,7 @@ function redactStateRevealSentence(response, evaluableElements, pattern, lang, p
     // Capitalise the first letter of the placeholder. When it is the
     // first sentence of the response (i === 0) we still need to start
     // with a capital — otherwise the rendered text reads "ese elemento
-    // tiene…" which Vicente flagged as broken. When it follows another
+    // tiene…" which was flagged as broken. When it follows another
     // sentence we additionally need a leading space so we don't pegote
     // ("…avances!Ese elemento…").
     var p = placeholder;

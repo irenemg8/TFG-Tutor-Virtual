@@ -30,7 +30,7 @@ describe("AdherenceGuardrail (NS-33)", () => {
     });
 
     test("does NOT flag a Socratic QUESTION even if Rn-no-influye appears inside", () => {
-      // Regression: 2026-05-03 Vicente caught the guardrail truncating the
+      // Regression: caught the guardrail truncating the
       // socratic question "¿por qué crees que R2 no influye?" because R2 is
       // in correctAnswer. Questions are valid pedagogical strategy, not
       // tutor contradictions.
