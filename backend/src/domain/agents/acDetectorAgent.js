@@ -41,6 +41,7 @@ class AcDetectorAgent extends AgentInterface {
     if (this.canSkip(context)) {
       context.detectedACs = [];
       context.turnVerdict = null;
+      _traceAcDetection(context, [], null, "skipped");
       return;
     }
     const exerciseNum = context.exerciseNum != null
@@ -64,7 +65,40 @@ class AcDetectorAgent extends AgentInterface {
 
     // 2. NS-30 — turn verdict (deterministic)
     context.turnVerdict = _computeVerdict(proposed, negated, correct);
+
+    _traceAcDetection(context, context.detectedACs, context.turnVerdict,
+      patterns.length === 0 ? "no_patterns_for_exercise" : "ok");
   }
+}
+
+// Temporary diagnostic trace (2026-05-11): visibilizar en logs qué ACs
+// se detectan por turno y qué descomposición arroja el turnVerdict. Sin
+// esto, el log sólo mostraba [PER-ELEMENT ANALYSIS] al final del prompt
+// (recortado en logs largos) y no había forma de confirmar si el banner
+// [AC DETECTADA] estaba inyectándose. Quitar cuando se valide en prod.
+function _traceAcDetection(context, detectedACs, verdict, reason) {
+  try {
+    const reqId = (context && context.reqId) || "";
+    const exNum = context && context.exerciseNum;
+    const top = (detectedACs || []).slice(0, 3).map(function (a) {
+      return a.id + "@" + (a.confidence != null ? a.confidence.toFixed(2) : "?")
+        + (a.reason ? "[" + a.reason + "]" : "");
+    }).join(",");
+    const v = verdict
+      ? verdict.verdict
+        + " hits=[" + (verdict.hits || []).join(",") + "]"
+        + " errors=[" + (verdict.errors || []).join(",") + "]"
+        + " missing=[" + (verdict.missing || []).join(",") + "]"
+        + " wronglyNegated=[" + (verdict.wronglyNegated || []).join(",") + "]"
+      : "—";
+    console.log(
+      "[TRACE] [" + reqId + "] 🎯 AC_DETECTED ex=" + (exNum != null ? exNum : "?")
+      + " count=" + (detectedACs || []).length
+      + " top=[" + top + "]"
+      + " verdict=" + v
+      + " reason=" + reason
+    );
+  } catch (_) { /* nunca romper el flujo por una traza */ }
 }
 
 function _norm(x) {

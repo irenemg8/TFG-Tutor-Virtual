@@ -5,7 +5,7 @@
  * MODEL BENCHMARK E2E — TFG-Tutor-Virtual
  *
  * Compara un set de modelos LLM PoliGPT en una conversación de 7 turnos
- * (basada en la traza real reportada por Vicente). Para cada modelo:
+ * (basada en la traza real reportada). Para cada modelo:
  *   1. Edita .env con OLLAMA_MODEL=<modelo>.
  *   2. Reinicia el backend y espera al warmup.
  *   3. Login dev → cookie.
@@ -52,7 +52,7 @@ const MODELS = (process.env.BENCHMARK_MODELS ||
 const C = { ok: "\x1b[32m", fail: "\x1b[31m", warn: "\x1b[33m", reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m", cyan: "\x1b[36m" };
 const c = (s, k) => (C[k] || "") + s + C.reset;
 
-// ─── Conversación fija (basada en la traza reportada por Vicente) ──────────
+// ─── Conversación fija  ──────────
 
 const TURNS = [
   // Warmup descartado del aggregate (mide cold-start del cluster).

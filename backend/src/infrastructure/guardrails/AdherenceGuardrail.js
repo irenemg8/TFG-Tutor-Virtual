@@ -164,7 +164,7 @@ function _esc(s) {
 // misconception — that's a valid pedagogical move, not a tutor mistake.
 // Same principle StateRevealGuardrail applies. Without this gate the
 // guardrail destroys the Socratic question and the student receives a
-// truncated affirmation with no question (Vicente flagged 2026-05-03).
+// truncated affirmation with no question
 const NEGATIVE_VERBS = "(?:no|tampoco)\\s+(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
 const POSITIVE_VERBS = "(?:s[ií]\\s+)?(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
 
