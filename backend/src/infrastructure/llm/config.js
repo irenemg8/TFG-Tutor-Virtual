@@ -31,7 +31,7 @@ module.exports = {
   OLLAMA_MODEL: process.env.OLLAMA_MODEL || "qwen2.5:latest",
   OLLAMA_TEMPERATURE: Number(process.env.OLLAMA_TEMPERATURE || 0.4),
   OLLAMA_NUM_CTX: Number(process.env.OLLAMA_NUM_CTX || 8192),
-  OLLAMA_NUM_PREDICT: Number(process.env.OLLAMA_NUM_PREDICT || 120),
+  OLLAMA_NUM_PREDICT: Number(process.env.OLLAMA_NUM_PREDICT || 220),
   OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || "60m",
 
   // RAG thresholds for the similarity score for the retrieval process
