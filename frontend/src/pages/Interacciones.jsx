@@ -232,6 +232,20 @@ export default function Interacciones() {
     return () => window.removeEventListener("resize", compute);
   }, []);
 
+  // Warmup PoliGPT/Ollama al montar el chat — fire-and-forget.
+  // Si el modelo está frío en LiteLLM (llama3.1:8b cold start ≈ 5s) preferimos
+  // pagar esa latencia AHORA mientras el alumno lee el enunciado, en vez de
+  // hacerle esperar al enviar la primera pregunta. Si falla, no bloqueamos:
+  // la primera consulta simplemente pagará el cold start como hasta ahora.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    api
+      .post("/api/ollama/warmup", null, { signal: ctrl.signal })
+      .then((r) => console.debug("[WARMUP]", r.data))
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, []);
+
   useEffect(() => {
     if (!isMobileView) setMostrarPanel(true);
   }, [isMobileView]);

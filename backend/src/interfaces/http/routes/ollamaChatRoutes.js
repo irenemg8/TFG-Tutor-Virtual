@@ -27,6 +27,78 @@ require("dotenv").config();
 const router = express.Router();
 
 // =====================
+// Warmup endpoint
+// =====================
+// POST /api/ollama/warmup
+// Fired by the frontend the moment the chat screen mounts, before the
+// student even types. The goal is to pay the model's cold-start latency
+// (LiteLLM loading llama / qwen3 / phi4 into VRAM on the UPV side) in
+// background while the user is still reading the exercise statement, so
+// the first real turn is warm-fast instead of cold-slow.
+//
+// Idempotent: if the model is already resident, PoliGPT returns in <1s.
+// Fire-and-forget on the client; we still return {ok, ms, model} so the
+// browser console can show whether the warm-up actually completed.
+//
+// Disabled with WARMUP_ENABLED=false (default ON when LLM_PROVIDER=poligpt
+// AND when LLM_PROVIDER=ollama; only useful where there is a cold start).
+router.post("/warmup", async function (req, res) {
+  const llmCfg = require("../../../infrastructure/llm/config");
+  if (process.env.WARMUP_ENABLED === "false") {
+    return res.json({ ok: true, skipped: true, reason: "WARMUP_ENABLED=false" });
+  }
+
+  const t0 = Date.now();
+  const provider = (llmCfg.LLM_PROVIDER || "ollama").toLowerCase();
+
+  try {
+    if (provider === "poligpt") {
+      if (!container._initialized || !container.llmService) {
+        return res.status(503).json({ ok: false, error: "LLM service not ready" });
+      }
+      // Minimal prompt — PoliGPT bills by tokens and we only care about
+      // forcing the model to load. max_tokens=1, temperature=0.
+      await container.llmService.chatCompletion(
+        [{ role: "user", content: "ping" }],
+        { temperature: 0, numPredict: 1, budgetMs: 30000 }
+      );
+      const ms = Date.now() - t0;
+      console.log("[WARMUP] PoliGPT ok (" + ms + "ms, model=" + llmCfg.POLIGPT_MODEL + ")");
+      return res.json({ ok: true, ms: ms, provider: "poligpt", model: llmCfg.POLIGPT_MODEL });
+    }
+
+    // provider = ollama → same shape as warmupOllamaUPV() in index.js,
+    // but on-demand from the client instead of only at backend boot.
+    const url = String(llmCfg.OLLAMA_CHAT_URL).replace(/\/$/, "");
+    const model = llmCfg.OLLAMA_MODEL;
+    await axios.post(
+      url + "/api/chat",
+      {
+        model: model,
+        stream: false,
+        keep_alive: llmCfg.OLLAMA_KEEP_ALIVE,
+        messages: [
+          { role: "system", content: "Responde solo con OK." },
+          { role: "user", content: "OK" },
+        ],
+        options: { num_predict: 1, temperature: 0 },
+      },
+      { timeout: 30000 }
+    );
+    const ms = Date.now() - t0;
+    console.log("[WARMUP] Ollama ok (" + ms + "ms, model=" + model + ")");
+    return res.json({ ok: true, ms: ms, provider: "ollama", model: model });
+  } catch (err) {
+    const ms = Date.now() - t0;
+    const msg = (err && err.message) || String(err);
+    console.warn("[WARMUP] FAILED (" + ms + "ms):", msg);
+    // 502 (bad gateway upstream) — the warmup is best-effort; the frontend
+    // should swallow this and let the first real turn pay the cold start.
+    return res.status(502).json({ ok: false, ms: ms, error: msg });
+  }
+});
+
+// =====================
 // Config (base)
 // =====================
 
