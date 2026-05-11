@@ -31,7 +31,7 @@ const config = {
   OLLAMA_NUM_CTX: parseInt(process.env.OLLAMA_NUM_CTX, 10) || 4096,
   OLLAMA_NUM_PREDICT: parseInt(process.env.OLLAMA_NUM_PREDICT, 10) || 256,
   OLLAMA_TEMPERATURE: parseFloat(process.env.OLLAMA_TEMPERATURE) || 0.4,
-  HISTORY_MAX_MESSAGES: parseInt(process.env.HISTORY_MAX_MESSAGES, 10) || 6,
+  HISTORY_MAX_MESSAGES: parseInt(process.env.HISTORY_MAX_MESSAGES, 10) || 20,
   OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || "60m",
   OLLAMA_STREAM_MAX_MS:
     parseInt(process.env.OLLAMA_STREAM_MAX_MS, 10) || 1800000,

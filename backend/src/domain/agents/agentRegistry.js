@@ -38,6 +38,7 @@ function createAgentRegistry(deps) {
       interaccionRepo: deps.interaccionRepo,
       messageRepo: deps.messageRepo,
       config: deps.config,
+      historySummarizer: deps.historySummarizer,
     }),
 
     acTracker: new AcTrackerAgent({

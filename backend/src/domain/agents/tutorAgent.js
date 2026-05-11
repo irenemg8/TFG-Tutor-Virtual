@@ -418,12 +418,24 @@ class TutorAgent extends AgentInterface {
     // For logging / debugging keep the legacy combined view.
     const augmentedPrompt = basePrompt + "\n\n" + dynamicContext;
 
-    // 5. Build messages: stable system + history + (context-prefixed) user.
+    // 5. Build messages: stable system + (optional rolling summary) +
+    //    recent history + (context-prefixed) user.
     //    The current message is NOT yet persisted (PersistenceAgent writes it
     //    at the end of the pipeline), so we must append it explicitly here or
     //    the LLM would respond without knowing what the student just said.
+    //
+    //    historySummary (B2) is set by ContextAgent when the session exceeds
+    //    HISTORY_MAX_MESSAGES — it's a 200-300-char condensation of the
+    //    turns that no longer fit in the live window, fed as a second system
+    //    message so the LLM still remembers confirmations from earlier turns
+    //    ("te he dicho que R3 no influye"). When the session is short
+    //    historySummary is null and this collapses to the pre-B2 shape.
+    const summaryBanner = context.historySummary
+      ? this._buildSummaryBanner(context.historySummary, context.lang)
+      : null;
     const messages = [
       { role: "system", content: basePrompt },
+      ...(summaryBanner ? [{ role: "system", content: summaryBanner }] : []),
       ...context.history,
       { role: "user", content: userWithContext },
     ];
@@ -548,6 +560,24 @@ class TutorAgent extends AgentInterface {
       );
     }
     return "";
+  }
+
+  _buildSummaryBanner(summary, lang) {
+    const text = (summary || "").trim();
+    if (!text) return null;
+    if (lang === "val") {
+      return "[RESUM DELS TORNS PREVIS NO MOSTRATS]\n" + text
+        + "\n\nUtilitza aquest resum per recordar el que l'alumne ja ha confirmat "
+        + "i evitar tornar a preguntar el mateix. No el repeteixes en la teua resposta.";
+    }
+    if (lang === "en") {
+      return "[SUMMARY OF EARLIER TURNS NOT SHOWN]\n" + text
+        + "\n\nUse this summary to remember what the student has already confirmed "
+        + "and to avoid re-asking the same question. Do not echo it back to the student.";
+    }
+    return "[RESUMEN DE TURNOS PREVIOS NO MOSTRADOS]\n" + text
+      + "\n\nUsa este resumen para recordar qué ha confirmado ya el alumno "
+      + "y no volver a preguntarle lo mismo. No lo repitas literalmente en tu respuesta.";
   }
 
   _buildProgressHint(history) {

@@ -23,6 +23,12 @@ class ContextAgent extends AgentInterface {
     this.interaccionRepo = deps.interaccionRepo;
     this.messageRepo = deps.messageRepo;
     this.config = deps.config;
+    // Optional. When provided AND the conversation has more turns than
+    // HISTORY_MAX_MESSAGES, ContextAgent will summarise the older tail and
+    // expose it as context.historySummary for the TutorAgent to inject as
+    // a second system message. Absence is tolerated: the agent simply falls
+    // back to the original "last-N messages only" behaviour.
+    this.historySummarizer = deps.historySummarizer || null;
   }
 
   async execute(context) {
@@ -61,24 +67,49 @@ class ContextAgent extends AgentInterface {
       context.interactionId = interaccion.id;
     }
 
-    // 3. Load conversation history
-    const maxMessages = this.config.HISTORY_MAX_MESSAGES || 6;
-    const messages = await this.messageRepo.getLastMessages(
-      context.interactionId,
-      maxMessages
-    );
-    context.history = messages.map((m) => m.toOllamaFormat());
+    // 3. Load conversation history.
+    //    When the session is longer than HISTORY_MAX_MESSAGES we still want
+    //    the LLM to remember earlier confirmations ("te he dicho que R3 no
+    //    influye"), so we fetch ALL messages, keep the last N as the live
+    //    history, and (if a summariser is wired) condense the older tail
+    //    into context.historySummary. TutorAgent injects that summary as a
+    //    second system message before the live history.
+    const maxMessages = this.config.HISTORY_MAX_MESSAGES || 20;
+    const allMessages = await this.messageRepo.getAllMessages(context.interactionId);
+    let recentMessages;
+    let olderMessages;
+    if (allMessages.length > maxMessages) {
+      const splitIdx = allMessages.length - maxMessages;
+      olderMessages = allMessages.slice(0, splitIdx);
+      recentMessages = allMessages.slice(splitIdx);
+    } else {
+      olderMessages = [];
+      recentMessages = allMessages;
+    }
+    context.history = recentMessages.map((m) => m.toOllamaFormat());
 
-    // 4. Resolve language. The current user message is NOT yet in history
-    //    (PersistenceAgent appends it at the end of the pipeline), so we
-    //    fold it into the resolver as a synthetic last-user-turn. Without
-    //    this, the very turn where the student writes "can we continue in
-    //    english?" still resolved to Spanish — they had to ask twice for
-    //    the switch to actually take effect.
+    // 4. Resolve language BEFORE summarising so the summary is generated in
+    //    the language of the conversation (not a default).
     const historyWithCurrent = context.userMessage
       ? context.history.concat([{ role: "user", content: context.userMessage }])
       : context.history;
     context.lang = this._resolveLanguage(historyWithCurrent);
+
+    // 4b. Summarise the older tail. Best-effort: if the summariser fails the
+    //     turn proceeds with just the recent window (= pre-B2 behaviour), so
+    //     a flaky summariser can never block the chat.
+    context.historySummary = null;
+    if (this.historySummarizer && olderMessages.length > 0) {
+      try {
+        const olderForLlm = olderMessages.map((m) => m.toOllamaFormat());
+        context.historySummary = await this.historySummarizer.summarize(
+          olderForLlm, context.lang, context.interactionId
+        );
+      } catch (err) {
+        // Swallow — the chat must keep working even if summarisation breaks.
+        context.historySummary = null;
+      }
+    }
 
     // 5. Compute loop state
     const correctTypes = [

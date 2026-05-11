@@ -76,7 +76,11 @@ module.exports = {
   BM25_B: 0.75,
 
   // History messages max length for the conversation
-  HISTORY_MAX_MESSAGES: Number(process.env.HISTORY_MAX_MESSAGES || 8),
+  // Subido de 8→20 (2026-05-11): con HISTORY_MAX_MESSAGES=8 el LLM sólo veía
+  // los últimos 4 turnos completos y el alumno tenía que repetir información
+  // ("te he dicho que…") porque las confirmaciones previas ya habían caído
+  // fuera de la ventana. 20 mensajes ≈ 10 turnos, coste +1-2KB de prompt.
+  HISTORY_MAX_MESSAGES: Number(process.env.HISTORY_MAX_MESSAGES || 20),
 
   // File paths for the datasets and the knowledge graph
   // __dirname = backend/src/infrastructure/llm/ → 2 levels up reaches backend/src/data/

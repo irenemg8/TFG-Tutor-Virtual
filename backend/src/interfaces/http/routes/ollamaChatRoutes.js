@@ -119,7 +119,7 @@ const OLLAMA_NUM_PREDICT = Number(process.env.OLLAMA_NUM_PREDICT || 120);
 const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 8192);
 const OLLAMA_TEMPERATURE = Number(process.env.OLLAMA_TEMPERATURE || 0.4);
 
-const HISTORY_MAX_MESSAGES = Number(process.env.HISTORY_MAX_MESSAGES || 8);
+const HISTORY_MAX_MESSAGES = Number(process.env.HISTORY_MAX_MESSAGES || 20);
 
 const DEFAULT_START_MESSAGE =
   process.env.DEFAULT_START_MESSAGE ||

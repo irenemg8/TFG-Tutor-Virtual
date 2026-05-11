@@ -169,6 +169,17 @@ const container = {
       emitEvent: emitEvent,
     });
 
+    // History summariser: keeps an in-memory rolling summary of conversation
+    // turns that have fallen out of the HISTORY_MAX_MESSAGES window. The
+    // TutorAgent injects this summary as a second system message so the LLM
+    // doesn't lose memory of confirmations or concepts the student
+    // established earlier in a long session.
+    const HistorySummarizer = require("./domain/services/historySummarizer");
+    this.historySummarizer = new HistorySummarizer({
+      llmService: this.llmService,
+      logger: { log: function (msg) { console.warn(msg); } },
+    });
+
     // Build agent registry + orchestrator
     const { createAgentRegistry } = require("./domain/agents/agentRegistry");
     const TutoringOrchestrator = require("./domain/agents/orchestrator");
@@ -185,6 +196,7 @@ const container = {
       resultadoRepo: this.resultadoRepo,
       llmService: this.llmService,
       guardrailPipeline: this.guardrailPipeline,
+      historySummarizer: this.historySummarizer,
       kgConceptPatterns: this.kgConceptPatterns,
       classifyQuery: classifyQuery,
       runFullPipeline: runFullPipeline,

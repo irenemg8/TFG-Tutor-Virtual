@@ -175,6 +175,7 @@ class SolutionLeakGuardrail extends IGuardrail {
     const {
       redactElementMentions,
       removeOpeningConfirmation,
+      fixOpeningAntecedent,
       ensureResponseHasQuestion,
     } = require("../../domain/services/rag/guardrails");
 
@@ -197,6 +198,14 @@ class SolutionLeakGuardrail extends IGuardrail {
     const beforeOpener = text;
     text = removeOpeningConfirmation(text, lang);
     if (text !== beforeOpener) applied = true;
+
+    // After all the trimming the bubble may start with a dangling
+    // "esos elementos sí contribuyen…" — promote that to a form with an
+    // explicit antecedent ("Algunos de los elementos que has propuesto…")
+    // so the first sentence of the bubble parses as a complete utterance.
+    const beforeAntecedent = text;
+    text = fixOpeningAntecedent(text, lang);
+    if (text !== beforeAntecedent) applied = true;
 
     text = ensureResponseHasQuestion(text, lang);
 

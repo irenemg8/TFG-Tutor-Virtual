@@ -801,6 +801,52 @@ function redactElementMentions(response, correctAnswer, lang) {
   return { text: text, redacted: changed };
 }
 
+// Cuando los pases previos (redactElementMentions + removeOpeningConfirmation)
+// dejan el bubble empezando con un demostrativo plural huérfano — p.ej.
+// "esos elementos sí contribuyen a la tensión…" — el lector entra sin
+// antecedente: ¿qué elementos? El demostrativo apuntaba a la lista que
+// acabamos de redactar. Esta función promueve la apertura a una forma con
+// antecedente explícito ("Algunos de los elementos que has propuesto…") que
+// se lee como primera frase del bubble sin perder neutralidad pedagógica
+// (sigue sin nombrar elementos concretos). Sólo opera al INICIO del texto;
+// las ocurrencias intermedias mantienen "esos elementos" porque ahí sí hay
+// antecedente en la oración anterior.
+function fixOpeningAntecedent(text, lang) {
+  if (typeof text !== "string" || text.length === 0) return text;
+  var rules = {
+    es: [
+      // "esos elementos {sí}? <verbo plural> …" al inicio.
+      [/^(\s*)esos\s+elementos\b(?=[^.?!]{0,80}\b(?:contribuyen|aportan|afectan|influyen|cuentan|importan|forman|determinan|son|están)\b)/i,
+        "$1Algunos de los elementos que has propuesto"],
+      // "ese conjunto de elementos" residual (si fixPlaceholderAgreement no
+      // aplicó por ausencia de verbo plural cercano).
+      [/^(\s*)ese\s+conjunto\s+de\s+elementos\b/i,
+        "$1Alguno de los elementos que has propuesto"],
+    ],
+    val: [
+      [/^(\s*)eixos\s+elements\b(?=[^.?!]{0,80}\b(?:contribueixen|afecten|aporten|determinen|importen|tenen|inclouen|estan|són)\b)/i,
+        "$1Alguns dels elements que has proposat"],
+      [/^(\s*)eixe\s+conjunt\s+d['e]\s*elements\b/i,
+        "$1Algun dels elements que has proposat"],
+    ],
+    en: [
+      [/^(\s*)those\s+elements\b(?=[^.?!]{0,80}\b(?:contribute|affect|matter|count|determine|include|have|are)\b)/i,
+        "$1Some of the elements you proposed"],
+      [/^(\s*)that\s+set\s+of\s+elements\b/i,
+        "$1Some of the elements you proposed"],
+    ],
+  };
+  var langRules = rules[lang] || rules.es;
+  for (var i = 0; i < langRules.length; i++) {
+    var rule = langRules[i];
+    if (rule[0].test(text)) {
+      text = text.replace(rule[0], rule[1]);
+      break;
+    }
+  }
+  return text;
+}
+
 // Concordancia placeholder ↔ verbo. Sólo actúa cuando el placeholder
 // singular se combina con un verbo claramente plural en la misma frase.
 function fixPlaceholderAgreement(text, lang) {
@@ -957,6 +1003,7 @@ module.exports = {
   checkElementNaming, removeOpeningConfirmation,
   redactElementMentions,
   fixPlaceholderAgreement,
+  fixOpeningAntecedent,
   redactStateRevealSentence,
   STATE_REVEAL_PLACEHOLDER_REGEX,
   ensureResponseHasQuestion,
