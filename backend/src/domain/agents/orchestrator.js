@@ -52,16 +52,30 @@ class TutoringOrchestrator {
     // guardrails ≤10%. Each agent that supports a budget reads its slice; the
     // ones that don't (retrieval today) just log when they exceed it.
     if (typeof ctx.budgetMs === "number" && ctx.budgetMs > 0) {
-      // Distribución 18/75/7. Subido el slice del tutor a 75% para evitar
-      // BudgetExhaustedError contra Ollama UPV cuando el prefill es grande
-      // (system + history + augmentation puede llegar a 5-7KB) — con 65%
-      // y budget total 45s, el tutor sólo tenía ~29s y caía al fallback
-      // "el tutor está tardando demasiado". Retrieval bajado a 18%: los
-      // averages observados están en 2-4s, suficiente para Chroma + BM25,
-      // y guardrails a 7% (no necesitan LLM en el camino feliz).
-      ctx.retrievalBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.18));
-      ctx.tutorBudgetMs     = Math.max(8000, Math.floor(ctx.budgetMs * 0.75));
-      ctx.guardrailBudgetMs = Math.max(1500, Math.floor(ctx.budgetMs * 0.07));
+      // Budget split with ABSOLUTE caps instead of pure % of total.
+      //
+      // Observation from production logs against Ollama UPV (2026-05-11):
+      // retrieval consistently consumes the full slice (10-11s) and aborts
+      // without producing useful augmentation, then the tutor runs against
+      // a depleted budget. The bottleneck is the embedding call (query →
+      // nomic-embed-text on UPV), not Chroma/BM25 which run locally in
+      // <500ms. Giving retrieval more time doesn't help — the embedding
+      // either responds or it doesn't.
+      //
+      // Caps reasoning:
+      //  - retrieval ≤ 8s: if the embedding hasn't returned by then, fall
+      //    back to BM25-only and move on; do NOT eat into tutor budget.
+      //  - guardrails ≤ 5s: surgical phase needs <200ms; LLM retry is
+      //    gated separately and only fires for critical violations.
+      //  - tutor: whatever's left, minus a 2s safety buffer for the rest
+      //    of the pipeline overhead (classify, ac-detect, persistence).
+      ctx.retrievalBudgetMs = Math.min(8000, Math.floor(ctx.budgetMs * 0.20));
+      ctx.retrievalBudgetMs = Math.max(2000, ctx.retrievalBudgetMs);
+      ctx.guardrailBudgetMs = Math.min(5000, Math.floor(ctx.budgetMs * 0.10));
+      ctx.guardrailBudgetMs = Math.max(1500, ctx.guardrailBudgetMs);
+      const remainingForTutor =
+        ctx.budgetMs - ctx.retrievalBudgetMs - ctx.guardrailBudgetMs - 2000;
+      ctx.tutorBudgetMs = Math.max(8000, remainingForTutor);
     }
 
     try {

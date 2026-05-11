@@ -18,15 +18,24 @@ const ollamaBaseUrl = llmMode === "upv"
      process.env.OLLAMA_BASE_URL ||
      "http://127.0.0.1:11434");
 
+// Allow embeddings to use a DIFFERENT Ollama instance than chat.
+// In production against Ollama UPV the chat model (qwen2.5) only lives on
+// the UPV server, but the embedding model (nomic-embed-text, very light)
+// can run locally to avoid the per-query 5-10s round trip that was
+// dragging retrieval into BudgetExhaustedError. If OLLAMA_EMBED_URL is
+// not set, embeddings fall back to the same base URL as chat (legacy
+// behaviour).
+const ollamaEmbedUrl = process.env.OLLAMA_EMBED_URL || ollamaBaseUrl;
+
 module.exports = {
   // ChromaDB URL
   CHROMA_URL: process.env.CHROMA_URL || "http://localhost:8000",
 
   // Embedding model
   EMBEDDING_MODEL: process.env.RAG_EMBEDDING_MODEL || "nomic-embed-text:latest",
-  OLLAMA_EMBED_URL: ollamaBaseUrl,
+  OLLAMA_EMBED_URL: ollamaEmbedUrl,
 
-  // LLM URL and model config 
+  // LLM URL and model config
   OLLAMA_CHAT_URL: ollamaBaseUrl,
   OLLAMA_MODEL: process.env.OLLAMA_MODEL || "qwen2.5:latest",
   OLLAMA_TEMPERATURE: Number(process.env.OLLAMA_TEMPERATURE || 0.4),
