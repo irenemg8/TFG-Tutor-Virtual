@@ -28,7 +28,17 @@ router.get("/", async (_req, res) => {
 router.post("/", requireRole("profesor", "admin"), async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
-    const created = await r.create(req.body);
+    const b = req.body || {};
+    const created = await r.create({
+      title: b.title ?? b.titulo,
+      statement: b.statement ?? b.enunciado,
+      image: b.image ?? b.imagen,
+      subject: b.subject ?? b.asignatura,
+      concept: b.concept ?? b.concepto,
+      level: b.level ?? b.nivel,
+      ac: b.ac ?? b.CA,
+      tutorContext: b.tutorContext,
+    });
     return res.status(201).json(created);
   } catch (err) {
     return res.status(400).json({ message: err.message });
@@ -51,9 +61,15 @@ router.get("/:id", async (req, res) => {
 router.put("/:id", requireRole("profesor", "admin"), async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
-    const { titulo, enunciado, imagen, asignatura, concepto, nivel, CA } = req.body;
+    const b = req.body || {};
     const updated = await r.updateById(req.params.id, {
-      titulo, enunciado, imagen, asignatura, concepto, nivel, CA,
+      title: b.title ?? b.titulo,
+      statement: b.statement ?? b.enunciado,
+      image: b.image ?? b.imagen,
+      subject: b.subject ?? b.asignatura,
+      concept: b.concept ?? b.concepto,
+      level: b.level ?? b.nivel,
+      ac: b.ac ?? b.CA,
     });
     return res.json(updated);
   } catch (err) {

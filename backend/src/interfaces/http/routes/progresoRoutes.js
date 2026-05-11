@@ -83,16 +83,16 @@ async function loadAndReturnProgreso(userId, res) {
   }
 
   // A) Interacciones medias
-  const totalInteracciones = pairs.reduce((sum, p) => sum + (p.resultado.numMensajes || 0), 0);
+  const totalInteracciones = pairs.reduce((sum, p) => sum + (p.resultado.messageCount || 0), 0);
   const interaccionesMedias = totalInteracciones / pairs.length;
 
   // B) Dificultad por concepto
   const eficiencia = {};
   for (const p of pairs) {
-    const concepto = p.ejercicio?.concepto;
+    const concepto = p.ejercicio?.concept;
     if (!concepto) continue;
     if (!eficiencia[concepto]) eficiencia[concepto] = { total: 0, count: 0 };
-    eficiencia[concepto].total += p.resultado.numMensajes || 0;
+    eficiencia[concepto].total += p.resultado.messageCount || 0;
     eficiencia[concepto].count += 1;
   }
   const eficienciaPorConcepto = Object.keys(eficiencia).map((c) => ({
@@ -105,10 +105,10 @@ async function loadAndReturnProgreso(userId, res) {
   const haceUnaSemana = new Date();
   haceUnaSemana.setDate(hoy.getDate() - 7);
 
-  const pairsSemana = pairs.filter((p) => p.resultado.fecha && new Date(p.resultado.fecha) >= haceUnaSemana);
-  const conceptosSemana = new Set(pairsSemana.map((p) => p.ejercicio?.concepto).filter(Boolean));
+  const pairsSemana = pairs.filter((p) => p.resultado.date && new Date(p.resultado.date) >= haceUnaSemana);
+  const conceptosSemana = new Set(pairsSemana.map((p) => p.ejercicio?.concept).filter(Boolean));
   const ejerciciosUnicosSemana = new Set(pairsSemana.map((p) => p.ejercicio?.id).filter(Boolean));
-  const rachaDias = computeStreak(pairs.map((p) => p.resultado.fecha));
+  const rachaDias = computeStreak(pairs.map((p) => p.resultado.date));
 
   const resumenSemanal = {
     ejerciciosCompletados: ejerciciosUnicosSemana.size,
@@ -119,20 +119,20 @@ async function loadAndReturnProgreso(userId, res) {
   // D) Última sesión
   const ultimo = pairs[0];
   const ultimaSesion = {
-    tituloEjercicio: ultimo.ejercicio?.titulo || "Ejercicio Reciente",
-    analisis: ultimo.resultado.analisisIA || "Análisis no disponible.",
-    consejo: ultimo.resultado.consejoIA || "Sigue practicando.",
+    tituloEjercicio: ultimo.ejercicio?.title || "Ejercicio Reciente",
+    analisis: ultimo.resultado.aiAnalysis || "Análisis no disponible.",
+    consejo: ultimo.resultado.aiAdvice || "Sigue practicando.",
   };
 
   // E) Errores frecuentes
   const mapaErrores = {};
   for (const p of pairs) {
-    for (const e of p.resultado.errores || []) {
-      if (!e?.etiqueta) continue;
-      if (!mapaErrores[e.etiqueta]) {
-        mapaErrores[e.etiqueta] = { etiqueta: e.etiqueta, texto: e.texto || e.etiqueta, veces: 0 };
+    for (const e of p.resultado.errors || []) {
+      if (!e?.label) continue;
+      if (!mapaErrores[e.label]) {
+        mapaErrores[e.label] = { etiqueta: e.label, texto: e.text || e.label, veces: 0 };
       }
-      mapaErrores[e.etiqueta].veces += 1;
+      mapaErrores[e.label].veces += 1;
     }
   }
   const erroresFrecuentes = Object.values(mapaErrores).sort((a, b) => b.veces - a.veces).slice(0, 3);
@@ -148,15 +148,15 @@ async function loadAndReturnProgreso(userId, res) {
   const hasRealErrors = erroresFrecuentes.some((e) => e.etiqueta && e.etiqueta !== "AC_UNK");
 
   if (hasRealErrors) {
-    const conceptoObjetivo = ultimo.ejercicio?.concepto || "";
+    const conceptoObjetivo = ultimo.ejercicio?.concept || "";
     if (conceptoObjetivo) {
-      const ej = await r.ejercicioRepo.findOneByConcepto(conceptoObjetivo);
+      const ej = await r.ejercicioRepo.findOneByConcept(conceptoObjetivo);
       if (ej) {
         recomendacion = {
-          titulo: ej.titulo || "Ejercicio recomendado",
+          titulo: ej.title || "Ejercicio recomendado",
           motivo: "Recomendación basada en tus errores recientes.",
           ejercicioId: ej.id,
-          concepto: ej.concepto || conceptoObjetivo,
+          concepto: ej.concept || conceptoObjetivo,
         };
       } else {
         recomendacion = {
@@ -170,13 +170,13 @@ async function loadAndReturnProgreso(userId, res) {
   } else if (eficienciaPorConcepto.length > 0) {
     const peor = [...eficienciaPorConcepto].sort((a, b) => b.interacciones - a.interacciones)[0];
     const conceptoObjetivo = peor.concepto;
-    const ej = await r.ejercicioRepo.findOneByConcepto(conceptoObjetivo);
+    const ej = await r.ejercicioRepo.findOneByConcept(conceptoObjetivo);
     if (ej) {
       recomendacion = {
-        titulo: ej.titulo || "Ejercicio recomendado",
+        titulo: ej.title || "Ejercicio recomendado",
         motivo: "Te recomiendo reforzar este concepto según tu actividad reciente.",
         ejercicioId: ej.id,
-        concepto: ej.concepto || conceptoObjetivo,
+        concepto: ej.concept || conceptoObjetivo,
       };
     } else {
       recomendacion = {

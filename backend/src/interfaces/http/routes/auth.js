@@ -152,10 +152,10 @@ router.get("/api/auth/cas/callback", async (req, res) => {
     const attrs = profile.attributes || profile || {};
     const upvLogin = attrs.login || attrs.uid || profile.id;
     const email = attrs.email || null;
-    const nombre = attrs.nombre || attrs.given_name || attrs.name || null;
-    const apellidos = attrs.apellidos || attrs.family_name || null;
-    const dni = attrs.dni || null;
-    const grupos = Array.isArray(attrs.grupos) ? attrs.grupos : [];
+    const firstName = attrs.nombre || attrs.given_name || attrs.name || null;
+    const lastName = attrs.apellidos || attrs.family_name || null;
+    const nationalId = attrs.dni || null;
+    const groups = Array.isArray(attrs.grupos) ? attrs.grupos : [];
 
     if (!upvLogin) {
       return res.status(500).send("CAS no devolvió identificador de usuario (upvLogin).");
@@ -166,8 +166,8 @@ router.get("/api/auth/cas/callback", async (req, res) => {
     console.log("[CAS CALLBACK] upsert usuario", { upvLogin });
     const usuario = await usuarioRepo.upsertByUpvLogin(
       upvLogin,
-      { email, nombre, apellidos, dni },
-      { grupos }
+      { email, firstName, lastName, nationalId },
+      { groups }
     );
     console.log("[CAS CALLBACK] usuario OK", { id: usuario.id, upvLogin: usuario.upvLogin });
 
@@ -179,10 +179,10 @@ router.get("/api/auth/cas/callback", async (req, res) => {
     req.session.user = {
       id: usuario.id,
       upvLogin: usuario.upvLogin,
-      nombre: usuario.nombre,
-      apellidos: usuario.apellidos,
+      nombre: usuario.firstName,
+      apellidos: usuario.lastName,
       email: usuario.email,
-      rol: usuario.rol || "alumno",
+      rol: usuario.role || "alumno",
       mode: "cas",
     };
 
@@ -291,8 +291,8 @@ router.post("/api/auth/dev-login", async (req, res) => {
 
     const usuario = await usuarioRepo.create({
       upvLogin,
-      nombre: "Usuario",
-      apellidos: "Demo",
+      firstName: "Usuario",
+      lastName: "Demo",
       email: `${upvLogin}@demo.local`,
     });
     await usuarioRepo.updateById(usuario.id, { lastLoginAt: new Date() });
@@ -300,10 +300,10 @@ router.post("/api/auth/dev-login", async (req, res) => {
     req.session.user = {
       id: usuario.id,
       upvLogin: usuario.upvLogin,
-      nombre: usuario.nombre,
-      apellidos: usuario.apellidos,
+      nombre: usuario.firstName,
+      apellidos: usuario.lastName,
       email: usuario.email,
-      rol: usuario.rol || "alumno",
+      rol: usuario.role || "alumno",
       mode: "demo",
     };
 

@@ -101,27 +101,31 @@ function buildResistanceSummary(netlist) {
 function buildTutorSystemPrompt(ejercicio, lang) {
   lang = lang || "es";
   // Campos base del ejercicio
-  const titulo = pickFirstStr(ejercicio, ["titulo", "nombre", "name"]);
-  const enunciado = pickFirstStr(ejercicio, ["enunciado", "texto", "statement", "descripcion"]);
-  const concepto = pickFirstStr(ejercicio, ["concepto", "tema", "topic"]);
-  const asignatura = pickFirstStr(ejercicio, ["asignatura", "subject"]);
-  const nivel = ejercicio?.nivel != null ? String(ejercicio.nivel) : "";
-  const imagen = pickFirstStr(ejercicio, ["imagen", "image", "imageUrl", "img"]);
+  const titulo = pickFirstStr(ejercicio, ["title", "titulo", "nombre", "name"]);
+  const enunciado = pickFirstStr(ejercicio, ["statement", "enunciado", "texto", "descripcion"]);
+  const concepto = pickFirstStr(ejercicio, ["concept", "concepto", "tema", "topic"]);
+  const asignatura = pickFirstStr(ejercicio, ["subject", "asignatura"]);
+  const nivel = ejercicio?.level != null
+    ? String(ejercicio.level)
+    : ejercicio?.nivel != null ? String(ejercicio.nivel) : "";
+  const imagen = pickFirstStr(ejercicio, ["image", "imagen", "imageUrl", "img"]);
 
   // TutorContext estructurado
   const tc = ejercicio?.tutorContext || {};
-  const objetivo = pickFirstStr(tc, ["objetivo"]);
+  const objetivo = pickFirstStr(tc, ["objective", "objetivo"]);
   const netlist = pickFirstStr(tc, ["netlist"]);
-  const modoExperto = pickFirstStr(tc, ["modoExperto"]);
+  const modoExperto = pickFirstStr(tc, ["expertMode", "modoExperto"]);
   const version = tc?.version != null ? String(tc.version) : "";
 
   // IDs de AC relevantes (solo IDs, no el objeto entero)
-  const acRefs = Array.isArray(tc?.ac_refs) ? tc.ac_refs.map(normId).filter(Boolean) : [];
+  const acRefsRaw = Array.isArray(tc?.acRefs) ? tc.acRefs : (Array.isArray(tc?.ac_refs) ? tc.ac_refs : []);
+  const acRefs = acRefsRaw.map(normId).filter(Boolean);
 
   // ✅ Respuesta correcta (lista cerrada para este ejercicio)
-  const respuestaCorrecta = Array.isArray(tc?.respuestaCorrecta)
-    ? tc.respuestaCorrecta.map(normAnswerToken).filter(Boolean)
-    : [];
+  const correctAnswerRaw = Array.isArray(tc?.correctAnswer)
+    ? tc.correctAnswer
+    : (Array.isArray(tc?.respuestaCorrecta) ? tc.respuestaCorrecta : []);
+  const respuestaCorrecta = correctAnswerRaw.map(normAnswerToken).filter(Boolean);
 
   // Compact rules — was ~5300 chars before the audit, then ~2700, now ~900.
   // What got moved out:

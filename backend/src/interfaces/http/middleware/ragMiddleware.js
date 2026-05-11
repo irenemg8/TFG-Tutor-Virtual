@@ -119,7 +119,7 @@ function ensureRagReady() {
 
 // Extract exercise number from title ("Ejercicio 1" → 1)
 function getExerciseNum(ejercicio) {
-  const match = (ejercicio.titulo || "").match(/(\d+)/);
+  const match = (ejercicio.title || "").match(/(\d+)/);
   if (match != null) {
     return Number(match[1]);
   }
@@ -128,7 +128,7 @@ function getExerciseNum(ejercicio) {
 
 // Get correct answer as normalized array ["R1", "R2", "R4"]
 function getCorrectAnswer(ejercicio) {
-  const answer = ejercicio.tutorContext && ejercicio.tutorContext.respuestaCorrecta;
+  const answer = ejercicio.tutorContext && ejercicio.tutorContext.correctAnswer;
   if (!Array.isArray(answer)) {
     return [];
   }
@@ -147,8 +147,8 @@ function getEvaluableElements(ejercicio) {
   var tc = ejercicio.tutorContext || {};
 
   // 1. Explicit field
-  if (Array.isArray(tc.elementosEvaluables) && tc.elementosEvaluables.length > 0) {
-    return tc.elementosEvaluables.map(function (e) { return String(e).toUpperCase().trim(); });
+  if (Array.isArray(tc.evaluableElements) && tc.evaluableElements.length > 0) {
+    return tc.evaluableElements.map(function (e) { return String(e).toUpperCase().trim(); });
   }
 
   // 2. Extract from netlist (only passive/active components that can be answers: R, C, L, D, I)
@@ -172,7 +172,7 @@ function getEvaluableElements(ejercicio) {
   }
 
   // 3. Fallback: only the correct answer
-  return (tc.respuestaCorrecta || []).map(function (e) { return String(e).toUpperCase().trim(); });
+  return (tc.correctAnswer || []).map(function (e) { return String(e).toUpperCase().trim(); });
 }
 
 // Send SSE event to client (same format as the existing handler)
@@ -412,19 +412,19 @@ router.post("/chat/stream", async function (req, res, next) {
 
     var exerciseNum = getExerciseNum(ejercicio);
     if (exerciseNum == null) {
-      logFallthrough("no_exercise_number_in_title", { titulo: ejercicio.titulo });
-      trace.traceRagGate(reqId, "no_exercise_number_in_title", { titulo: ejercicio.titulo });
+      logFallthrough("no_exercise_number_in_title", { titulo: ejercicio.title });
+      trace.traceRagGate(reqId, "no_exercise_number_in_title", { titulo: ejercicio.title });
       return next();
     }
 
     var correctAnswer = getCorrectAnswer(ejercicio);
     if (correctAnswer.length === 0) {
-      logFallthrough("no_correct_answer", { exerciseNum: exerciseNum, hasTutorContext: !!ejercicio.tutorContext, respuestaCorrecta: ejercicio.tutorContext && ejercicio.tutorContext.respuestaCorrecta });
+      logFallthrough("no_correct_answer", { exerciseNum: exerciseNum, hasTutorContext: !!ejercicio.tutorContext, respuestaCorrecta: ejercicio.tutorContext && ejercicio.tutorContext.correctAnswer });
       trace.traceRagGate(reqId, "no_correct_answer", { exerciseNum: exerciseNum, tutorContext: !!ejercicio.tutorContext });
       return next();
     }
 
-    emitEvent("exercise_loaded", "end", { exerciseNum: exerciseNum, titulo: ejercicio.titulo, correctAnswer: correctAnswer, canonicalExercise: canonicalExercise[exerciseNum] || exerciseNum, datasetFile: config.EXERCISE_DATASET_MAP[exerciseNum] || "unknown" });
+    emitEvent("exercise_loaded", "end", { exerciseNum: exerciseNum, titulo: ejercicio.title, correctAnswer: correctAnswer, canonicalExercise: canonicalExercise[exerciseNum] || exerciseNum, datasetFile: config.EXERCISE_DATASET_MAP[exerciseNum] || "unknown" });
 
     // Use canonical exercise number for retrieval (exercise 2 → 1 in ChromaDB)
     var searchNum = canonicalExercise[exerciseNum] || exerciseNum;
@@ -484,25 +484,25 @@ router.post("/chat/stream", async function (req, res, next) {
         }
         if (iidBlock == null) {
           var createdB = await _r.interaccionRepo.create({
-            usuarioId: userId,
-            ejercicioId: exerciseId,
+            userId: userId,
+            exerciseId: exerciseId,
           });
           iidBlock = createdB.id;
           sseSend(res, { interaccionId: iidBlock });
         }
 
         await _r.messageRepo.appendMessage(iidBlock, new Message({
-          interaccionId: iidBlock, role: "user", content: userMessage.trim(),
+          interactionId: iidBlock, role: "user", content: userMessage.trim(),
         }));
         await _r.messageRepo.appendMessage(iidBlock, new Message({
-          interaccionId: iidBlock, role: "assistant", content: securityResult.redirectMessage,
+          interactionId: iidBlock, role: "assistant", content: securityResult.redirectMessage,
           metadata: {
             blockedByInputGuardrail: true,
             category: securityResult.category,
             matchedPattern: securityResult.matchedPattern,
           },
         }));
-        await _r.interaccionRepo.updateFin(iidBlock, new Date());
+        await _r.interaccionRepo.updateEndTime(iidBlock, new Date());
 
         sseSend(res, { chunk: securityResult.redirectMessage });
         endSSE(res, hbBlock);
@@ -574,7 +574,7 @@ router.post("/chat/stream", async function (req, res, next) {
       }
       if (iid == null) {
         var created = await _r.interaccionRepo.create({
-          usuarioId: userId, ejercicioId: exerciseId,
+          userId: userId, exerciseId: exerciseId,
         });
         iid = created.id;
         sseSend(res, { interaccionId: iid });
@@ -588,10 +588,10 @@ router.post("/chat/stream", async function (req, res, next) {
         studentResponseMs = Date.now() - new Date(lastMsg.timestamp).getTime();
       }
       await _r.messageRepo.appendMessage(iid, new Message({
-        interaccionId: iid, role: "user", content: text,
+        interactionId: iid, role: "user", content: text,
         metadata: studentResponseMs != null ? { studentResponseMs } : null,
       }));
-      await _r.interaccionRepo.updateFin(iid, new Date());
+      await _r.interaccionRepo.updateEndTime(iid, new Date());
 
       // 7. Deterministic finish: correct answer → check if we can finish directly
       var isCorrect = ragResult.classification === "correct_good_reasoning"
@@ -662,7 +662,7 @@ router.post("/chat/stream", async function (req, res, next) {
           sseSend(res, { chunk: finishMsg });
 
           await _r.messageRepo.appendMessage(iid, new Message({
-            interaccionId: iid, role: "assistant", content: finishMsg,
+            interactionId: iid, role: "assistant", content: finishMsg,
             metadata: {
               classification: ragResult.classification,
               decision: "deterministic_finish",
@@ -670,7 +670,7 @@ router.post("/chat/stream", async function (req, res, next) {
               timing: { pipelineMs: pipelineTime, totalMs: Date.now() - startTime },
             },
           }));
-          await _r.interaccionRepo.updateFin(iid, new Date());
+          await _r.interaccionRepo.updateEndTime(iid, new Date());
 
           emitEvent("mongodb_save", "end", { interaccionId: iid, messagesAdded: 2 });
           endSSE(res, hb);
@@ -1030,9 +1030,9 @@ router.post("/chat/stream", async function (req, res, next) {
         isCorrectAnswer: isCorrect || false,
       };
       await _r.messageRepo.appendMessage(iid, new Message({
-        interaccionId: iid, role: "assistant", content: fullResponse, metadata: assistantMetadata,
+        interactionId: iid, role: "assistant", content: fullResponse, metadata: assistantMetadata,
       }));
-      await _r.interaccionRepo.updateFin(iid, new Date());
+      await _r.interaccionRepo.updateEndTime(iid, new Date());
       emitEvent("mongodb_save", "end", { interaccionId: iid, messagesAdded: 2 });
 
       // 14. Close SSE connection

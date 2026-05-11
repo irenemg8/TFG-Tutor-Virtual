@@ -64,7 +64,7 @@ function rowToDomain(row) {
 
   return new Message({
     id: row.id,
-    interaccionId: row.interaccion_id,
+    interactionId: row.interaccion_id,
     sequenceNum: row.sequence_num,
     role: row.role,
     content: row.content,

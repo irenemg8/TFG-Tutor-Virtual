@@ -7,21 +7,21 @@ function rowToDomain(row, tutorCtx) {
   if (!row) return null;
   return new Ejercicio({
     id: row.id,
-    titulo: row.titulo,
-    enunciado: row.enunciado,
-    imagen: row.imagen || "",
-    asignatura: row.asignatura,
-    concepto: row.concepto,
-    nivel: row.nivel,
-    ca: row.ca || "",
+    title: row.titulo,
+    statement: row.enunciado,
+    image: row.imagen || "",
+    subject: row.asignatura,
+    concept: row.concepto,
+    level: row.nivel,
+    ac: row.ca || "",
     tutorContext: tutorCtx
       ? {
-          objetivo: tutorCtx.objetivo,
+          objective: tutorCtx.objetivo,
           netlist: tutorCtx.netlist,
-          modoExperto: tutorCtx.modo_experto,
-          ac_refs: tutorCtx.ac_refs,
-          respuestaCorrecta: tutorCtx.respuesta_correcta,
-          elementosEvaluables: tutorCtx.elementos_evaluables,
+          expertMode: tutorCtx.modo_experto,
+          acRefs: tutorCtx.ac_refs,
+          correctAnswer: tutorCtx.respuesta_correcta,
+          evaluableElements: tutorCtx.elementos_evaluables,
           version: tutorCtx.version,
         }
       : null,
@@ -92,7 +92,7 @@ class PgEjercicioRepository extends IEjercicioRepository {
       const { rows } = await client.query(
         `INSERT INTO ejercicios (titulo, enunciado, imagen, asignatura, concepto, nivel, ca)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [data.titulo, data.enunciado, data.imagen || "", data.asignatura, data.concepto, data.nivel, data.CA || ""]
+        [data.title, data.statement, data.image || "", data.subject, data.concept, data.level, data.ac || ""]
       );
       const ej = rows[0];
       let tutorCtx = null;
@@ -102,7 +102,7 @@ class PgEjercicioRepository extends IEjercicioRepository {
         const { rows: tcRows } = await client.query(
           `INSERT INTO tutor_contexts (ejercicio_id, objetivo, netlist, modo_experto, ac_refs, respuesta_correcta, elementos_evaluables, version)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-          [ej.id, tc.objetivo || "", tc.netlist || "", tc.modoExperto || "", tc.ac_refs || [], tc.respuestaCorrecta || [], tc.elementosEvaluables || [], tc.version || 1]
+          [ej.id, tc.objective || "", tc.netlist || "", tc.expertMode || "", tc.acRefs || [], tc.correctAnswer || [], tc.evaluableElements || [], tc.version || 1]
         );
         tutorCtx = tcRows[0];
       }
@@ -120,9 +120,19 @@ class PgEjercicioRepository extends IEjercicioRepository {
     const sets = [];
     const vals = [];
     let idx = 1;
+    const COLUMN_MAP = {
+      title: "titulo",
+      statement: "enunciado",
+      image: "imagen",
+      subject: "asignatura",
+      concept: "concepto",
+      level: "nivel",
+      ac: "ca",
+    };
     for (const [key, val] of Object.entries(fields)) {
       if (key === "tutorContext") continue;
-      sets.push(`${key} = $${idx}`);
+      const col = COLUMN_MAP[key] || key;
+      sets.push(`${col} = $${idx}`);
       vals.push(val);
       idx++;
     }
@@ -141,14 +151,14 @@ class PgEjercicioRepository extends IEjercicioRepository {
     await this.pool.query("DELETE FROM ejercicios WHERE id = $1", [id]);
   }
 
-  async findOneByConcepto(concepto) {
+  async findOneByConcept(concept) {
     const { rows } = await this.pool.query(
       `SELECT e.*, tc.objetivo, tc.netlist, tc.modo_experto, tc.ac_refs,
               tc.respuesta_correcta, tc.elementos_evaluables, tc.version AS tc_version
        FROM ejercicios e
        LEFT JOIN tutor_contexts tc ON tc.ejercicio_id = e.id
        WHERE e.concepto = $1 LIMIT 1`,
-      [concepto]
+      [concept]
     );
     if (!rows[0]) return null;
     const row = rows[0];

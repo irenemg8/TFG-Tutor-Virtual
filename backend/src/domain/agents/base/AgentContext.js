@@ -10,14 +10,14 @@ class AgentContext {
    * @param {string}      request.userId
    * @param {string}      request.exerciseId
    * @param {string}      request.userMessage
-   * @param {string|null} request.interaccionId
+   * @param {string|null} request.interactionId
    */
   constructor(request) {
     // --- Input (immutable) ---
     this.userId = request.userId;
     this.exerciseId = request.exerciseId;
     this.userMessage = request.userMessage;
-    this.interaccionId = request.interaccionId || null;
+    this.interactionId = request.interactionId || null;
     this.budgetMs = request.budgetMs || null;           // optional time budget
     this.reqId = request.reqId || null;                  // optional trace id
     // Optional per-token callback. When set, TutorAgent uses streaming so
@@ -31,7 +31,7 @@ class AgentContext {
     this.streamedText = "";
 
     // --- Populated by ContextAgent ---
-    this.ejercicio = null;
+    this.exercise = null;
     this.exerciseNum = null;
     this.correctAnswer = [];
     this.evaluableElements = [];

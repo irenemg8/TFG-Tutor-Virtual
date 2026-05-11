@@ -32,7 +32,7 @@ function isValidId(v) {
 function buildFilter(query) {
   const filter = {};
   if (query.userId && isValidId(query.userId)) filter.userId = query.userId;
-  if (query.exerciseId && isValidId(query.exerciseId)) filter.ejercicioId = query.exerciseId;
+  if (query.exerciseId && isValidId(query.exerciseId)) filter.exerciseId = query.exerciseId;
   if (query.from) filter.from = new Date(query.from);
   if (query.to) filter.to = new Date(query.to);
   return filter;
@@ -80,13 +80,13 @@ function flattenInteraccion(inter, messages, usuario, ejercicio) {
 
     rows.push({
       interaccionId: inter.id || inter.interaccionId,
-      usuarioId: inter.usuarioId,
+      usuarioId: inter.userId,
       upvLogin: usuario?.upvLogin || "",
-      nombreCompleto: usuario ? ((usuario.nombre || "") + " " + (usuario.apellidos || "")).trim() : "",
-      ejercicioId: inter.ejercicioId,
-      ejercicioTitulo: ejercicio?.titulo || "",
-      sesionInicio: inter.inicio,
-      sesionFin: inter.fin,
+      nombreCompleto: usuario ? ((usuario.firstName || "") + " " + (usuario.lastName || "")).trim() : "",
+      ejercicioId: inter.exerciseId,
+      ejercicioTitulo: ejercicio?.title || "",
+      sesionInicio: inter.startTime,
+      sesionFin: inter.endTime,
       mensajeIndex: i,
       role: m.role,
       content: m.content,
@@ -147,8 +147,8 @@ router.get("/interacciones", async (req, res) => {
     const interacciones = await r.interaccionRepo.findByFilter(filter);
 
     // Enrich with users and exercises
-    const userIds = [...new Set(interacciones.map((i) => i.usuarioId).filter(Boolean))];
-    const exIds = [...new Set(interacciones.map((i) => i.ejercicioId).filter(Boolean))];
+    const userIds = [...new Set(interacciones.map((i) => i.userId).filter(Boolean))];
+    const exIds = [...new Set(interacciones.map((i) => i.exerciseId).filter(Boolean))];
 
     const usuarios = userIds.length ? await r.usuarioRepo.findByIds(userIds) : [];
     const ejercicios = exIds.length ? await r.ejercicioRepo.findByIds(exIds) : [];
@@ -167,7 +167,7 @@ router.get("/interacciones", async (req, res) => {
     if (format === "csv") {
       const allRows = [];
       for (const { inter, messages } of interWithMessages) {
-        allRows.push(...flattenInteraccion(inter, messages, userMap[inter.usuarioId], exMap[inter.ejercicioId]));
+        allRows.push(...flattenInteraccion(inter, messages, userMap[inter.userId], exMap[inter.exerciseId]));
       }
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", "attachment; filename=interacciones.csv");
@@ -176,14 +176,14 @@ router.get("/interacciones", async (req, res) => {
 
     // JSON
     const result = interWithMessages.map(({ inter, messages }) => {
-      const u = userMap[inter.usuarioId] || null;
-      const e = exMap[inter.ejercicioId] || null;
+      const u = userMap[inter.userId] || null;
+      const e = exMap[inter.exerciseId] || null;
       return {
         interaccionId: inter.id,
-        usuario: u ? { upvLogin: u.upvLogin, nombre: u.nombre, apellidos: u.apellidos } : null,
-        ejercicio: e ? { titulo: e.titulo, concepto: e.concepto } : null,
-        inicio: inter.inicio,
-        fin: inter.fin,
+        usuario: u ? { upvLogin: u.upvLogin, nombre: u.firstName, apellidos: u.lastName } : null,
+        ejercicio: e ? { titulo: e.title, concepto: e.concept } : null,
+        inicio: inter.startTime,
+        fin: inter.endTime,
         numMensajes: messages.length,
         conversacion: messages,
       };
@@ -204,8 +204,8 @@ router.get("/resultados", async (req, res) => {
 
     const resultados = await r.resultadoRepo.findByFilter(filter);
 
-    const userIds = [...new Set(resultados.map((x) => x.usuarioId).filter(Boolean))];
-    const exIds = [...new Set(resultados.map((x) => x.ejercicioId).filter(Boolean))];
+    const userIds = [...new Set(resultados.map((x) => x.userId).filter(Boolean))];
+    const exIds = [...new Set(resultados.map((x) => x.exerciseId).filter(Boolean))];
 
     const usuarios = userIds.length ? await r.usuarioRepo.findByIds(userIds) : [];
     const ejercicios = exIds.length ? await r.ejercicioRepo.findByIds(exIds) : [];
@@ -215,22 +215,22 @@ router.get("/resultados", async (req, res) => {
 
     if (format === "csv") {
       const rows = resultados.map((x) => {
-        const u = userMap[x.usuarioId];
-        const e = exMap[x.ejercicioId];
+        const u = userMap[x.userId];
+        const e = exMap[x.exerciseId];
         return {
           resultadoId: x.id,
-          usuarioId: x.usuarioId,
+          usuarioId: x.userId,
           upvLogin: u?.upvLogin || "",
-          nombreCompleto: u ? ((u.nombre || "") + " " + (u.apellidos || "")).trim() : "",
-          ejercicioId: x.ejercicioId,
-          ejercicioTitulo: e?.titulo || "",
-          interaccionId: x.interaccionId || "",
-          fecha: x.fecha,
-          numMensajes: x.numMensajes,
-          resueltoALaPrimera: x.resueltoALaPrimera,
-          errores: (x.errores || []).map((er) => er.etiqueta).join("; "),
-          analisisIA: x.analisisIA || "",
-          consejoIA: x.consejoIA || "",
+          nombreCompleto: u ? ((u.firstName || "") + " " + (u.lastName || "")).trim() : "",
+          ejercicioId: x.exerciseId,
+          ejercicioTitulo: e?.title || "",
+          interaccionId: x.interactionId || "",
+          fecha: x.date,
+          numMensajes: x.messageCount,
+          resueltoALaPrimera: x.solvedOnFirstAttempt,
+          errores: (x.errors || []).map((er) => er.label).join("; "),
+          analisisIA: x.aiAnalysis || "",
+          consejoIA: x.aiAdvice || "",
         };
       });
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -240,19 +240,19 @@ router.get("/resultados", async (req, res) => {
 
     // JSON
     const result = resultados.map((x) => {
-      const u = userMap[x.usuarioId] || null;
-      const e = exMap[x.ejercicioId] || null;
+      const u = userMap[x.userId] || null;
+      const e = exMap[x.exerciseId] || null;
       return {
         resultadoId: x.id,
-        usuario: u ? { upvLogin: u.upvLogin, nombre: u.nombre, apellidos: u.apellidos } : null,
-        ejercicio: e ? { titulo: e.titulo } : null,
-        interaccionId: x.interaccionId,
-        fecha: x.fecha,
-        numMensajes: x.numMensajes,
-        resueltoALaPrimera: x.resueltoALaPrimera,
-        errores: x.errores,
-        analisisIA: x.analisisIA,
-        consejoIA: x.consejoIA,
+        usuario: u ? { upvLogin: u.upvLogin, nombre: u.firstName, apellidos: u.lastName } : null,
+        ejercicio: e ? { titulo: e.title } : null,
+        interaccionId: x.interactionId,
+        fecha: x.date,
+        numMensajes: x.messageCount,
+        resueltoALaPrimera: x.solvedOnFirstAttempt,
+        errores: (x.errors || []).map((e) => ({ etiqueta: e.label, texto: e.text })),
+        analisisIA: x.aiAnalysis,
+        consejoIA: x.aiAdvice,
       };
     });
     return res.json(result);

@@ -4,21 +4,21 @@ class TutorContext {
   /**
    * Value object representing the pedagogical context of an exercise.
    * @param {object} props
-   * @param {string}   [props.objetivo]
+   * @param {string}   [props.objective]
    * @param {string}   [props.netlist]
-   * @param {string}   [props.modoExperto]
-   * @param {string[]} [props.ac_refs]
-   * @param {string[]} [props.respuestaCorrecta]
-   * @param {string[]} [props.elementosEvaluables]
+   * @param {string}   [props.expertMode]
+   * @param {string[]} [props.acRefs]
+   * @param {string[]} [props.correctAnswer]
+   * @param {string[]} [props.evaluableElements]
    * @param {number}   [props.version]
    */
   constructor(props) {
-    this.objetivo = props.objetivo || "";
+    this.objective = props.objective || "";
     this.netlist = props.netlist || "";
-    this.modoExperto = props.modoExperto || "";
-    this.ac_refs = props.ac_refs || [];
-    this.respuestaCorrecta = props.respuestaCorrecta || [];
-    this.elementosEvaluables = props.elementosEvaluables || [];
+    this.expertMode = props.expertMode || "";
+    this.acRefs = props.acRefs || [];
+    this.correctAnswer = props.correctAnswer || [];
+    this.evaluableElements = props.evaluableElements || [];
     this.version = props.version || 1;
   }
 }

@@ -7,23 +7,23 @@ class Interaccion {
    *
    * @param {object} props
    * @param {string}  props.id
-   * @param {string}  props.usuarioId
-   * @param {string}  props.ejercicioId
-   * @param {Date}   [props.inicio]
-   * @param {Date}   [props.fin]
+   * @param {string}  props.userId
+   * @param {string}  props.exerciseId
+   * @param {Date}   [props.startTime]
+   * @param {Date}   [props.endTime]
    * @param {Date}   [props.createdAt]
    */
   constructor(props) {
     this.id = props.id;
-    this.usuarioId = props.usuarioId;
-    this.ejercicioId = props.ejercicioId;
-    this.inicio = props.inicio || new Date();
-    this.fin = props.fin || new Date();
+    this.userId = props.userId;
+    this.exerciseId = props.exerciseId;
+    this.startTime = props.startTime || new Date();
+    this.endTime = props.endTime || new Date();
     this.createdAt = props.createdAt || null;
   }
 
-  belongsTo(userId) {
-    return String(this.usuarioId) === String(userId);
+  belongsToUser(userId) {
+    return String(this.userId) === String(userId);
   }
 
   /**
@@ -35,10 +35,10 @@ class Interaccion {
     return {
       _id: this.id,
       id: this.id,
-      usuario_id: this.usuarioId,
-      ejercicio_id: this.ejercicioId,
-      inicio: this.inicio,
-      fin: this.fin,
+      usuario_id: this.userId,
+      ejercicio_id: this.exerciseId,
+      inicio: this.startTime,
+      fin: this.endTime,
       createdAt: this.createdAt,
     };
   }

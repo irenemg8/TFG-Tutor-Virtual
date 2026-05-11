@@ -81,12 +81,12 @@ function dumpOrchestratorContext(reqId, ctx) {
     userId: ctx.userId,
     exerciseId: ctx.exerciseId,
     exerciseNum: ctx.exerciseNum,
-    interaccionId: ctx.interaccionId,
+    interaccionId: ctx.interactionId,
     userMessage: ctx.userMessage,
     lang: ctx.lang,
     classification: ctx.classification,
     detectedConcepts: (ctx.classification && ctx.classification.concepts) || [],
-    ac_refs: (ctx.ejercicio && ctx.ejercicio.tutorContext && ctx.ejercicio.tutorContext.ac_refs) || [],
+    ac_refs: (ctx.exercise && ctx.exercise.tutorContext && ctx.exercise.tutorContext.acRefs) || [],
     correctAnswer: ctx.correctAnswer,
     evaluableElements: ctx.evaluableElements,
     loopState: ctx.loopState,
@@ -157,7 +157,7 @@ async function handleGreeting(req, res, hb, userId, exerciseId, interaccionId) {
   }
   let isFirstTurn = false;
   if (!iid) {
-    const created = await container.interaccionRepo.create({ usuarioId: userId, ejercicioId: exerciseId });
+    const created = await container.interaccionRepo.create({ userId: userId, exerciseId: exerciseId });
     iid = created.id;
     isFirstTurn = true;
     sseSend(res, { interaccionId: iid });
@@ -165,7 +165,7 @@ async function handleGreeting(req, res, hb, userId, exerciseId, interaccionId) {
 
   const userText = String(req.body.userMessage || "").trim();
   await container.messageRepo.appendMessage(iid, new Message({
-    interaccionId: iid, role: "user", content: userText,
+    interactionId: iid, role: "user", content: userText,
   }));
 
   // Resolve language: prefer the bare greeting itself ("hello" → en,
@@ -182,10 +182,10 @@ async function handleGreeting(req, res, hb, userId, exerciseId, interaccionId) {
   const greeting = getGreetingResponse(lang, isFirstTurn);
 
   await container.messageRepo.appendMessage(iid, new Message({
-    interaccionId: iid, role: "assistant", content: greeting,
+    interactionId: iid, role: "assistant", content: greeting,
     metadata: { classification: "greeting", decision: "deterministic_greeting" },
   }));
-  await container.interaccionRepo.updateFin(iid, new Date());
+  await container.interaccionRepo.updateEndTime(iid, new Date());
 
   sseSend(res, { chunk: greeting });
   endSSE(res, hb);
@@ -293,7 +293,7 @@ router.post("/chat/stream", async function (req, res, next) {
       if (!exists) iid = null;
     }
     if (!iid) {
-      const created = await container.interaccionRepo.create({ usuarioId: userId, ejercicioId: exerciseId });
+      const created = await container.interaccionRepo.create({ userId: userId, exerciseId: exerciseId });
       iid = created.id;
       sseSend(res, { interaccionId: iid });
     }
@@ -315,7 +315,7 @@ router.post("/chat/stream", async function (req, res, next) {
       userId: userId,
       exerciseId: exerciseId,
       userMessage: userMessage.trim(),
-      interaccionId: iid,
+      interactionId: iid,
       budgetMs: budgetMs,
       reqId: reqId,
       tokenStreamHandler: tokenStreamHandler,

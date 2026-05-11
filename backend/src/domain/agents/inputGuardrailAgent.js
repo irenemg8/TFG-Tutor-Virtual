@@ -26,7 +26,7 @@ class InputGuardrailAgent extends AgentInterface {
   async execute(context) {
     const result = this.securityService.analyzeInput(context.userMessage, {
       lang: context.lang,
-      ejercicio: context.ejercicio,
+      exercise: context.exercise,
       evaluableElements: context.evaluableElements,
     });
 

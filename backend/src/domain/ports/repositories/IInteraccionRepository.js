@@ -12,7 +12,7 @@ class IInteraccionRepository {
   }
 
   /**
-   * @param {object} data - { usuarioId, ejercicioId }
+   * @param {object} data - { userId, exerciseId }
    * @returns {Promise<import('../../entities/Interaccion')>}
    */
   async create(data) {
@@ -38,12 +38,12 @@ class IInteraccionRepository {
   }
 
   /** @returns {Promise<void>} */
-  async updateFin(id, fin) {
+  async updateEndTime(id, endTime) {
     throw new Error("Not implemented");
   }
 
   /**
-   * Find all interactions for a user, sorted by fin DESC.
+   * Find all interactions for a user, sorted by endTime DESC.
    * @returns {Promise<import('../../entities/Interaccion')[]>}
    */
   async findByUserId(userId) {
@@ -54,7 +54,7 @@ class IInteraccionRepository {
    * Find the latest interaction for a user + exercise pair.
    * @returns {Promise<import('../../entities/Interaccion')|null>}
    */
-  async findLatestByExerciseAndUser(ejercicioId, userId) {
+  async findLatestByExerciseAndUser(exerciseId, userId) {
     throw new Error("Not implemented");
   }
 

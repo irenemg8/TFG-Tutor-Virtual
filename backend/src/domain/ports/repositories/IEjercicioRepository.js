@@ -34,7 +34,7 @@ class IEjercicioRepository {
    * Find one exercise by concept (used for recommendations).
    * @returns {Promise<import('../../entities/Ejercicio')|null>}
    */
-  async findOneByConcepto(concepto) {
+  async findOneByConcept(concept) {
     throw new Error("Not implemented");
   }
 

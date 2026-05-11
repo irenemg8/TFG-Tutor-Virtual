@@ -29,11 +29,11 @@ class PersistenceAgent extends AgentInterface {
   async execute(context) {
     // 1. Save user message
     const userMsg = new Message({
-      interaccionId: context.interaccionId,
+      interactionId: context.interactionId,
       role: "user",
       content: context.userMessage,
     });
-    await this.messageRepo.appendMessage(context.interaccionId, userMsg);
+    await this.messageRepo.appendMessage(context.interactionId, userMsg);
 
     // 2. Save assistant response with metadata
     const totalMs = Date.now() - context.timing.pipelineStartMs;
@@ -78,12 +78,12 @@ class PersistenceAgent extends AgentInterface {
     });
 
     const assistantMsg = new Message({
-      interaccionId: context.interaccionId,
+      interactionId: context.interactionId,
       role: "assistant",
       content: context.finalResponse || context.llmResponse,
       metadata,
     });
-    await this.messageRepo.appendMessage(context.interaccionId, assistantMsg);
+    await this.messageRepo.appendMessage(context.interactionId, assistantMsg);
 
     // 3. Log interaction (if logger available)
     if (this.logInteraction) {
@@ -109,7 +109,7 @@ class PersistenceAgent extends AgentInterface {
     // 4. Emit event
     if (this.emitEvent) {
       this.emitEvent("mongodb_save", "save", {
-        interaccionId: context.interaccionId,
+        interaccionId: context.interactionId,
       });
     }
   }

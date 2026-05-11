@@ -169,7 +169,7 @@ function sameSet(a, b) {
 }
 
 function isCorrectAnswerForExercise({ userText, ejercicio }) {
-  const correct = ejercicio?.tutorContext?.respuestaCorrecta;
+  const correct = ejercicio?.tutorContext?.correctAnswer;
   if (!Array.isArray(correct) || correct.length === 0) return false;
 
   const userSet = extractResistencias(userText);
@@ -279,10 +279,10 @@ router.post("/chat/stream", async (req, res) => {
       if (r) {
         if (typeof fullAssistant === "string" && fullAssistant.trim() !== "") {
           await r.messageRepo.appendMessage(interaccionId, new Message({
-            interaccionId, role: "assistant", content: fullAssistant, metadata: metadata || null,
+            interactionId: interaccionId, role: "assistant", content: fullAssistant, metadata: metadata || null,
           }));
         }
-        await r.interaccionRepo.updateFin(interaccionId, new Date());
+        await r.interaccionRepo.updateEndTime(interaccionId, new Date());
       }
     } catch (e) {
       console.error("Error guardando interacción tras stream:", e?.message || e);
@@ -372,8 +372,8 @@ router.post("/chat/stream", async (req, res) => {
     }
     if (!iid) {
       const created = await rx.interaccionRepo.create({
-        usuarioId: userId,
-        ejercicioId: exerciseId,
+        userId: userId,
+        exerciseId: exerciseId,
       });
       iid = created.id;
       sseSend(res, { interaccionId: iid });
@@ -383,9 +383,9 @@ router.post("/chat/stream", async (req, res) => {
     // Guardar mensaje user (atómico)
     const text = userMessage.trim();
     await rx.messageRepo.appendMessage(iid, new Message({
-      interaccionId: iid, role: "user", content: text,
+      interactionId: iid, role: "user", content: text,
     }));
-    await rx.interaccionRepo.updateFin(iid, new Date());
+    await rx.interaccionRepo.updateEndTime(iid, new Date());
 
     // ============================
     // ✅ CIERRE DETERMINISTA (SIN LLM)
@@ -584,11 +584,11 @@ router.post("/chat/start-exercise", async (req, res) => {
     const systemPrompt = buildSystemPrompt(ejercicio, "es");
 
     const interaccion = await rx.interaccionRepo.create({
-      usuarioId: userId,
-      ejercicioId: exerciseId,
+      userId: userId,
+      exerciseId: exerciseId,
     });
     await rx.messageRepo.appendMessage(interaccion.id, new Message({
-      interaccionId: interaccion.id, role: "user", content: firstMsg,
+      interactionId: interaccion.id, role: "user", content: firstMsg,
     }));
 
     // ✅ Si el primer mensaje ya es respuesta correcta, cerramos determinista también aquí
@@ -596,9 +596,9 @@ router.post("/chat/start-exercise", async (req, res) => {
       const assistant = `${getFinishMessages("es").exactAnswer}${FIN_TOKEN}`;
 
       await rx.messageRepo.appendMessage(interaccion.id, new Message({
-        interaccionId: interaccion.id, role: "assistant", content: assistant,
+        interactionId: interaccion.id, role: "assistant", content: assistant,
       }));
-      await rx.interaccionRepo.updateFin(interaccion.id, new Date());
+      await rx.interaccionRepo.updateEndTime(interaccion.id, new Date());
 
       return res.status(201).json({
         message: "Interacción iniciada (resuelta al instante)",
@@ -634,9 +634,9 @@ router.post("/chat/start-exercise", async (req, res) => {
     const assistant = ollamaResp?.data?.message?.content ?? "";
 
     await rx.messageRepo.appendMessage(interaccion.id, new Message({
-      interaccionId: interaccion.id, role: "assistant", content: assistant,
+      interactionId: interaccion.id, role: "assistant", content: assistant,
     }));
-    await rx.interaccionRepo.updateFin(interaccion.id, new Date());
+    await rx.interaccionRepo.updateEndTime(interaccion.id, new Date());
 
     return res.status(201).json({
       message: "Interacción iniciada",

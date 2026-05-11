@@ -194,8 +194,8 @@ ${promptBase}
         .slice(0, 3);
 
       errores = acsFiltrados.map((id) => ({
-        etiqueta: id,
-        texto: AC_MAP[id]?.name || id,
+        label: id,
+        text: AC_MAP[id]?.name || id,
       }));
     } catch (e) {
       const msg = String(e?.message || e);
@@ -204,21 +204,21 @@ ${promptBase}
       console.error("[RESULTADOS] Clasificador AC falló:", msg);
       if (numMensajes > 0) {
         errores = [{
-          etiqueta: "AC_UNK",
-          texto: isTimeout ? "No se pudo clasificar (timeout)" : "No se pudo clasificar (formato inválido)",
+          label: "AC_UNK",
+          text: isTimeout ? "No se pudo clasificar (timeout)" : "No se pudo clasificar (formato inválido)",
         }];
       }
     }
 
     await r.resultadoRepo.create({
-      usuarioId: userId,
-      ejercicioId: exerciseId,
-      interaccionId: interaccionId,
-      resueltoALaPrimera,
-      numMensajes,
-      analisisIA,
-      consejoIA,
-      errores,
+      userId: userId,
+      exerciseId: exerciseId,
+      interactionId: interaccionId,
+      solvedOnFirstAttempt: resueltoALaPrimera,
+      messageCount: numMensajes,
+      aiAnalysis: analisisIA,
+      aiAdvice: consejoIA,
+      errors: errores,
     });
 
     return res.status(200).json({
@@ -228,7 +228,7 @@ ${promptBase}
         numMensajes,
         analisisIA: Boolean(analisisIA),
         consejoIA: Boolean(consejoIA),
-        errores: (errores || []).map((x) => x.etiqueta),
+        errores: (errores || []).map((x) => x.label),
       },
     });
   } catch (error) {

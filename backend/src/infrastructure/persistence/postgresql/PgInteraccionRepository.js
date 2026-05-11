@@ -7,10 +7,10 @@ function rowToDomain(row) {
   if (!row) return null;
   return new Interaccion({
     id: row.id,
-    usuarioId: row.usuario_id,
-    ejercicioId: row.ejercicio_id,
-    inicio: row.inicio,
-    fin: row.fin,
+    userId: row.usuario_id,
+    exerciseId: row.ejercicio_id,
+    startTime: row.inicio,
+    endTime: row.fin,
     createdAt: row.created_at,
   });
 }
@@ -33,7 +33,7 @@ class PgInteraccionRepository extends IInteraccionRepository {
     const { rows } = await this.pool.query(
       `INSERT INTO interacciones (usuario_id, ejercicio_id, inicio, fin)
        VALUES ($1, $2, NOW(), NOW()) RETURNING *`,
-      [data.usuarioId, data.ejercicioId]
+      [data.userId, data.exerciseId]
     );
     return rowToDomain(rows[0]);
   }
@@ -58,10 +58,10 @@ class PgInteraccionRepository extends IInteraccionRepository {
     return rows.length > 0;
   }
 
-  async updateFin(id, fin) {
+  async updateEndTime(id, endTime) {
     await this.pool.query(
       "UPDATE interacciones SET fin = $2 WHERE id = $1",
-      [id, fin]
+      [id, endTime]
     );
   }
 
@@ -73,12 +73,12 @@ class PgInteraccionRepository extends IInteraccionRepository {
     return rows.map(rowToDomain);
   }
 
-  async findLatestByExerciseAndUser(ejercicioId, userId) {
+  async findLatestByExerciseAndUser(exerciseId, userId) {
     const { rows } = await this.pool.query(
       `SELECT * FROM interacciones
        WHERE ejercicio_id = $1 AND usuario_id = $2
        ORDER BY fin DESC LIMIT 1`,
-      [ejercicioId, userId]
+      [exerciseId, userId]
     );
     return rowToDomain(rows[0]);
   }
@@ -100,9 +100,9 @@ class PgInteraccionRepository extends IInteraccionRepository {
       conditions.push(`usuario_id = $${idx++}`);
       vals.push(filter.userId);
     }
-    if (filter.ejercicioId) {
+    if (filter.exerciseId) {
       conditions.push(`ejercicio_id = $${idx++}`);
-      vals.push(filter.ejercicioId);
+      vals.push(filter.exerciseId);
     }
     if (filter.from instanceof Date && !isNaN(filter.from.getTime())) {
       conditions.push(`inicio >= $${idx++}`);

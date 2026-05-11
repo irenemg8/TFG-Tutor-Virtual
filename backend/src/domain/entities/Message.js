@@ -9,7 +9,7 @@ class Message {
    *
    * @param {object} props
    * @param {string}  [props.id]
-   * @param {string}   props.interaccionId
+   * @param {string}   props.interactionId
    * @param {number}  [props.sequenceNum]
    * @param {string}   props.role           - "user" | "assistant"
    * @param {string}   props.content
@@ -18,7 +18,7 @@ class Message {
    */
   constructor(props) {
     this.id = props.id || null;
-    this.interaccionId = props.interaccionId;
+    this.interactionId = props.interactionId;
     this.sequenceNum = props.sequenceNum ?? null;
     this.role = props.role;
     this.content = props.content;

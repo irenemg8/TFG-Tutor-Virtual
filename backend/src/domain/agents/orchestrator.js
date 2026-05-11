@@ -40,7 +40,7 @@ class TutoringOrchestrator {
    * @param {string}      request.userId
    * @param {string}      request.exerciseId
    * @param {string}      request.userMessage
-   * @param {string|null} request.interaccionId
+   * @param {string|null} request.interactionId
    * @returns {Promise<AgentContext>}
    */
   async process(request) {

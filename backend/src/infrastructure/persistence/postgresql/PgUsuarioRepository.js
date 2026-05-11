@@ -9,11 +9,11 @@ function rowToDomain(row) {
     id: row.id,
     upvLogin: row.upv_login,
     email: row.email || "",
-    nombre: row.nombre || "",
-    apellidos: row.apellidos || "",
-    dni: row.dni || "",
-    grupos: row.grupos || [],
-    rol: row.rol || "alumno",
+    firstName: row.nombre || "",
+    lastName: row.apellidos || "",
+    nationalId: row.dni || "",
+    groups: row.grupos || [],
+    role: row.rol || "alumno",
     lastLoginAt: row.last_login_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -60,11 +60,11 @@ class PgUsuarioRepository extends IUsuarioRepository {
       [
         upvLogin,
         updateFields.email || null,
-        updateFields.nombre || null,
-        updateFields.apellidos || null,
-        updateFields.dni || null,
-        insertFields?.grupos || [],
-        insertFields?.rol || "alumno",
+        updateFields.firstName || null,
+        updateFields.lastName || null,
+        updateFields.nationalId || null,
+        insertFields?.groups || [],
+        insertFields?.role || "alumno",
       ]
     );
     return rowToDomain(rows[0]);
@@ -78,11 +78,11 @@ class PgUsuarioRepository extends IUsuarioRepository {
       [
         userData.upvLogin,
         userData.email || null,
-        userData.nombre || null,
-        userData.apellidos || null,
-        userData.dni || null,
-        userData.grupos || [],
-        userData.rol || "alumno",
+        userData.firstName || null,
+        userData.lastName || null,
+        userData.nationalId || null,
+        userData.groups || [],
+        userData.role || "alumno",
       ]
     );
     return rowToDomain(rows[0]);
@@ -92,9 +92,17 @@ class PgUsuarioRepository extends IUsuarioRepository {
     const sets = [];
     const vals = [];
     let idx = 1;
+    const COLUMN_MAP = {
+      lastLoginAt: "last_login_at",
+      upvLogin: "upv_login",
+      firstName: "nombre",
+      lastName: "apellidos",
+      nationalId: "dni",
+      groups: "grupos",
+      role: "rol",
+    };
     for (const [key, val] of Object.entries(fields)) {
-      const col = key === "lastLoginAt" ? "last_login_at"
-        : key === "upvLogin" ? "upv_login" : key;
+      const col = COLUMN_MAP[key] || key;
       sets.push(`${col} = $${idx}`);
       vals.push(val);
       idx++;

@@ -6,11 +6,11 @@ class Usuario {
    * @param {string}   props.id
    * @param {string}   props.upvLogin
    * @param {string}  [props.email]
-   * @param {string}  [props.nombre]
-   * @param {string}  [props.apellidos]
-   * @param {string}  [props.dni]
-   * @param {string[]} [props.grupos]
-   * @param {string}  [props.rol]
+   * @param {string}  [props.firstName]
+   * @param {string}  [props.lastName]
+   * @param {string}  [props.nationalId]
+   * @param {string[]} [props.groups]
+   * @param {string}  [props.role]
    * @param {Date}    [props.lastLoginAt]
    * @param {Date}    [props.createdAt]
    * @param {Date}    [props.updatedAt]
@@ -19,30 +19,30 @@ class Usuario {
     this.id = props.id;
     this.upvLogin = props.upvLogin;
     this.email = props.email || "";
-    this.nombre = props.nombre || "";
-    this.apellidos = props.apellidos || "";
-    this.dni = props.dni || "";
-    this.grupos = props.grupos || [];
-    this.rol = props.rol || "alumno";
+    this.firstName = props.firstName || "";
+    this.lastName = props.lastName || "";
+    this.nationalId = props.nationalId || "";
+    this.groups = props.groups || [];
+    this.role = props.role || "alumno";
     this.lastLoginAt = props.lastLoginAt || null;
     this.createdAt = props.createdAt || new Date();
     this.updatedAt = props.updatedAt || new Date();
   }
 
-  isAlumno() {
-    return this.rol === "alumno";
+  isStudent() {
+    return this.role === "alumno";
   }
 
-  isProfesor() {
-    return this.rol === "profesor";
+  isTeacher() {
+    return this.role === "profesor";
   }
 
   isAdmin() {
-    return this.rol === "admin";
+    return this.role === "admin";
   }
 
   hasRole(role) {
-    return this.rol === role;
+    return this.role === role;
   }
 
   /** Legacy Mongo JSON shape for frontend compat. */
@@ -52,11 +52,11 @@ class Usuario {
       id: this.id,
       upvLogin: this.upvLogin,
       email: this.email,
-      nombre: this.nombre,
-      apellidos: this.apellidos,
-      dni: this.dni,
-      grupos: this.grupos,
-      rol: this.rol,
+      nombre: this.firstName,
+      apellidos: this.lastName,
+      dni: this.nationalId,
+      grupos: this.groups,
+      rol: this.role,
       lastLoginAt: this.lastLoginAt,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,

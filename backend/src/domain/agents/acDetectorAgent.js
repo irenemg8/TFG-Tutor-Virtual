@@ -45,9 +45,9 @@ class AcDetectorAgent extends AgentInterface {
     }
     const exerciseNum = context.exerciseNum != null
       ? context.exerciseNum
-      : (context.ejercicio && context.ejercicio.getExerciseNumber && context.ejercicio.getExerciseNumber());
+      : (context.exercise && context.exercise.getExerciseNumber && context.exercise.getExerciseNumber());
     const correctAnswer = context.correctAnswer ||
-      (context.ejercicio && context.ejercicio.tutorContext && context.ejercicio.tutorContext.respuestaCorrecta) ||
+      (context.exercise && context.exercise.tutorContext && context.exercise.tutorContext.correctAnswer) ||
       [];
 
     const proposed = (context.classification.proposed || []).map(_norm).filter(Boolean);

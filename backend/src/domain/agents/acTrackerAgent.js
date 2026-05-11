@@ -6,7 +6,7 @@ const AgentInterface = require("./base/AgentInterface");
  * AcTrackerAgent: aggregates the student's recurring Alternative Conceptions
  * from TWO sources, regardless of whether the conversation ever closed:
  *
- *   1. Resultado.errores — canonical AC IDs ("AC1", "AC6", ...) extracted by
+ *   1. Resultado.errors — canonical AC IDs ("AC1", "AC6", ...) extracted by
  *      the LLM-based classifier when an interaction was finalised. Strong
  *      signal but only available for closed sessions.
  *
@@ -75,9 +75,9 @@ class AcTrackerAgent extends AgentInterface {
     const limit = Math.min(this.lookbackLimit, resultados.length);
     for (let i = 0; i < limit; i++) {
       const r = resultados[i];
-      const errs = (r && r.errores) || [];
+      const errs = (r && r.errors) || [];
       for (let j = 0; j < errs.length; j++) {
-        const tag = errs[j] && errs[j].etiqueta;
+        const tag = errs[j] && errs[j].label;
         if (!tag) continue;
         if (!counts[tag]) counts[tag] = { count: 0, source: "resultado" };
         counts[tag].count++;

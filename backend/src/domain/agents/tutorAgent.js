@@ -32,7 +32,7 @@ class TutorAgent extends AgentInterface {
 
   async execute(context) {
     // 1. Build base system prompt
-    const basePrompt = this.buildSystemPrompt(context.ejercicio, context.lang);
+    const basePrompt = this.buildSystemPrompt(context.exercise, context.lang);
 
     // 1b. Pedagogical priority banner — surface concepts the student
     //    EXPLICITLY used at the TOP of the augmented prompt instead of
@@ -41,7 +41,7 @@ class TutorAgent extends AgentInterface {
     //    likely vector for an Alternative Conception (AC), so the LLM
     //    weights them more when they appear early in the system prompt.
     const detectedConcepts = (context.classification && context.classification.concepts) || [];
-    const acRefs = (context.ejercicio && context.ejercicio.tutorContext && context.ejercicio.tutorContext.ac_refs) || [];
+    const acRefs = (context.exercise && context.exercise.tutorContext && context.exercise.tutorContext.acRefs) || [];
     let conceptsBanner = "";
     if (detectedConcepts.length > 0 || acRefs.length > 0) {
       conceptsBanner = "[PEDAGOGICAL PRIORITY — STUDENT-MENTIONED CONCEPTS]\n";

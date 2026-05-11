@@ -17,7 +17,7 @@ class ISecurityService {
    * @param {string} userMessage - Raw student input
    * @param {object} ctx
    * @param {string} ctx.lang    - "es" | "en" | "val"
-   * @param {object} [ctx.ejercicio]
+   * @param {object} [ctx.exercise]
    * @param {string[]} [ctx.evaluableElements]
    * @returns {SecurityAnalysis}
    */

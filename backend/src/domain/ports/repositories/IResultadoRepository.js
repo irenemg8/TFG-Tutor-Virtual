@@ -11,7 +11,7 @@ class IResultadoRepository {
   }
 
   /**
-   * Find all results for a user, sorted by fecha DESC.
+   * Find all results for a user, sorted by date DESC.
    * @returns {Promise<import('../../entities/Resultado')[]>}
    */
   async findByUserId(userId) {
@@ -45,7 +45,7 @@ class IResultadoRepository {
   }
 
   /**
-   * Get distinct error tags (etiquetas) for a user's past interactions.
+   * Get distinct error tags (labels) for a user's past interactions.
    * Used by RAG pipeline for student history.
    * @param {string} userId
    * @returns {Promise<string[]>}

@@ -246,8 +246,8 @@ async function loadStudentHistory(userId, resultadoRepo) {
     // Count error tags across all exercises
     const errorCounts = {};
     for (const r of resultados) {
-      for (const err of r.errores || []) {
-        const tag = err?.etiqueta;
+      for (const err of r.errors || []) {
+        const tag = err?.label;
         if (tag) errorCounts[tag] = (errorCounts[tag] || 0) + 1;
       }
     }

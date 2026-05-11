@@ -90,7 +90,7 @@ router.get("/:id", async (req, res) => {
     if (!isValidId(id)) return res.status(400).json({ message: "ID inválido." });
     const i = await r.findById(id);
     if (!i) return res.status(404).json({ message: "Interacción no encontrada." });
-    if (!canAccessUserData(i.usuarioId || i.usuario_id, req)) {
+    if (!canAccessUserData(i.userId || i.usuario_id, req)) {
       return res.status(403).json({ message: "No autorizado." });
     }
     // El frontend legacy espera `conversacion` como array embebido (como era
@@ -113,7 +113,7 @@ router.delete("/:id", async (req, res) => {
     if (!isValidId(id)) return res.status(400).json({ message: "ID inválido." });
     const i = await r.findById(id);
     if (!i) return res.status(404).json({ message: "Interacción no encontrada." });
-    const ownerId = i.usuarioId || i.usuario_id;
+    const ownerId = i.userId || i.usuario_id;
     if (String(ownerId) !== String(req.userId)) {
       return res.status(403).json({ message: "No autorizado." });
     }

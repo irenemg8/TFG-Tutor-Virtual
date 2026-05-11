@@ -7,13 +7,22 @@ class ErrorEntry {
    *
    * @param {object} props
    * @param {string} [props.id]
-   * @param {string}  props.etiqueta  - AC identifier (e.g. "AC13", "AC_UNK")
-   * @param {string}  props.texto     - Human-readable error description
+   * @param {string}  props.label  - AC identifier (e.g. "AC13", "AC_UNK")
+   * @param {string}  props.text   - Human-readable error description
    */
   constructor(props) {
     this.id = props.id || null;
-    this.etiqueta = props.etiqueta;
-    this.texto = props.texto;
+    this.label = props.label;
+    this.text = props.text;
+  }
+
+  /** Legacy Mongo JSON shape for frontend compat (Resultado.errores items). */
+  toJSON() {
+    return {
+      id: this.id,
+      etiqueta: this.label,
+      texto: this.text,
+    };
   }
 }
 

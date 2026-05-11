@@ -4,7 +4,7 @@ const AgentInterface = require("./base/AgentInterface");
 
 /**
  * ContextAgent: Loads all data needed for the tutoring interaction.
- * Populates: ejercicio, exerciseNum, correctAnswer, evaluableElements,
+ * Populates: exercise, exerciseNum, correctAnswer, evaluableElements,
  * history, lang, loopState in the AgentContext.
  *
  * Extracted from ragMiddleware.js lines 170-336, 371-504
@@ -32,7 +32,7 @@ class ContextAgent extends AgentInterface {
       context.fallthrough = true;
       return;
     }
-    context.ejercicio = ejercicio;
+    context.exercise = ejercicio;
     context.exerciseNum = ejercicio.getExerciseNumber();
     context.correctAnswer = ejercicio.getCorrectAnswer();
     context.evaluableElements = ejercicio.getEvaluableElements();
@@ -46,25 +46,25 @@ class ContextAgent extends AgentInterface {
     context.canonicalExerciseNum = this._canonicalExerciseNum(context.exerciseNum);
 
     // 2. Load or create interaccion
-    if (context.interaccionId) {
+    if (context.interactionId) {
       const exists = await this.interaccionRepo.existsForUser(
-        context.interaccionId,
+        context.interactionId,
         context.userId
       );
-      if (!exists) context.interaccionId = null;
+      if (!exists) context.interactionId = null;
     }
-    if (!context.interaccionId) {
+    if (!context.interactionId) {
       const interaccion = await this.interaccionRepo.create({
-        usuarioId: context.userId,
-        ejercicioId: context.exerciseId,
+        userId: context.userId,
+        exerciseId: context.exerciseId,
       });
-      context.interaccionId = interaccion.id;
+      context.interactionId = interaccion.id;
     }
 
     // 3. Load conversation history
     const maxMessages = this.config.HISTORY_MAX_MESSAGES || 6;
     const messages = await this.messageRepo.getLastMessages(
-      context.interaccionId,
+      context.interactionId,
       maxMessages
     );
     context.history = messages.map((m) => m.toOllamaFormat());
@@ -96,25 +96,25 @@ class ContextAgent extends AgentInterface {
       totalAssistantTurns,
       lastAssistantMessages,
     ] = await Promise.all([
-      this._countClassifications(context.interaccionId, correctTypes),
+      this._countClassifications(context.interactionId, correctTypes),
       // STRICT count: only correct_good_reasoning counts towards
       // _shouldFinishDeterministically. partial_correct, correct_no_reasoning
       // and correct_wrong_reasoning are NOT enough to close the exercise —
       // the student must give the right elements WITH a justification (real
       // reasoning) at least twice in a row before we end the session.
-      this._countClassifications(context.interaccionId, ["correct_good_reasoning"]),
+      this._countClassifications(context.interactionId, ["correct_good_reasoning"]),
       this.messageRepo.countConsecutiveFromEnd(
-        context.interaccionId,
+        context.interactionId,
         wrongTypes
       ),
-      this.messageRepo.countAssistantMessages(context.interaccionId),
-      this.messageRepo.getLastAssistantMessages(context.interaccionId, 4),
+      this.messageRepo.countAssistantMessages(context.interactionId),
+      this.messageRepo.getLastAssistantMessages(context.interactionId, 4),
     ]);
 
     const tutorRepeating = this._detectRepetition(lastAssistantMessages);
     const studentFrustrated = this._detectFrustration(context.userMessage);
     const lastClassificationStreak = await this._lastClassificationStreak(
-      context.interaccionId
+      context.interactionId
     );
     // BUG-007 (2026-05-03): cuando el tutor menciona el MISMO Rn en sus
     // últimas 2-3 preguntas se queda en bucle conceptual sobre ese
@@ -197,8 +197,8 @@ class ContextAgent extends AgentInterface {
    * conversation. Returns { type, streak }. If there are no assistant
    * messages with classification metadata, returns { type: null, streak: 0 }.
    */
-  async _lastClassificationStreak(interaccionId) {
-    const all = await this.messageRepo.getAllMessages(interaccionId);
+  async _lastClassificationStreak(interactionId) {
+    const all = await this.messageRepo.getAllMessages(interactionId);
     let last = null;
     let streak = 0;
     for (let i = all.length - 1; i >= 0; i--) {
@@ -230,8 +230,8 @@ class ContextAgent extends AgentInterface {
     return resolveLanguage(history);
   }
 
-  async _countClassifications(interaccionId, types) {
-    const messages = await this.messageRepo.getAllMessages(interaccionId);
+  async _countClassifications(interactionId, types) {
+    const messages = await this.messageRepo.getAllMessages(interactionId);
     let count = 0;
     for (const msg of messages) {
       if (
