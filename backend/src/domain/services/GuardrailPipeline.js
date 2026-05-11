@@ -136,6 +136,39 @@ class GuardrailPipeline {
     }
 
     // === Phase C: consolidated LLM retry (if budget permits) ===
+    //
+    // Quality-vs-latency gate: a consolidated retry costs another 15-20s
+    // against Ollama UPV. Reserve it only for pedagogically-critical
+    // violations where the surgical fix cannot reliably recover the meaning:
+    //   - solution_leak: tutor revealed the answer
+    //   - false_confirmation: confirmed a wrong answer as right
+    //   - premature_confirmation: confirmed without justification
+    //   - state_reveal: revealed element state (short/open)
+    //   - complete_solution: emitted a step-by-step worked solution
+    // For the rest (language_drift, repeated_question, adherence,
+    // didactic_explanation, dataset_style, element_naming), the surgical fix
+    // already rewrote the offending sentence in place; an LLM retry wastes
+    // a round-trip without measurable quality gain.
+    const CRITICAL_GUARDRAILS = new Set([
+      "solution_leak",
+      "false_confirmation",
+      "premature_confirmation",
+      "state_reveal",
+      "complete_solution",
+    ]);
+    const criticalViolations = violations.filter(function (v) {
+      return CRITICAL_GUARDRAILS.has(v.id);
+    });
+    if (criticalViolations.length === 0) {
+      return _result({
+        response: currentResponse, violated: true, path: "non_critical_only",
+        residualViolations: violations, llmRetryCount: 0,
+        surgicalFixesApplied: surgicalFixesApplied,
+        surgicalFixDetails: surgicalFixDetails,
+      });
+    }
+    // Only the critical residuals justify the retry cost.
+    violations = criticalViolations;
     const budget = remainingBudget();
     if (budget < this.minRetryBudgetMs) {
       return _result({

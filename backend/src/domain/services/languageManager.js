@@ -36,6 +36,27 @@ const switchPatterns = {
   ],
 };
 
+// Negative prefixes that flip the meaning of a "switch language" pattern.
+// Without this, "lo siento, no entiendo nada en english please" matched
+// "english please" and switched to English — the opposite of the student's
+// intent. We scan the ~40 chars immediately before the matched pattern.
+const NEGATIVE_PREFIXES = [
+  // Spanish
+  "no entiendo", "no me entiendo", "no sé", "no lo entiendo",
+  "no quiero", "no me", "lo siento",
+  // Valencian
+  "no entenc", "no ho entenc", "no vull",
+  // English
+  "don't", "do not", "i don't understand", "i can't",
+  "not in", "no in", "sorry", "i'm sorry",
+];
+
+function _hasNegativeContext(lowerMessage, matchIndex) {
+  const start = Math.max(0, matchIndex - 40);
+  const before = lowerMessage.slice(start, matchIndex);
+  return NEGATIVE_PREFIXES.some((neg) => before.includes(neg));
+}
+
 // Check if a user message requests a language switch
 // Returns "es", "val", "en", or null
 function detectLanguageSwitch(message) {
@@ -44,7 +65,10 @@ function detectLanguageSwitch(message) {
 
   for (const lang of SUPPORTED_LANGS) {
     for (const pattern of switchPatterns[lang]) {
-      if (lower.includes(pattern)) return lang;
+      const idx = lower.indexOf(pattern);
+      if (idx >= 0 && !_hasNegativeContext(lower, idx)) {
+        return lang;
+      }
     }
   }
   return null;

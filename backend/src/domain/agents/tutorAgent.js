@@ -373,29 +373,39 @@ class TutorAgent extends AgentInterface {
     //    Ollama cache it once. Banners + RAG augmentation move into the
     //    last user message, prefixed with a clear delimiter so the LLM
     //    still treats them as instructions.
-    // Language directive lives here (not in the system prompt) so the
-    // system block stays identical across language switches and Ollama
-    // can KV-cache reuse the prefix between turns of the same exercise.
-    // See languageManager.getLanguageRules for the per-lang content.
-    const { getLanguageRules } = require("../services/languageManager");
-    const langBanner =
-      "[LANGUAGE]\n" + getLanguageRules(context.lang || "es") + "\n\n";
+    // Language directive lives in the system prompt (promptBuilder.js)
+    // since the quality regression: burying it in TURN CONTEXT made qwen2.5
+    // ignore it under conflicting banners. KV-cache invalidates on language
+    // switches now, but switches are rare and reliability matters more.
+    //
+    // Banner gating: when a Tier-1 banner (structured VERDICT or AC detected
+    // with high confidence) is active, it already tells the LLM EXACTLY what
+    // to do this turn — generic hints (progress / repetition / strategy /
+    // concepts) on top dilute the signal and produce contradictory
+    // instructions. qwen2.5 7B kept the first directive it saw and ignored
+    // the structured verdict, reverting to repetitive generic questions.
+    // Suppressing the generic banners when Tier-1 is on restores focus.
+    const hasTier1Banner =
+      verdictBanner.length > 0 || acDetectedBanner.length > 0;
+    const safeProgressHint = hasTier1Banner ? "" : progressHint;
+    const safeRepetitionHint = hasTier1Banner ? "" : repetitionHint;
+    const safeStrategyHint = hasTier1Banner ? "" : strategyHint;
+    const safeConceptsBanner = acDetectedBanner.length > 0 ? "" : conceptsBanner;
 
     const dynamicContext =
-      langBanner +
       verdictBanner +
       acDetectedBanner +
-      conceptsBanner +
+      safeConceptsBanner +
       dontKnowHint +
       demandJustificationHint +
-      progressHint +
-      repetitionHint +
+      safeProgressHint +
+      safeRepetitionHint +
       doNotRepeatHint +
       establishedFactsHint +
       stuckOnElementHint +
       frustrationHint +
       stuckHint +
-      strategyHint +
+      safeStrategyHint +
       (context.ragResult.augmentation || "");
 
     const userWithContext = dynamicContext.trim().length > 0

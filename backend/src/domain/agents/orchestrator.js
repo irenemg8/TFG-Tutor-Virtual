@@ -52,14 +52,16 @@ class TutoringOrchestrator {
     // guardrails ≤10%. Each agent that supports a budget reads its slice; the
     // ones that don't (retrieval today) just log when they exceed it.
     if (typeof ctx.budgetMs === "number" && ctx.budgetMs > 0) {
-      // Distribución 25/65/10. Subir el slice del tutor (era 60%) deja
-      // holgura suficiente para que Ollama UPV procese prefill grandes
-      // (system + history + augmentation puede llegar a 5-7KB) sin caer
-      // al fallback. Retrieval baja a 25% — los avg observados están en
-      // 2-4s, suficiente para Chroma + BM25.
-      ctx.retrievalBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.25));
-      ctx.tutorBudgetMs     = Math.max(5000, Math.floor(ctx.budgetMs * 0.65));
-      ctx.guardrailBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.10));
+      // Distribución 18/75/7. Subido el slice del tutor a 75% para evitar
+      // BudgetExhaustedError contra Ollama UPV cuando el prefill es grande
+      // (system + history + augmentation puede llegar a 5-7KB) — con 65%
+      // y budget total 45s, el tutor sólo tenía ~29s y caía al fallback
+      // "el tutor está tardando demasiado". Retrieval bajado a 18%: los
+      // averages observados están en 2-4s, suficiente para Chroma + BM25,
+      // y guardrails a 7% (no necesitan LLM en el camino feliz).
+      ctx.retrievalBudgetMs = Math.max(2000, Math.floor(ctx.budgetMs * 0.18));
+      ctx.tutorBudgetMs     = Math.max(8000, Math.floor(ctx.budgetMs * 0.75));
+      ctx.guardrailBudgetMs = Math.max(1500, Math.floor(ctx.budgetMs * 0.07));
     }
 
     try {

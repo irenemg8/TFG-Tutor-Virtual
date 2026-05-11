@@ -259,7 +259,20 @@ class ContextAgent extends AgentInterface {
     }
     const facts = [];
     const seen = new Set();
-    const FACT_RE = /(?:^|[.!?\n]\s*|sí[,]\s*)((?:R\d+|N\d+)[^.!?\n]{0,120}?(?:está|conecta|forma|es parte|es la|es el|se conecta|se sitúa|sale|llega)[^.!?\n]{0,80}[.!?\n])/gi;
+    // Match assertive sentences in indicative present, terminated by .!? (no ?).
+    // Capturing '?' in the terminator was producing false positives: questions
+    // like "¿R1 está entre N1 y N2?" were extracted as established "facts",
+    // and the LLM saw its own prior questions echoed back as confirmed truths,
+    // which broke the Socratic flow. We now require '.' or '!' as terminator
+    // AND we reject any candidate containing '?' or '¿' anywhere.
+    const FACT_RE = /(?:^|[.!\n]\s*|sí[,]\s*)((?:R\d+|N\d+)[^.!?¿\n]{0,120}?(?:está|conecta|forma|es parte|es la|es el|se conecta|se sitúa|sale|llega)[^.!?¿\n]{0,80}[.!\n])/gi;
+    // Question-opening words (Spanish + Valencian + English). If the fact
+    // candidate starts with one of these, it's almost certainly a question
+    // the tutor asked, not a confirmed fact.
+    const QUESTION_OPENERS = /^(si\b|qu[eé]\b|c[oó]mo\b|cu[aá]l\b|cu[aá]ndo\b|d[oó]nde\b|por\s+qu[eé]\b|crees\b|puedes\b|sabes\b|què\b|com\b|quin\b|on\b|what\b|how\b|where\b|when\b|why\b|do\s+you\b|can\s+you\b)/i;
+    // Hypothetical / future / conditional markers: drop facts in subjunctive
+    // or conditional clauses, which are speculation, not established truth.
+    const HYPOTHETICAL = /\b(podr[íi]a|ser[íi]a|si\s+conect|si\s+est|imagina|supongam|hipot[eé]ti|condicional|would|could|might)/i;
     for (let i = 0; i < lastAssistantMessages.length; i++) {
       const m = lastAssistantMessages[i];
       const content = (m && m.content) || "";
@@ -267,6 +280,9 @@ class ContextAgent extends AgentInterface {
       FACT_RE.lastIndex = 0;
       while ((match = FACT_RE.exec(content)) !== null) {
         const raw = match[1].trim().replace(/\s+/g, " ");
+        if (/[?¿]/.test(raw)) continue;
+        if (QUESTION_OPENERS.test(raw)) continue;
+        if (HYPOTHETICAL.test(raw)) continue;
         const key = raw.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);

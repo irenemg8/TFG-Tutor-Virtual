@@ -21,16 +21,35 @@ function loadCtxArr() {
   return JSON.parse(fs.readFileSync(CTX_JSON, "utf8"));
 }
 
+// The JSON file `tutorContext_por_ejercicio.json` is a legacy artifact that
+// still uses Spanish keys (objetivo, modoExperto, respuestaCorrecta, ac_refs).
+// The domain entity TutorContext was renamed to English in commit e2df56e.
+// We translate the legacy keys here so the test loads the production JSON
+// without rewriting the data file or adding a permanent compat shim to the
+// domain entity.
+function adaptTutorContextLegacy(tc) {
+  if (!tc || typeof tc !== "object") return tc;
+  return {
+    objective: tc.objetivo,
+    netlist: tc.netlist,
+    expertMode: tc.modoExperto,
+    acRefs: tc.ac_refs,
+    correctAnswer: tc.respuestaCorrecta,
+    evaluableElements: tc.elementosEvaluables,
+    version: tc.version,
+  };
+}
+
 function buildEjercicio(item) {
   return new Ejercicio({
     id: String(item.ejercicio),
-    titulo: "Ejercicio " + item.ejercicio,
-    enunciado: "",
-    asignatura: "Dispositivos electrónicos",
-    concepto: "Ley de Ohm",
-    nivel: 1,
-    imagen: "Ejercicio" + item.ejercicio + ".jpg",
-    tutorContext: item.tutorContext,
+    title: "Ejercicio " + item.ejercicio,
+    statement: "",
+    subject: "Dispositivos electrónicos",
+    concept: "Ley de Ohm",
+    level: 1,
+    image: "Ejercicio" + item.ejercicio + ".jpg",
+    tutorContext: adaptTutorContextLegacy(item.tutorContext),
   });
 }
 
@@ -108,12 +127,12 @@ describe("Ejercicio.hasValidTutorContext — completeness checks", () => {
   function build(tutorContext) {
     return new Ejercicio({
       id: "x",
-      titulo: "Ejercicio 1",
-      enunciado: "",
-      asignatura: "Dispositivos electrónicos",
-      concepto: "Ley de Ohm",
-      nivel: 1,
-      imagen: "Ejercicio1.jpg",
+      title: "Ejercicio 1",
+      statement: "",
+      subject: "Dispositivos electrónicos",
+      concept: "Ley de Ohm",
+      level: 1,
+      image: "Ejercicio1.jpg",
       tutorContext,
     });
   }
@@ -122,35 +141,35 @@ describe("Ejercicio.hasValidTutorContext — completeness checks", () => {
     expect(build(undefined).hasValidTutorContext()).toBe(false);
   });
 
-  test("rejects empty respuestaCorrecta", () => {
+  test("rejects empty correctAnswer", () => {
     expect(
       build({
-        objetivo: "x".repeat(40),
+        objective: "x".repeat(40),
         netlist: "R1 N1 N2 1",
-        modoExperto: "y".repeat(60),
-        respuestaCorrecta: [],
+        expertMode: "y".repeat(60),
+        correctAnswer: [],
       }).hasValidTutorContext()
     ).toBe(false);
   });
 
-  test("rejects too-short objetivo", () => {
+  test("rejects too-short objective", () => {
     expect(
       build({
-        objetivo: "corto",
+        objective: "corto",
         netlist: "R1 N1 N2 1",
-        modoExperto: "y".repeat(60),
-        respuestaCorrecta: ["R1"],
+        expertMode: "y".repeat(60),
+        correctAnswer: ["R1"],
       }).hasValidTutorContext()
     ).toBe(false);
   });
 
-  test("rejects too-short modoExperto", () => {
+  test("rejects too-short expertMode", () => {
     expect(
       build({
-        objetivo: "x".repeat(40),
+        objective: "x".repeat(40),
         netlist: "R1 N1 N2 1",
-        modoExperto: "corto",
-        respuestaCorrecta: ["R1"],
+        expertMode: "corto",
+        correctAnswer: ["R1"],
       }).hasValidTutorContext()
     ).toBe(false);
   });
@@ -158,31 +177,31 @@ describe("Ejercicio.hasValidTutorContext — completeness checks", () => {
   test("accepts complete tutorContext", () => {
     expect(
       build({
-        objetivo: "x".repeat(40),
+        objective: "x".repeat(40),
         netlist: "R1 N1 N2 1",
-        modoExperto: "y".repeat(60),
-        respuestaCorrecta: ["R1"],
+        expertMode: "y".repeat(60),
+        correctAnswer: ["R1"],
       }).hasValidTutorContext()
     ).toBe(true);
   });
 });
 
 describe("buildTutorSystemPrompt — placeholder defense", () => {
-  test("omits OBJECTIVE block when objetivo is missing instead of writing '(not defined)'", () => {
+  test("omits OBJECTIVE block when objective is missing instead of writing '(not defined)'", () => {
     const ej = new Ejercicio({
       id: "x",
-      titulo: "Ejercicio",
-      enunciado: "",
-      asignatura: "Dispositivos electrónicos",
-      concepto: "Ley de Ohm",
-      nivel: 1,
-      imagen: "Ejercicio1.jpg",
+      title: "Ejercicio",
+      statement: "",
+      subject: "Dispositivos electrónicos",
+      concept: "Ley de Ohm",
+      level: 1,
+      image: "Ejercicio1.jpg",
       tutorContext: {
-        objetivo: "",
+        objective: "",
         netlist: "R1 N1 N2 1",
-        modoExperto: "y".repeat(60),
-        ac_refs: ["AC1"],
-        respuestaCorrecta: ["R1"],
+        expertMode: "y".repeat(60),
+        acRefs: ["AC1"],
+        correctAnswer: ["R1"],
       },
     });
     const prompt = buildTutorSystemPrompt(ej, "es");
@@ -191,21 +210,21 @@ describe("buildTutorSystemPrompt — placeholder defense", () => {
     expect(prompt).toContain("EXPERT REASONING");
   });
 
-  test("omits CORRECT ANSWER block when respuestaCorrecta is empty", () => {
+  test("omits CORRECT ANSWER block when correctAnswer is empty", () => {
     const ej = new Ejercicio({
       id: "x",
-      titulo: "Ejercicio",
-      enunciado: "",
-      asignatura: "Dispositivos electrónicos",
-      concepto: "Ley de Ohm",
-      nivel: 1,
-      imagen: "Ejercicio1.jpg",
+      title: "Ejercicio",
+      statement: "",
+      subject: "Dispositivos electrónicos",
+      concept: "Ley de Ohm",
+      level: 1,
+      image: "Ejercicio1.jpg",
       tutorContext: {
-        objetivo: "x".repeat(40),
+        objective: "x".repeat(40),
         netlist: "R1 N1 N2 1",
-        modoExperto: "y".repeat(60),
-        ac_refs: ["AC1"],
-        respuestaCorrecta: [],
+        expertMode: "y".repeat(60),
+        acRefs: ["AC1"],
+        correctAnswer: [],
       },
     });
     const prompt = buildTutorSystemPrompt(ej, "es");

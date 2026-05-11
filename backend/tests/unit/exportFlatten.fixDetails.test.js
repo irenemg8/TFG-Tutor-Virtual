@@ -12,13 +12,13 @@ const { flattenInteraccion } = _test;
 describe("exportRoutes.flattenInteraccion — pre-fix capture", () => {
   const inter = {
     id: "i-1",
-    usuarioId: "u-1",
-    ejercicioId: "e-1",
-    inicio: new Date(),
-    fin: new Date(),
+    userId: "u-1",
+    exerciseId: "e-1",
+    startTime: new Date(),
+    endTime: new Date(),
   };
-  const usuario = { upvLogin: "ana", nombre: "Ana", apellidos: "P" };
-  const ejercicio = { titulo: "Ej1" };
+  const usuario = { upvLogin: "ana", firstName: "Ana", lastName: "P" };
+  const ejercicio = { title: "Ej1" };
 
   function makeAssistant(extraMeta) {
     return {

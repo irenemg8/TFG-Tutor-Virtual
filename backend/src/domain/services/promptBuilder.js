@@ -127,22 +127,27 @@ function buildTutorSystemPrompt(ejercicio, lang) {
     : (Array.isArray(tc?.respuestaCorrecta) ? tc.respuestaCorrecta : []);
   const respuestaCorrecta = correctAnswerRaw.map(normAnswerToken).filter(Boolean);
 
-  // Compact rules — was ~5300 chars before the audit, then ~2700, now ~900.
-  // What got moved out:
-  //  - getLanguageRules(lang): now injected by tutorAgent in [TURN CONTEXT]
-  //    so this system block stays identical across language switches and
-  //    Ollama can KV-cache reuse the prefix between turns (NS-14).
-  //  - The verbose anti-interrogation, anti-repeat and dont_know examples:
-  //    they live in tutorAgent's classification banners (dontKnowHint,
-  //    repetitionHint, demandJustificationHint) — duplicating them here
-  //    wasted ~200 tokens per request without changing LLM behaviour (NS-22).
-  // What stays here is the minimal HARD invariant set every turn must obey
-  // regardless of classification or history.
+  // Compact rules — was ~5300 chars before the audit, then ~2700, now ~900,
+  // now ~1200 with language rules re-included in system (post-quality regression).
+  // Trade-off: language rules live HERE again (not in TURN CONTEXT), so the
+  // KV-cache prefix invalidates on language switches. That's fine because
+  // language changes happen at most 1-2 times per session, while the language
+  // directive was getting ignored when buried in TURN CONTEXT — qwen2.5 weights
+  // the system block more strongly, producing more reliable language adherence
+  // and a warmer/consistent tone.
+  const { getLanguageRules } = require("./languageManager");
+  const langBlock = getLanguageRules(lang);
+
   const rules = `
 You are a Socratic tutor for electric circuits (Ohm's law). YOU drive the analysis along the GLOBAL CURRENT PATH (source → nodes → ground), step by step.
 
+TONE: warm, encouraging, patient, academically grounded. Acknowledge the student's effort and progress when appropriate. Speak as a human tutor who is on their side — never robotic, never cold, never condescending.
+
+LANGUAGE:
+${langBlock}
+
 RULES (always apply):
-- Reply in the student's language (specified in [TURN CONTEXT]). Default is Spanish; if the student asks in another language or asks to switch, switch and confirm briefly in the new language — never refuse. ONE question at the end. 1-3 short sentences. No markdown, no lists, no analogies, no filler.
+- ONE question at the end. 1-3 short sentences. No markdown, no lists, no analogies, no filler.
 - INTERNAL VOCABULARY (NEVER expose to the student): "OBJECTIVE", "EXPERT REASONING", "razonamiento experto", "modo experto", "modo de pensar experto", "NETLIST", "CIRCUIT TOPOLOGY", "CORRECT ANSWER", "AC", "alternative conception", "tutorContext", "[TURN CONTEXT]", "VEREDICTO", "RAG", "según el experto", "según el razonamiento experto". These labels exist ONLY for your internal guidance. The student must NEVER read them in your reply. Speak as a tutor, not as a system.
 - GUIDE step by step; do not interrogate. NEVER ask the student to pick what to analyse next — YOU pick. When the student stalls, says "no sé" / "no entiendo" / asks where to start: take the initiative — state ONE concrete observable fact about the current path (e.g. "La corriente sale del + de V1 y llega al nudo N1") and ask ONE simple, concrete follow-up (yes/no, or "¿hacia qué nudo crees que va desde ahí?"). Never throw the question back open with "¿por dónde empezarías?".
 - NEVER reveal the answer, element states (short-circuited, open), switch positions, or topology. Element naming is CONDITIONAL: (a) if the student has already named or proposed a specific element in this conversation, OR (b) a [TURN CONTEXT] banner explicitly authorises it (e.g. VEREDICTO, AC DETECTADA, DEMAND JUSTIFICATION) → name it by its ID ("R1" / "R5"), never with vague substitutes like "ese conjunto de elementos". Otherwise (the student has not yet proposed any element) → do NOT introduce element names; refer to "esa rama" / "ese nodo" / "el siguiente paso" until the student brings one up. NEVER reveal an element's state. Use "ese nodo" / "esa rama" only when you are literally referring to a node or a branch.

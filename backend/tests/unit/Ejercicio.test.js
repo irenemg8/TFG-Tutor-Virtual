@@ -10,33 +10,33 @@ const Ejercicio = require("../../src/domain/entities/Ejercicio");
 describe("Ejercicio.getExerciseNumber", () => {
   function build(props) {
     return new Ejercicio({
-      titulo: props.titulo || "",
-      enunciado: "",
-      asignatura: "Dispositivos electrónicos",
-      concepto: "Ley de Ohm",
-      nivel: 1,
-      imagen: props.imagen || "",
+      title: props.title || "",
+      statement: "",
+      subject: "Dispositivos electrónicos",
+      concept: "Ley de Ohm",
+      level: 1,
+      image: props.image || "",
     });
   }
 
   test('título "Ejercicio 3" → 3', () => {
-    expect(build({ titulo: "Ejercicio 3" }).getExerciseNumber()).toBe(3);
+    expect(build({ title: "Ejercicio 3" }).getExerciseNumber()).toBe(3);
   });
 
   test("título sin número, imagen Ejercicio1.jpg → 1 (fallback)", () => {
     expect(
-      build({ titulo: "Resistencias y Circuito Abierto", imagen: "Ejercicio1.jpg" })
+      build({ title: "Resistencias y Circuito Abierto", image: "Ejercicio1.jpg" })
         .getExerciseNumber()
     ).toBe(1);
   });
 
   test("imagen con prefijo /static/ también se reconoce", () => {
     expect(
-      build({ titulo: "Foo", imagen: "/static/Ejercicio7.jpg" }).getExerciseNumber()
+      build({ title: "Foo", image: "/static/Ejercicio7.jpg" }).getExerciseNumber()
     ).toBe(7);
   });
 
   test("sin título ni imagen reconocibles → null", () => {
-    expect(build({ titulo: "Algo", imagen: "foo.png" }).getExerciseNumber()).toBeNull();
+    expect(build({ title: "Algo", image: "foo.png" }).getExerciseNumber()).toBeNull();
   });
 });

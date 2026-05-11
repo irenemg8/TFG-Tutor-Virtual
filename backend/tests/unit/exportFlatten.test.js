@@ -6,13 +6,13 @@ const { flattenInteraccion, rowsToCsv, buildFilter } = _test;
 describe("exportRoutes.flattenInteraccion — surfaces all per-turn signals", () => {
   const inter = {
     id: "i-1",
-    usuarioId: "u-1",
-    ejercicioId: "e-1",
-    inicio: new Date("2026-05-04T07:00:00Z"),
-    fin: new Date("2026-05-04T07:05:00Z"),
+    userId: "u-1",
+    exerciseId: "e-1",
+    startTime: new Date("2026-05-04T07:00:00Z"),
+    endTime: new Date("2026-05-04T07:05:00Z"),
   };
-  const usuario = { upvLogin: "estudiante01", nombre: "Ana", apellidos: "Pérez" };
-  const ejercicio = { titulo: "Divisor de tensión simple" };
+  const usuario = { upvLogin: "estudiante01", firstName: "Ana", lastName: "Pérez" };
+  const ejercicio = { title: "Divisor de tensión simple" };
 
   test("user message has no metadata; assistant row has the full event payload", () => {
     const messages = [
@@ -108,7 +108,7 @@ describe("exportRoutes.flattenInteraccion — surfaces all per-turn signals", ()
       to: "2026-05-04T00:00:00Z",
     });
     expect(f.userId).toBe("507f1f77bcf86cd799439011");
-    expect(f.ejercicioId).toBeUndefined();
+    expect(f.exerciseId).toBeUndefined();
     expect(f.from instanceof Date).toBe(true);
     expect(f.to instanceof Date).toBe(true);
   });
