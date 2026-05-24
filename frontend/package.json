@@ -16,11 +16,17 @@
     "@tailwindcss/postcss": "^4.1.7",
     "@tailwindcss/vite": "^4.1.7",
     "axios": "^1.9.0",
+    "katex": "^0.16.45",
     "react": "^19.1.0",
     "react-circular-progressbar": "^2.2.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^9.1.0",
     "react-router-dom": "^7.6.0",
-    "recharts": "^2.15.3"
+    "recharts": "^2.15.3",
+    "rehype-katex": "^7.0.1",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",

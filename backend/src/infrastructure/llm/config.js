@@ -1,0 +1,113 @@
+// This is the central configuration for the Agentic RAG system 
+
+const path = require("path");
+
+// Ollama base URL — respeta LLM_MODE para no llamar a la UPV en local.
+// (Antes la lista de fallback empezaba por OLLAMA_API_URL_UPV: si la variable
+// estaba seteada — como en cualquier .env heredado de producción — el
+// adapter intentaba llamar a la UPV en local y devolvía 404.)
+const llmMode = (process.env.LLM_MODE || "local").toLowerCase();
+const ollamaBaseUrl = llmMode === "upv"
+  ? (process.env.OLLAMA_API_URL_UPV ||
+     process.env.OLLAMA_BASE_URL_UPV ||
+     process.env.OLLAMA_API_URL ||
+     process.env.OLLAMA_BASE_URL ||
+     "http://127.0.0.1:11434")
+  : (process.env.OLLAMA_API_URL_LOCAL ||
+     process.env.OLLAMA_API_URL ||
+     process.env.OLLAMA_BASE_URL ||
+     "http://127.0.0.1:11434");
+
+// Allow embeddings to use a DIFFERENT Ollama instance than chat.
+// In production against Ollama UPV the chat model (qwen2.5) only lives on
+// the UPV server, but the embedding model (nomic-embed-text, very light)
+// can run locally to avoid the per-query 5-10s round trip that was
+// dragging retrieval into BudgetExhaustedError. If OLLAMA_EMBED_URL is
+// not set, embeddings fall back to the same base URL as chat (legacy
+// behaviour).
+const ollamaEmbedUrl = process.env.OLLAMA_EMBED_URL || ollamaBaseUrl;
+
+module.exports = {
+  // ChromaDB URL
+  CHROMA_URL: process.env.CHROMA_URL || "http://localhost:8000",
+
+  // ─── Provider toggle ──────────────────────────────────────────────
+  // "ollama" → uses OllamaLlmAdapter against OLLAMA_CHAT_URL (legacy path)
+  // "poligpt" → uses PoliGptLlmAdapter against POLIGPT_BASE_URL (OpenAI-compat)
+  LLM_PROVIDER: (process.env.LLM_PROVIDER || "ollama").toLowerCase(),
+  // "ollama" (Ollama /api/embed format) or "openai" (OpenAI /v1/embeddings)
+  // Defaults to "openai" when LLM_PROVIDER=poligpt, else "ollama".
+  EMBEDDING_PROVIDER: (
+    process.env.EMBEDDING_PROVIDER ||
+    (process.env.LLM_PROVIDER === "poligpt" ? "openai" : "ollama")
+  ).toLowerCase(),
+
+  // Embedding model
+  EMBEDDING_MODEL: process.env.RAG_EMBEDDING_MODEL || "nomic-embed-text:latest",
+  OLLAMA_EMBED_URL: ollamaEmbedUrl,
+
+  // LLM URL and model config
+  OLLAMA_CHAT_URL: ollamaBaseUrl,
+  OLLAMA_MODEL: process.env.OLLAMA_MODEL || "qwen2.5:latest",
+  OLLAMA_TEMPERATURE: Number(process.env.OLLAMA_TEMPERATURE || 0.4),
+  OLLAMA_NUM_CTX: Number(process.env.OLLAMA_NUM_CTX || 8192),
+  OLLAMA_NUM_PREDICT: Number(process.env.OLLAMA_NUM_PREDICT || 220),
+  OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || "60m",
+
+  // ─── PoliGPT (OpenAI-compatible LiteLLM proxy) ────────────────────
+  POLIGPT_BASE_URL: (process.env.POLIGPT_BASE_URL || "https://api.poligpt.upv.es").replace(/\/+$/, ""),
+  POLIGPT_API_KEY: process.env.POLIGPT_API_KEY || "",
+  POLIGPT_MODEL: process.env.POLIGPT_MODEL || "qwen3:32b",
+  // For embeddings via PoliGPT, the embed endpoint accepts the same
+  // model name list as /v1/models (nomic-embed-text, bge-m3, etc.).
+  POLIGPT_EMBED_MODEL: process.env.POLIGPT_EMBED_MODEL || "nomic-embed-text",
+
+  // RAG thresholds for the similarity score for the retrieval process
+  HIGH_THRESHOLD: Number(process.env.RAG_HIGH_THRESHOLD || 0.7),
+  MED_THRESHOLD: Number(process.env.RAG_MED_THRESHOLD || 0.4),
+
+  // Retrieval parameters for the RAG system.
+  // TOP_K_FINAL bajado de 3→2 para reducir el tamaño del prompt; los
+  // 2 mejores ejemplos transmiten el estilo socrático sin saturar contexto.
+  TOP_K_RETRIEVAL: 10,
+  TOP_K_FINAL: 2,
+  RRF_K: 60,
+  BM25_K1: 1.5,
+  BM25_B: 0.75,
+
+  // History messages max length for the conversation
+  // Subido de 8→20 (2026-05-11): con HISTORY_MAX_MESSAGES=8 el LLM sólo veía
+  // los últimos 4 turnos completos y el alumno tenía que repetir información
+  // ("te he dicho que…") porque las confirmaciones previas ya habían caído
+  // fuera de la ventana. 20 mensajes ≈ 10 turnos, coste +1-2KB de prompt.
+  HISTORY_MAX_MESSAGES: Number(process.env.HISTORY_MAX_MESSAGES || 20),
+
+  // File paths for the datasets and the knowledge graph
+  // __dirname = backend/src/infrastructure/llm/ → 2 levels up reaches backend/src/data/
+  DATASETS_DIR: path.join(__dirname, "..", "..", "data", "datasets"),
+  KG_PATH: path.join(
+    __dirname, "..", "..", "data", "knowledge-graph",
+    "knowledge-graph-with-interactions-and-rewards.json"
+  ),
+  LOG_DIR: path.join(__dirname, "..", "..", "logs", "rag"),
+
+  // Dataset file mapping (exercise number → file name)
+  // Exercise 2 uses the same dataset as exercise 1
+  EXERCISE_DATASET_MAP: {
+    1: "dataset_exercise_1.json",
+    2: "dataset_exercise_1.json",
+    3: "dataset_exercise_3.json",
+    4: "dataset_exercise_4.json",
+    5: "dataset_exercise_5.json",
+    6: "dataset_exercise_6.json",
+    7: "dataset_exercise_7.json",
+  },
+
+  // Loop-breaking: max consecutive wrong classifications before forcing scaffold
+  MAX_WRONG_STREAK: Number(process.env.RAG_MAX_WRONG_STREAK || 4),
+  // Loop-breaking: max total assistant turns before forcing stronger hints
+  MAX_TOTAL_TURNS: Number(process.env.RAG_MAX_TOTAL_TURNS || 16),
+
+  // Feature flag to enable/disable RAG
+  RAG_ENABLED: process.env.RAG_ENABLED !== "false",
+};

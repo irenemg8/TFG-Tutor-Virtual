@@ -11,7 +11,7 @@ Comprehensive visual documentation of the system architecture, component interac
 3. [UML Sequence Diagram — Complete Chat Request](#3-uml-sequence-diagram--complete-chat-request)
 4. [RAG Module Interconnection Map](#4-rag-module-interconnection-map)
 5. [Query Classification Decision Tree](#5-query-classification-decision-tree)
-6. [Pipeline Routing — All 8 Paths](#6-pipeline-routing--all-8-paths)
+6. [Pipeline Routing — All 9 Paths](#6-pipeline-routing--all-8-paths)
 7. [Hybrid Search Engine Flow](#7-hybrid-search-engine-flow)
 8. [Guardrail Safety Chain](#8-guardrail-safety-chain)
 9. [Middleware Request Lifecycle](#9-middleware-request-lifecycle)
@@ -68,6 +68,7 @@ Complete view of every component and connection in the system.
 │  │   │  /api/interacciones/*│  interacciones.js (requireAuth)                         │   │  │
 │  │   │  /api/resultados/*   │  resultados.js                                          │   │  │
 │  │   │  /api/progreso/*     │  progresoRoutes.js                                      │   │  │
+│  │   │  /api/export/*       │  exportRoutes.js (JSON/CSV data export)                 │   │  │
 │  │   │  /api/usuarios/*     │  usuarios.js                                            │   │  │
 │  │   │  /auth/*             │  authRoutes.js (CAS OAuth2 + demo)                      │   │  │
 │  │   │  /static/*           │  Express static (exercise images)                       │   │  │
@@ -104,11 +105,11 @@ Complete view of every component and connection in the system.
 │  └────────────────────────────────────────────────────────────────────────────────────────┘  │
 │                                                                                              │
 │  ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐                          │
-│  │  models/         │   │ utils/           │   │  authRoutes.js   │                          │
-│  │  ejercicio.js    │   │ promptBuilder.js │   │  (CAS + demo)    │                          │
-│  │  interaccion.js  │   └──────────────────┘   └──────────────────┘                          │
-│  │  resultado.js    │                                                                        │
-│  │  usuario.js      │                                                                        │
+│  │  models/         │   │ utils/              │   │  authRoutes.js   │                       │
+│  │  ejercicio.js    │   │ promptBuilder.js    │   │  (CAS + demo)    │                       │
+│  │  interaccion.js  │   │ languageManager.js  │   └──────────────────┘                       │
+│  │  resultado.js    │   │ (es, val, en)       │                                              │
+│  │  usuario.js      │   └─────────────────────┘                                              │
 │  └──────────────────┘                                                                        │
 └──────────┬─────────────────────────┬───────────────────────────────┬─────────────────────────┘
            │                         │                               │
@@ -174,11 +175,12 @@ Complete view of every component and connection in the system.
 │  │   <<component>>   │          │       │        ├── interacciones.js             │ │
 │  │  Workflow Monitor │          │       │        ├── resultados.js                │ │
 │  │                   │          │       │        ├── progresoRoutes.js            │ │
-│  │  [Pipeline Graph] │─────────►│       │        ├── usuarios.js                  │ │
-│  │  [Event Log]      │  WS      │       │        └── ollamaChatRoutes.js          │ │
-│  │  [Node Detail]    │          │       │                                         │ │
-│  │  [Timing Bar]     │          │       └──── [RAG System] ◄────────────────┐     │ │
-│  └───────────────────┘          │                │                          │     │ │
+│  │  [Pipeline Graph] │─────────►│       │        ├── exportRoutes.js              │ │
+│  │  [Event Log]      │  WS      │       │        ├── usuarios.js                  │ │
+│  │  [Node Detail]    │          │       │        └── ollamaChatRoutes.js          │ │
+│  │  [Timing Bar]     │          │       │                                         │ │
+│  └───────────────────┘          │       └──── [RAG System] ◄────────────────┐     │ │
+│                                 │                │                          │     │ │
 │                                 │                ▼                          │     │ │
 │                                 │  ┌──────────────────────────────┐         │     │ │
 │                                 │  │      <<component>>           │         │     │ │
@@ -323,14 +325,19 @@ Student        Frontend       ragMiddleware      ragPipeline      queryClassifie
   │               │               │ (non-streaming)  │                 │                │          (qwen2.5)
   │               │               │ ◄────────────────────────────────────────────────────────────  response
   │               │               │                  │                 │                │                │
-  │               │               │ ┌─── GUARDRAIL CHAIN ──────────────────────────┐    │                │
-  │               │               │ │ 1. checkSolutionLeak()                       │    │                │
-  │               │               │ │    └─ if leaked → retry with stronger prompt │    │                │
-  │               │               │ │ 2. checkFalseConfirmation()                  │    │                │
-  │               │               │ │    └─ if confirmed → retry with instruction  │    │                │
-  │               │               │ │ 3. checkStateReveal()                        │    │                │
-  │               │               │ │    └─ if revealed → retry with instruction   │    │                │
-  │               │               │ └──────────────────────────────────────────────┘    │                │
+  │               │               │ ┌─── GUARDRAIL CHAIN ──────────────────────────────┐    │            │
+  │               │               │ │ 1. checkSolutionLeak()                           │    │            │
+  │               │               │ │    └─ if leaked → retry with stronger prompt     │    │            │
+  │               │               │ │ 2. checkFalseConfirmation()                      │    │            │
+  │               │               │ │    └─ if confirmed → retry with instruction      │    │            │
+  │               │               │ │ 3. checkPrematureConfirmation()                  │    │            │
+  │               │               │ │    └─ if premature → retry with instruction      │    │            │
+  │               │               │ │ 4. checkStateReveal()                            │    │            │
+  │               │               │ │    └─ if revealed → retry with instruction       │    │            │
+  │               │               │ │ 5. checkElementNaming()                          │    │            │
+  │               │               │ │    └─ if named → retry with instruction          │    │            │
+  │               │               │ │ 6. Deterministic prefix fallback (if still wrong)│    │            │
+  │               │               │ └──────────────────────────────────────────────────┘    │            │
   │               │               │                  │                 │                │                │
   │               │               │ SSE: {chunk: response}             │                │                │
   │               │◄──────────────│                  │                 │                │                │
@@ -424,13 +431,13 @@ How all 14 RAG modules depend on and call each other.
 | `config.js` | — | All modules |
 | `ragMiddleware.js` | config, ragPipeline, guardrails, knowledgeGraph, bm25, logger, ragEventBus, promptBuilder, Ejercicio, Interaccion | Express router (entry point) |
 | `ragPipeline.js` | config, queryClassifier, hybridSearch, knowledgeGraph, ragEventBus, Resultado | ragMiddleware |
-| `queryClassifier.js` | — | ragPipeline |
+| `queryClassifier.js` | utils/languageManager | ragPipeline |
 | `hybridSearch.js` | config, embeddings, chromaClient, bm25, ragEventBus | ragPipeline |
 | `knowledgeGraph.js` | config | ragPipeline, ragMiddleware (init) |
 | `bm25.js` | — | hybridSearch, ragMiddleware (init) |
 | `chromaClient.js` | config | hybridSearch, ingest |
 | `embeddings.js` | config | hybridSearch, ingest |
-| `guardrails.js` | — | ragMiddleware |
+| `guardrails.js` | utils/languageManager | ragMiddleware |
 | `logger.js` | config | ragMiddleware |
 | `ragEventBus.js` | — | All RAG modules |
 | `workflowSocket.js` | ragEventBus | index.js (server setup) |
@@ -448,61 +455,64 @@ The `queryClassifier.js` module applies these checks **in order**. The first mat
                                     ▼
                         ┌───────────────────────┐
                         │  Starts with greeting │
-                        │  pattern? ("hola",    │
-                        │  "buenos días", etc)  │
+                        │  pattern? (multi-lang)│
                         └───────────┬───────────┘
                                yes/ \no
                               /       \
                              ▼         ▼
                      ┌──────────┐  ┌───────────────────────┐
-                     │ GREETING │  │ Contains "no lo sé",  │
-                     │          │  │ "ni idea", etc.?      │
+                     │ GREETING │  │ Contains "don't know" │
+                     │          │  │ pattern? (multi-lang) │
                      └──────────┘  └───────────┬───────────┘
                                           yes/ \no
                                          /       \
                                         ▼         ▼
                                ┌────────────┐  ┌──────────────────────┐
                                │ DONT_KNOW  │  │ Length < 15 chars    │
-                               │            │  │ AND no resistances?  │
+                               │            │  │ AND no elements?     │
                                └────────────┘  └───────────┬──────────┘
                                                       yes/ \no
                                                      /       \
                                                     ▼         ▼
                                           ┌─────────────┐  ┌──────────────────────────┐
-                                          │ SINGLE_WORD │  │ Extract resistances      │
-                                          │             │  │ (R1, R2, ...) from msg   │
-                                          └─────────────┘  │                          │
-                                                           │ Compare with correct     │
-                                                           │ answer set               │
+                                          │ SINGLE_WORD │  │ Extract evaluable        │
+                                          │             │  │ elements from message    │
+                                          └─────────────┘  │ (generic or R\d+ regex) │
+                                                           │                          │
+                                                           │ Separate: proposed vs    │
+                                                           │ negated (detectNegation) │
+                                                           │                          │
+                                                           │ Compare PROPOSED with    │
+                                                           │ correct answer set       │
                                                            └─────────────┬────────────┘
                                                                          │
                                                               ┌──────────┴──────────┐
                                                               │                     │
-                                                         Resistances          Resistances
-                                                         MATCH correct        DON'T match
+                                                         PROPOSED              PROPOSED
+                                                         MATCH correct         DON'T match
                                                               │                     │
                                                               ▼                     ▼
-                                                   ┌──────────────────┐   ┌──────────────────┐
-                                                   │ Has reasoning    │   │ Has concept      │
-                                                   │ keywords?        │   │ keywords?        │
-                                                   │ ("porque",       │   │ ("serie",        │
-                                                   │  "dado que"...)  │   │  "paralelo",     │
-                                                   └───────┬──────────┘   │  "cortocircuito" │
-                                                      yes/ \no            │   ...)           │
-                                                     /       \            └────────┬─────────┘
-                                                    ▼         ▼                yes/ \no
-                                          ┌────────────┐  ┌──────────┐         /       \
-                                          │ Has concept│  │ CORRECT  │        ▼         ▼
-                                          │ keywords?  │  │   _NO_   │┌──────────┐┌────────────┐
-                                          └──────┬─────┘  │REASONING ││  WRONG   ││   WRONG    │
-                                            yes/ \no      └──────────┘│ CONCEPT  ││  ANSWER    │
-                                           /       \                  └──────────┘└────────────┘
-                                          ▼         ▼
-                                 ┌────────────┐  ┌──────────┐
-                                 │  CORRECT   │  │ CORRECT  │
-                                 │   _WRONG_  │  │  _GOOD_  │
-                                 │ REASONING  │  │REASONING │
-                                 └────────────┘  └──────────┘
+                                                   ┌──────────────────┐   ┌────────────────────────┐
+                                                   │ Has concept      │   │ All negations correct  │
+                                                   │ keywords?        │   │ AND all proposals      │
+                                                   └───────┬──────────┘   │ correct (incomplete)?  │
+                                                      yes/ \no            └────────────┬───────────┘
+                                                     /       \                    yes/ \no
+                                                    ▼         ▼                  /       \
+                                          ┌────────────┐  ┌──────────┐         ▼         ▼
+                                          │ Correct    │  │ Has      │  ┌──────────┐ ┌──────────────┐
+                                          │ negations? │  │reasoning?│  │ PARTIAL  │ │ Has concept  │
+                                          │ OR state-  │  └───┬──────┘  │ CORRECT  │ │ keywords?    │
+                                          │ only conc? │  yes/ \no      └──────────┘ └──────┬───────┘
+                                          └──────┬─────┘ /       \                     yes/ \no
+                                            yes/ \no    ▼         ▼                   /       \
+                                           /       \  ┌──────────┐ ┌──────────┐      ▼         ▼
+                                          ▼         ▼ │ CORRECT  │ │ CORRECT  │┌──────────┐┌────────┐
+                                 ┌────────────┐┌────────────┐│  _GOOD_  │ │   _NO_   ││  WRONG   ││ WRONG  │
+                                 │  CORRECT   ││  CORRECT   ││REASONING │ │REASONING ││ CONCEPT  ││ANSWER  │
+                                 │   _GOOD_   ││   _WRONG_  │└──────────┘ └──────────┘└──────────┘└────────┘
+                                 │ REASONING  ││ REASONING  │
+                                 └────────────┘└────────────┘
 ```
 
 ### Classification Output
@@ -513,39 +523,41 @@ Every classification returns the same structure:
 {
   type:          "greeting" | "dont_know" | "single_word" | "wrong_answer" |
                  "correct_no_reasoning" | "correct_wrong_reasoning" |
-                 "correct_good_reasoning" | "wrong_concept"
+                 "correct_good_reasoning" | "wrong_concept" | "partial_correct"
 
-  resistances:   ["R1", "R2"]        // All R# found in the message
-  hasReasoning:  true | false         // Contains "porque", "dado que", etc.
-  concepts:      ["serie", "paralelo"] // Domain keywords found
+  resistances:   ["R1", "R2", "R3"]   // All elements found in the message
+  proposed:      ["R1", "R2"]          // Elements the student affirms/proposes
+  negated:       ["R3"]               // Elements the student explicitly rejects
+  hasReasoning:  true | false          // Contains reasoning keywords (multi-lang)
+  concepts:      ["serie", "paralelo"] // Domain keywords found (multi-lang)
 }
 ```
 
 ---
 
-## 6. Pipeline Routing — All 8 Paths
+## 6. Pipeline Routing — All 9 Paths
 
 Each classification type triggers a different retrieval strategy. Below is every possible path through `ragPipeline.js`.
 
 ### Overview Map
 
 ```
-                                Classification Type
-                                       │
-            ┌──────────┬───────────┬───┴────┬──────────┬──────────────┬──────────────┬─────────────┐
-            ▼          ▼           ▼        ▼          ▼              ▼              ▼             ▼
-        greeting   dont_know  single_word  wrong    correct_no    correct_wrong   correct_good  wrong
-                                          answer    reasoning     reasoning       reasoning    concept
-            │          │           │        │          │              │              │             │
-            ▼          ▼           ▼        ▼          ▼              ▼              ▼             ▼
-         no_rag    scaffold    demand    rag        demand        correct        rag          concept
-                              reasoning examples   reasoning      concept       examples     correction
-            │          │           │        │          │              │              │             │
-            ▼          ▼           ▼        ▼          ▼              ▼              ▼             ▼
-         next()       KG       Hint      Hybrid    Hybrid         Hybrid +        Hybrid        KG +
-         (fallback)  search    only      Search    Search          KG search      Search       Hybrid
-                     (3 basic            + CRAG    + Hint          + Hint         + Hint       Search
-                     concepts)                                                                 + Hint
+                                           Classification Type
+                                                  │
+       ┌──────────┬───────────┬───┴────┬──────────┬──────────────┬──────────────┬─────────────┬─────────────┐
+       ▼          ▼           ▼        ▼          ▼              ▼              ▼             ▼             ▼
+   greeting   dont_know  single_word  wrong    correct_no    correct_wrong   correct_good  wrong       partial
+                                     answer    reasoning     reasoning       reasoning    concept      correct
+       │          │           │        │          │              │              │             │             │
+       ▼          ▼           ▼        ▼          ▼              ▼              ▼             ▼             ▼
+    no_rag    scaffold    demand    rag        demand        correct        rag          concept        rag
+                         reasoning examples   reasoning      concept       examples     correction    examples
+       │          │           │        │          │              │              │             │             │
+       ▼          ▼           ▼        ▼          ▼              ▼              ▼             ▼             ▼
+    next()       KG       Hint      Hybrid    Hybrid         Hybrid +        Hybrid        KG +         Hybrid
+    (fallback)  search    only      Search    Search          KG search      Search       Hybrid       Search
+                (3 basic            + CRAG    + Hint          + Hint         + Hint       Search        + Hint
+                concepts)                                                                + Hint
 ```
 
 ---
@@ -876,6 +888,46 @@ Resources used: Knowledge Graph, ChromaDB, Ollama (embeddings), BM25, MongoDB (s
 Augmentation:   Hint + KG context + Examples + Student history + Guardrail reminder
 ```
 
+### Path 9: `partial_correct` → `rag_examples`
+
+```
+Student: "no pasa por R3" (when R3 is NOT in the correct answer — correct exclusion, incomplete answer)
+         │
+         ▼
+┌─────────────────┐     ┌──────────────────────┐     ┌────────────────────────┐
+│ classifyQuery() │────►│ type: partial_correct │────►│ decision: rag_examples │
+│                 │     │ proposed: []           │     └────────────┬───────────┘
+│                 │     │ negated: ["R3"]        │                  │
+└─────────────────┘     └──────────────────────┘                   │
+                                                                   ▼
+                                                    ┌───────────────────────────┐
+                                                    │    Hybrid Search          │
+                                                    │    (BM25 + Semantic + RRF)│
+                                                    └──────────────┬────────────┘
+                                                                   │
+                                                                   ▼
+                                                    ┌───────────────────────────────────────────┐
+                                                    │ Build augmentation:                       │
+                                                    │                                           │
+                                                    │ [RESPONSE MODE]                           │
+                                                    │ Classification: partial_correct            │
+                                                    │ Hint: "Acknowledge their correct           │
+                                                    │ reasoning, guide to complete answer"       │
+                                                    │ + intermediate feedback phrases (partial)  │
+                                                    │                                           │
+                                                    │ [PER-ELEMENT ANALYSIS]                    │
+                                                    │ CORRECT REJECTION: R3 not in answer       │
+                                                    │ MISSING: R1, R2, R4 (in correct answer)   │
+                                                    │                                           │
+                                                    │ [REFERENCE EXAMPLES]                      │
+                                                    │ [STUDENT HISTORY]                         │
+                                                    │ [GUARDRAIL reminder]                      │
+                                                    └───────────────────────────────────────────┘
+
+Resources used: ChromaDB, Ollama (embeddings), BM25, MongoDB (student history)
+Augmentation:   Hint + feedback phrases + Per-element analysis + Examples + Student history + Guardrail reminder
+```
+
 ---
 
 ### Pipeline Path Summary Table
@@ -890,6 +942,7 @@ Augmentation:   Hint + KG context + Examples + Student history + Guardrail remin
 | 6 | `correct_wrong_reasoning` | `correct_concept` | Yes | — | By concepts | Yes | Checked (usually no) |
 | 7 | `correct_good_reasoning` | `rag_examples` | Yes | — | — | Yes | Always (bypass LLM) |
 | 8 | `wrong_concept` | `concept_correction` | Yes | — | By concepts | Yes | — |
+| 9 | `partial_correct` | `rag_examples` | Yes | — | — | Yes | — |
 
 ---
 
@@ -990,7 +1043,7 @@ Detailed flow of the `hybridSearch.js` module showing both search paths and RRF 
 
 ## 8. Guardrail Safety Chain
 
-Three sequential checks in `ragMiddleware.js`, each with a retry mechanism.
+Five sequential checks in `ragMiddleware.js`, each with a retry mechanism. All detection patterns are multi-language (Spanish, Valencian, English), loaded from `languageManager.js`.
 
 ```
                     LLM Response (from Ollama, non-streaming)
@@ -1002,72 +1055,61 @@ Three sequential checks in `ragMiddleware.js`, each with a retry mechanism.
                     │                                   │
                     │  Checks:                          │
                     │  1. Response contains ALL correct │
-                    │     resistances?                  │
+                    │     elements?                     │
                     │     If no → PASS (no leak)        │
                     │                                   │
                     │  2. Contains reveal phrases?      │
                     │     "la respuesta es",            │
-                    │     "las resistencias son", etc.  │
+                    │     "the answer is", etc.         │
+                    │     (multi-language)              │
                     │     If yes → FAIL                 │
                     │                                   │
-                    │  3. Lists all correct Rs together │
-                    │     in an affirmative sentence?   │
-                    │     "R1, R2 y R4 son..."          │
+                    │  3. Lists all correct elements    │
+                    │     together in affirmative sent? │
                     │     (excludes questions with ?)   │
                     │     If yes → FAIL                 │
                     └───────────────┬───────────────────┘
-                               pass/ \fail
-                              /       \
-                             ▼         ▼
-                         continue  ┌─────────────────────┐
-                             │     │ RETRY:              │
-                             │     │ Append stronger     │
-                             │     │ instruction to      │
-                             │     │ system prompt →     │
-                             │     │ Re-call Ollama      │
-                             │     └──────────┬──────────┘
-                             │                │
-                             ▼                ▼
+                               pass/ \fail → RETRY with stronger instruction
+                                    │
+                                    ▼
                     ┌───────────────────────────────────┐
                     │  GUARDRAIL 2: False Confirmation  │
                     │  (checkFalseConfirmation)         │
                     │                                   │
-                    │  Only runs when classification    │
-                    │  is: wrong_answer, wrong_concept, │
-                    │  or single_word                   │
+                    │  Active for: wrong_answer,        │
+                    │  wrong_concept, single_word       │
                     │                                   │
                     │  Checks first 60 chars for:       │
-                    │  "perfecto", "correcto", "exacto",│
-                    │  "muy bien", "eso es", "así es",  │
-                    │  "bien hecho", etc.               │
-                    │                                   │
-                    │  If student is WRONG and tutor    │
-                    │  says "Correcto!" → FAIL          │
+                    │  "perfecto", "correct", "exacto", │
+                    │  "very good", etc. (multi-lang,   │
+                    │  accent-insensitive)              │
                     └───────────────┬───────────────────┘
-                               pass/ \fail
-                              /       \
-                             ▼         ▼
-                         continue  ┌─────────────────────┐
-                             │     │ RETRY:              │
-                             │     │ Append false-confirm│
-                             │     │ instruction →       │
-                             │     │ Re-call Ollama      │
-                             │     └──────────┬──────────┘
-                             │                │
-                             ▼                ▼
+                               pass/ \fail → RETRY with false-confirm instruction
+                                    │
+                                    ▼
                     ┌───────────────────────────────────┐
-                    │  GUARDRAIL 3: State Reveal Check  │
+                    │  GUARDRAIL 3: Premature Confirm   │
+                    │  (checkPrematureConfirmation)     │
+                    │                                   │
+                    │  Active for: correct_no_reasoning,│
+                    │  correct_wrong_reasoning,         │
+                    │  partial_correct                  │
+                    │                                   │
+                    │  Same 60-char check as G2 but     │
+                    │  different trigger types —         │
+                    │  prevents confirming correct       │
+                    │  answer before reasoning validated│
+                    └───────────────┬───────────────────┘
+                               pass/ \fail → RETRY with partial-confirm instruction
+                                    │
+                                    ▼
+                    ┌───────────────────────────────────┐
+                    │  GUARDRAIL 4: State Reveal Check  │
                     │  (checkStateReveal)               │
                     │                                   │
                     │  Checks each sentence for:        │
-                    │  resistance name + state phrase   │
-                    │                                   │
-                    │  State phrases:                   │
-                    │  "está cortocircuitad(a/o)",      │
-                    │  "está en circuito abierto",      │
-                    │  "no circula corriente por",      │
-                    │  "tiene tensión cero",            │
-                    │  "mismo nudo", etc.               │
+                    │  element name + state phrase       │
+                    │  (multi-language)                 │
                     │                                   │
                     │  Exception: questions (contains ?)│
                     │  are allowed (Socratic asking)    │
@@ -1075,17 +1117,38 @@ Three sequential checks in `ragMiddleware.js`, each with a retry mechanism.
                     │  "R5 está cortocircuitada" → FAIL │
                     │  "¿Está R5 cortocircuitada?" → OK │
                     └───────────────┬───────────────────┘
-                               pass/ \fail
-                              /       \
-                             ▼         ▼
-                    Safe response ┌─────────────────────┐
-                         │        │ RETRY:              │
-                         │        │ Append state-reveal │
-                         │        │ instruction →       │
-                         │        │ Re-call Ollama      │
-                         │        └──────────┬──────────┘
-                         │                   │
-                         ▼                   ▼
+                               pass/ \fail → RETRY with state-reveal instruction
+                                    │
+                                    ▼
+                    ┌───────────────────────────────────┐
+                    │  GUARDRAIL 5: Element Naming      │
+                    │  (checkElementNaming)             │
+                    │                                   │
+                    │  Checks if tutor names a specific │
+                    │  evaluable element in a question  │
+                    │  or directive sentence:           │
+                    │                                   │
+                    │  "¿Qué pasa con R5?" → FAIL      │
+                    │  "Fíjate en R3" → FAIL           │
+                    │  "¿Qué pasa cuando hay un        │
+                    │   cortocircuito?" → OK (concept)  │
+                    └───────────────┬───────────────────┘
+                               pass/ \fail → RETRY with element-naming instruction
+                                    │
+                                    ▼
+                    ┌───────────────────────────────────┐
+                    │  FALLBACK: Deterministic Prefix   │
+                    │                                   │
+                    │  If response STILL starts with    │
+                    │  confirmation for wrong/partial:  │
+                    │                                   │
+                    │  1. removeOpeningConfirmation()   │
+                    │     strips leading confirmations  │
+                    │  2. Prepend deterministic phrase  │
+                    │     ("Hmm, no del todo..." etc.)  │
+                    └───────────────┬───────────────────┘
+                                    │
+                                    ▼
                     ┌───────────────────────────────────┐
                     │  Send response to student via SSE │
                     └───────────────────────────────────┘
@@ -1093,7 +1156,7 @@ Three sequential checks in `ragMiddleware.js`, each with a retry mechanism.
 
 ### Guardrail Worst Case
 
-In the worst case, all 3 guardrails fail, requiring **4 total LLM calls** (1 original + 3 retries). This is why non-streaming mode is essential — the system must inspect the full response before deciding whether to send it or retry.
+In the worst case, all 5 guardrails fail, requiring **6 total LLM calls** (1 original + 5 retries). If the response still starts with a confirmation after all retries, the deterministic prefix fallback provides a last-resort fix without an additional LLM call. This is why non-streaming mode is essential — the system must inspect the full response before deciding whether to send it or retry.
 
 ---
 
@@ -1127,8 +1190,10 @@ Complete lifecycle of a request through `ragMiddleware.js` with all decision poi
                                    │ yes
                                    ▼
                     ┌───────────────────────────────────┐
-                    │  Run RAG Pipeline                 │
-                    │  (classifyQuery + retrieval)      │
+                    │  Resolve language from history     │
+                    │  Get evaluable elements            │
+                    │  Run RAG Pipeline                  │
+                    │  (classifyQuery + retrieval)       │
                     └───────────────┬───────────────────┘
                                    │
                                    ▼
@@ -1151,19 +1216,34 @@ Complete lifecycle of a request through `ragMiddleware.js` with all decision poi
                                    │
                                    ▼
                     ┌───────────────────────────────────┐
+                    │  LOOP DETECTION                   │
+                    │                                   │
+                    │  detectTutorRepetition()          │
+                    │  countPreviousCorrectTurns()      │
+                    │  countConsecutiveWrongTurns()     │
+                    │  countTotalAssistantTurns()       │
+                    │  detectFrustration()              │
+                    │                                   │
+                    │  Loop override: if correct answer │
+                    │  + repetition → correct_good_reas │
+                    └───────────────┬───────────────────┘
+                                   │
+                                   ▼
+                    ┌───────────────────────────────────┐
                     │  DETERMINISTIC FINISH CHECK       │
                     │                                   │
-                    │  correct_good_reasoning?          │──── yes ──► Send "¡Correcto!" + FIN
-                    │                                   │             Log + End SSE + Return
-                    │  correct_no_reasoning             │
-                    │  + history >= 2 messages?         │──── yes ──► Send "¡Correcto!" + FIN
-                    │                                   │             Log + End SSE + Return
+                    │  correct_good_reasoning?          │──── yes ──► Send finish msg (lang-aware)
+                    │  (incl. loop override)            │             + FIN token. Log + End SSE
                     └───────────────┬───────────────────┘
                                    │ no (needs LLM)
                                    ▼
                     ┌───────────────────────────────────┐
                     │  Build augmented system prompt    │
-                    │  = base prompt + RAG augmentation │
+                    │  = base prompt                    │
+                    │  + conversation progress hint     │
+                    │  + anti-loop / frustration /      │
+                    │    stuck hints (if applicable)    │
+                    │  + RAG augmentation               │
                     │                                   │
                     │  Load conversation history        │
                     │  (last 8 messages from MongoDB)   │
@@ -1178,9 +1258,10 @@ Complete lifecycle of a request through `ragMiddleware.js` with all decision poi
                                    │
                                    ▼
                     ┌───────────────────────────────────┐
-                    │  Run 3 Guardrails sequentially    │
+                    │  Run 5 Guardrails sequentially    │
                     │  (see Guardrail Safety Chain)     │
                     │  Each may trigger an LLM retry    │
+                    │  + deterministic prefix fallback  │
                     └───────────────┬───────────────────┘
                                    │
                                    ▼

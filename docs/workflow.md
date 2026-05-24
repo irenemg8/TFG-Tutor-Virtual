@@ -85,7 +85,7 @@ When a student sends a message, nodes light up in sequence as the pipeline progr
    - **Student History** (loads past errors)
 6. **Deterministic Finish** checks if the exercise can end
 7. **PoliGPT (Ollama)** activates → LLM generates a response
-8. **Guardrails** activate sequentially: Solution Leak → False Confirmation → State Reveal
+8. **Guardrails** activate sequentially: Solution Leak → False Confirmation → Premature Confirmation → State Reveal → Element Naming
 9. **Response (SSE)** activates → response sent to student
 10. **JSONL Logger** activates → interaction logged
 
@@ -167,7 +167,7 @@ A horizontal stacked bar showing the time breakdown of the current request. Each
 | Retrieval | Amber | Time for hybrid search + CRAG |
 | Augmentation | Purple | Time building the augmentation context |
 | LLM Call | Blue | Time waiting for Ollama to respond |
-| Guardrails | Red | Time running the three guardrail checks |
+| Guardrails | Red | Time running the five guardrail checks |
 | Other | Gray | Overhead (MongoDB queries, SSE, etc.) |
 
 Each segment shows its duration in milliseconds. The total request time is displayed at the end.
@@ -280,7 +280,7 @@ For algorithm steps (BM25 Search, Embedding Generator, RRF Fusion, CRAG Reformul
 
 ### GuardrailNode
 
-For safety checks (Solution Leak, False Confirmation, State Reveal).
+For safety checks (Solution Leak, False Confirmation, Premature Confirmation, State Reveal, Element Naming).
 
 - **Styling**: Rounded rectangle with shield icon
 - **Pass state**: Green border

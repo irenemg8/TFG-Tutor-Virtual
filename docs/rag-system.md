@@ -40,8 +40,8 @@ RAG Middleware (ragMiddleware.js)
     │
     ▼
 Pipeline Orchestrator (ragPipeline.js)
-    │── Query Classifier → determines message type (8 categories)
-    │── Routes to appropriate retrieval strategy (7 paths)
+    │── Query Classifier → determines message type (9 categories)
+    │── Routes to appropriate retrieval strategy (8 paths)
     │── Retrieves from: Knowledge Graph, Hybrid Search, Student History
     │── Applies CRAG if retrieval quality is low
     │── Builds augmentation context
@@ -52,8 +52,9 @@ Back to Middleware
     │── Builds augmented system prompt (base + RAG context)
     │── Loads conversation history from MongoDB
     │── Calls Ollama LLM (non-streaming)
-    │── Runs 3 sequential guardrails on the response
+    │── Runs 5 sequential guardrails on the response
     │── Retries LLM if any guardrail fails
+    │── Applies deterministic prefix fallback if confirmation persists
     │── Sends response to student via SSE
     │── Saves to MongoDB + JSONL log
 ```
@@ -100,6 +101,8 @@ All tuneable parameters are centralized in a single configuration module. This m
 | `KG_PATH` | `material-complementario/llm/knowledge-graph/...json` | Path to the knowledge graph JSON file |
 | `LOG_DIR` | `backend/logs/rag` | Path where JSONL interaction logs are stored |
 | `EXERCISE_DATASET_MAP` | `{1: "dataset_exercise_1.json", ...}` | Maps exercise numbers to dataset files. Exercise 2 shares the same dataset as exercise 1 |
+| `MAX_WRONG_STREAK` | `4` | Max consecutive wrong classifications before injecting a `[STUDENT IS STUCK]` hint that forces the LLM to change strategy |
+| `MAX_TOTAL_TURNS` | `16` | Max total assistant turns before injecting the same `[STUDENT IS STUCK]` hint |
 | `RAG_ENABLED` | `true` | Feature flag to disable the entire RAG system |
 
 **Why these defaults?** The values were tuned empirically. Temperature 0.4 prevents the LLM from being too creative (important for a tutor that must not hallucinate facts). `TOP_K_FINAL=3` limits prompt size while still providing enough examples. `RRF_K=60` is a standard value from the original RRF paper (Cormack et al., 2009) that gives a balanced fusion. `MED_THRESHOLD=0.4` triggers CRAG when retrieval quality is genuinely poor without being too aggressive.
@@ -150,7 +153,7 @@ The ingestion script (`ingest.js`) is a standalone script that must be run once 
 
 **File:** `backend/src/rag/queryClassifier.js`
 
-Every student message is classified into one of 8 categories before any retrieval or generation happens. The classification determines which retrieval strategy the pipeline uses and what instructions the LLM receives.
+Every student message is classified into one of 9 categories before any retrieval or generation happens. The classification determines which retrieval strategy the pipeline uses and what instructions the LLM receives.
 
 ### Classification Types
 
@@ -159,34 +162,47 @@ Every student message is classified into one of 8 categories before any retrieva
 | `greeting` | "Hola, ¿qué tal?" | Social greeting, no exercise content |
 | `dont_know` | "No lo sé" | Student does not know how to proceed |
 | `single_word` | "Todas" | Very short answer without any reasoning |
-| `wrong_answer` | "R5" | Incorrect resistance selection |
+| `wrong_answer` | "R5" | Incorrect element selection |
 | `correct_no_reasoning` | "R1, R2 y R4" | Correct answer but no explanation given |
 | `correct_wrong_reasoning` | "R1, R2 y R4 porque forman un divisor de tensión" | Correct answer but using a misconception to justify it |
 | `correct_good_reasoning` | "R1, R2 y R4 porque R3 está en abierto..." | Correct answer with sound reasoning |
 | `wrong_concept` | "R1 y R2 dado que forman un divisor de tensión" | Wrong answer using a specific misconception |
+| `partial_correct` | "no pasa por R3" | Student correctly excludes elements or proposes only correct ones, but the answer is incomplete |
 
 ### How Classification Works
 
-The classifier is **entirely rule-based** — it uses regex patterns and keyword matching, no LLM calls. The decision tree:
+The classifier is **entirely rule-based** — it uses regex patterns and keyword matching, no LLM calls. All patterns (greetings, "don't know" expressions, reasoning indicators, concept keywords) are loaded from `languageManager.js` via `getAllPatterns()`, covering Spanish, Valencian, and English.
 
-1. **Check for greetings**: Does the message start with "hola", "buenos días", etc.?
-2. **Check for "don't know"**: Does the message contain "no lo sé", "ni idea", etc.?
-3. **Check for short answers**: Is the message less than 15 characters with no resistance mentions?
-4. **Extract resistances**: Find all `R1`, `R2`, etc. using regex `/R\d+/gi`
-5. **Compare with correct answer**: If the extracted resistances exactly match the correct answer set:
-   - No reasoning keywords → `correct_no_reasoning`
-   - Has reasoning keywords AND concept keywords (like "divisor de tensión") → `correct_wrong_reasoning` (assumes the concept may be misapplied)
-   - Has reasoning keywords, no concept keywords → `correct_good_reasoning`
-6. **Wrong resistances with concepts** → `wrong_concept`
-7. **Everything else** → `wrong_answer`
+The decision tree:
+
+1. **Check for greetings**: Does the message start with "hola", "buenos días", "bon dia", "hello", etc.?
+2. **Check for "don't know"**: Does the message contain "no lo sé", "ni idea", "no ho sé", "I don't know", etc.?
+3. **Check for short answers**: Is the message less than 15 characters with no element mentions?
+4. **Extract evaluable elements**: The classifier accepts an optional `evaluableElements` parameter — an array of all possible answer elements for the exercise (e.g., `["R1","R2","R3","R4","R5"]`). `extractMentionedElements(message, evaluableElements)` searches the message for any of these elements with word-boundary checks. If no `evaluableElements` are provided, it falls back to the generic `/R\d+/gi` regex for backward compatibility with circuit exercises.
+5. **Separate proposed vs negated elements**: For each found element, `detectNegation()` checks whether the student is affirming or rejecting it. It uses a tight window (15 characters before, 25 characters after the element) to look for:
+   - **Pre-negation words**: "no", "sin", "ni", "sense", "without", "except", etc.
+   - **Pre-negation phrases** (30-char window): "no pasa corriente por", "no circula corrent per", "no current flows through", etc.
+   - **Post-negation phrases**: "no contribuye", "se elimina", "está en abierto", "is open", "doesn't contribute", etc. Post-negation is truncated at the next sentence boundary to prevent cross-sentence false positives.
+   Elements found with negation go into the `negated` array; all others go into `proposed`.
+6. **Compare PROPOSED elements with correct answer**: If the proposed elements exactly match the correct answer set:
+   - **Has concept keywords AND correct negations** (student negates elements not in the answer) → `correct_good_reasoning` (the student is correctly reasoning about excluded elements)
+   - **Has reasoning AND all concepts are state descriptions** (e.g., "cortocircuito", "abierto", "open circuit" — factual circuit states, not alternative conceptions) → `correct_good_reasoning`
+   - **Has concept keywords but no correct negations** → `correct_wrong_reasoning` (assumes the concept may be misapplied)
+   - **No reasoning, no concepts** → `correct_no_reasoning`
+   - **Has reasoning, no concepts** → `correct_good_reasoning`
+7. **Partial correct**: If the proposed and negated sets don't fully match the answer, but all negations are correct (rejecting elements not in the answer) AND all proposals are correct (proposing elements in the answer) → `partial_correct`. The answer is partially right but incomplete.
+8. **Wrong elements with concept keywords** → `wrong_concept`
+9. **Everything else** → `wrong_answer`
 
 The output structure:
 
 ```javascript
 {
-  type: "wrong_answer",           // classification type
-  resistances: ["R5"],            // resistances mentioned by the student
-  hasReasoning: false,            // whether reasoning keywords were found
+  type: "wrong_answer",            // one of the 9 classification types
+  resistances: ["R1", "R3", "R5"], // all elements found in the message
+  proposed: ["R1", "R5"],          // elements the student affirms/proposes
+  negated: ["R3"],                 // elements the student explicitly rejects
+  hasReasoning: false,             // whether reasoning keywords were found
   concepts: ["divisor de tensión"] // domain concepts mentioned
 }
 ```
@@ -197,7 +213,11 @@ The output structure:
 2. **Speed** — Rule-based classification is instant (< 1ms). An LLM call would add 1-5 seconds per message.
 3. **No hallucination** — The classifier cannot invent categories or misinterpret messages in unexpected ways. It either matches a pattern or it doesn't.
 
-**Design note on `correct_wrong_reasoning`:** If a student gives the correct resistances AND uses a concept keyword (like "divisor de tensión"), the system classifies it as potentially wrong reasoning. This is intentional — the system routes this to both the knowledge graph (to check if the concept is misapplied) and hybrid search (to find relevant examples). It is better to double-check a correct answer with suspicious reasoning than to confirm it blindly.
+**Design note on `correct_wrong_reasoning`:** If a student gives the correct elements AND uses a concept keyword (like "divisor de tensión"), the system classifies it as potentially wrong reasoning. This is intentional — the system routes this to both the knowledge graph (to check if the concept is misapplied) and hybrid search (to find relevant examples). It is better to double-check a correct answer with suspicious reasoning than to confirm it blindly.
+
+**Design note on state description concepts:** The classifier distinguishes between factual circuit states (cortocircuito, abierto, open circuit, etc.) and alternative conceptions (divisor de tensión, atenuación local, etc.). When a student uses ONLY state description terms with reasoning connectors (e.g., "R1, R2 y R4 porque R3 está en cortocircuito y R5 en abierto"), they are correctly describing circuit behavior, not applying a misconception — so this is classified as `correct_good_reasoning` rather than `correct_wrong_reasoning`.
+
+**Design note on negation detection:** The tight window approach (15/25 characters) prevents false positives from distant negations. For example, in "R2 y R4. No pasa por R3", the "No pasa" applies only to R3 (post-sentence-boundary truncation prevents it from affecting R2/R4). Multi-word pre-negation phrases like "no pasa corriente por" use a wider 30-char window because they are less prone to false positives than single words.
 
 ---
 
@@ -219,41 +239,46 @@ The pipeline orchestrator is the decision-making brain of the RAG system. It tak
 | `correct_wrong_reasoning` | `correct_concept` | Hybrid Search + Knowledge Graph search for the mentioned concepts |
 | `correct_good_reasoning` | `rag_examples` | Hybrid Search for confirmation-style tutor responses |
 | `wrong_concept` | `concept_correction` | Knowledge Graph search for the misconception + Hybrid Search for examples |
+| `partial_correct` | `rag_examples` | Hybrid Search for similar student-tutor pairs |
 
 ### Augmentation Building
 
 For each routing path, the pipeline builds an **augmentation string** that gets appended to the LLM's system prompt. The augmentation can contain up to 4 sections:
 
-1. **Classification Hint** (`[RESPONSE MODE]`): Tells the LLM what type of student message it is dealing with and provides specific pedagogical instructions. For example, for `wrong_answer`: "The student gave incorrect resistances. Ask them to explain their reasoning. If you detect an alternative conception, focus on questioning THAT concept with a Socratic question."
+1. **Classification Hint** (`[RESPONSE MODE]`): Tells the LLM what type of student message it is dealing with and provides specific pedagogical instructions. For example, for `wrong_answer`: "The student gave incorrect elements. Ask them to explain their reasoning. If you detect an alternative conception, focus on questioning THAT concept with a Socratic question." The hint also injects **intermediate feedback phrases** (hybrid approach) — for `wrong_answer` and `wrong_concept`, the LLM is instructed to START its response with one of several deterministic phrases (e.g., "Hmm, no del todo..." / "Not quite...") to prevent positive-sounding openings. For `partial_correct`, `correct_no_reasoning`, and `correct_wrong_reasoning`, analogous partial-feedback phrases are injected. These phrases are language-aware (Spanish, Valencian, English), loaded via `getIntermediateFeedback()` from `languageManager.js`.
 
-2. **Per-Resistance Analysis** (`[PER-RESISTANCE ANALYSIS]`): When the student mentions specific resistances, the system analyzes each one individually — which are correct, which are wrong, which are missing. This is marked as "internal, NEVER reveal to student" so the LLM knows the ground truth but is instructed not to share it.
+   **Softened hints**: When the student responds without mentioning specific evaluable elements (i.e., they are answering a Socratic sub-question about concepts), aggressive classification hints for `wrong_answer`, `wrong_concept`, and `single_word` are replaced with a softer instruction: "Evaluate their response IN CONTEXT of your last question and the conversation history. If their response correctly addresses your question, acknowledge it briefly and advance." This prevents the LLM from treating conceptual answers as wrong just because no element names appear.
+
+2. **Per-Element Analysis** (`[PER-ELEMENT ANALYSIS]`): When the student mentions specific elements, the system analyzes each one individually with negation awareness — which are correctly proposed, which are wrongly proposed, which are correctly rejected (negated elements not in the answer), which are wrongly rejected (negated elements that ARE in the answer), and which correct elements are missing. This is marked as "internal, NEVER reveal to student" so the LLM knows the ground truth but is instructed not to share it. A critical instruction is appended: "When the student says an element 'does not contribute' but it IS in the correct answer, you MUST NOT agree."
 
 3. **Reference Examples** (`[REFERENCE EXAMPLES]`): Student-tutor pairs retrieved from the hybrid search engine, formatted as "Example 1: Student said X, Tutor responded Y". These show the LLM the correct pedagogical approach for similar situations.
 
-4. **Domain Knowledge** (`[DOMAIN KNOWLEDGE]`): Entries from the knowledge graph containing concept definitions, expert reasoning, alternative conceptions, and Socratic questions.
+4. **Domain Knowledge** (`[DOMAIN KNOWLEDGE]`): Entries from the knowledge graph containing concept definitions, expert reasoning, alternative conceptions, and Socratic questions. A header reminds the LLM to use this as internal reference only and NOT copy Socratic questions verbatim.
 
 5. **Student History** (`[STUDENT HISTORY]`): Past misconceptions the student has shown across all exercises, loaded from the `Resultado` model. This allows the tutor to pay special attention to recurring errors.
 
-6. **Guardrail Reminder** (`[GUARDRAIL]`): Critical rules appended at the end of every augmentation, reminding the LLM of its constraints: do not reveal answers, do not confirm wrong answers, do not reveal resistance states, ask only one Socratic question, etc.
+6. **Guardrail Reminder** (`[GUARDRAIL]`): Ten critical rules appended at the end of every augmentation, including: do not reveal answers, do not confirm incorrect answers, do not name specific elements for the student to analyze, do not reveal element states, ask one Socratic question about a concept, challenge ACs, do not confirm correct answers without reasoning, do not agree when a student wrongly rejects an element in the answer, never repeat a question already answered correctly, and evaluate the student considering the full conversation history.
 
 ### Full Pipeline Flow
 
 The `runFullPipeline` function orchestrates the complete flow:
 
 ```
-classifyQuery(userMessage, correctAnswer)
+classifyQuery(userMessage, correctAnswer, evaluableElements)
     │
     ├── routing decision based on classification type
     │
     ├── retrieval (varies by route):
     │   ├── hybridSearch(query, exerciseNum) → dataset examples
     │   ├── searchKG(concepts) → domain knowledge
-    │   └── CRAG reformulation if needed
+    │   └── CRAG reformulation if needed (normalizeToSpanish for retrieval)
     │
     ├── loadStudentHistory(userId) → past errors
     │
-    └── build augmentation string (hint + analysis + examples + knowledge + history + guardrail)
+    └── build augmentation string (hint + feedback phrases + analysis + examples + knowledge + history + guardrail)
 ```
+
+The pipeline accepts two additional parameters: `evaluableElements` (all possible answer elements for the exercise, used by the classifier for generic extraction) and `lang` (the active conversation language, used for intermediate feedback phrase selection).
 
 ---
 
@@ -396,7 +421,7 @@ CRAG activates when the top result from hybrid search has a score below `MED_THR
 
 **File:** `backend/src/rag/guardrails.js`
 
-The guardrail system is a sequential triple-check that runs on every LLM response before it reaches the student. Each check looks for a specific type of pedagogically harmful content.
+The guardrail system is a sequential five-check chain that runs on every LLM response before it reaches the student. Each check looks for a specific type of pedagogically harmful content. All detection patterns are multi-language (Spanish, Valencian, English), loaded from `languageManager.js`.
 
 ### Guardrail 1: Solution Leak Check
 
@@ -404,9 +429,9 @@ The guardrail system is a sequential triple-check that runs on every LLM respons
 
 Detects if the LLM response reveals the correct answer. Two detection methods:
 
-1. **Reveal phrase detection**: Searches for phrases like "la respuesta es", "las resistencias correctas son", etc. If such a phrase appears AND all correct resistances are mentioned in the response, it is flagged.
+1. **Reveal phrase detection**: Searches for phrases like "la respuesta es", "las resistencias correctas son", "the answer is", etc. (multi-language). If such a phrase appears AND all correct elements are mentioned in the response, it is flagged.
 
-2. **Grouped listing detection**: If all correct resistances appear together in a single affirmative sentence (e.g., "R1, R2 y R4"), it is flagged. Questions are excluded — the tutor is allowed to ask about resistances.
+2. **Grouped listing detection**: If all correct elements appear together in a single affirmative sentence (e.g., "R1, R2 y R4"), it is flagged. Questions are excluded — the tutor is allowed to ask about elements.
 
 **Why this matters:** An LLM tutor that gives away the answer defeats the entire purpose of Socratic tutoring. Even with strong system prompts, LLMs sometimes "slip" and directly state the solution, especially when the augmentation contains the correct answer for internal reference.
 
@@ -416,29 +441,57 @@ Detects if the LLM response reveals the correct answer. Two detection methods:
 
 Detects if the LLM incorrectly confirms a wrong answer as correct. Only active when the classification indicates the student is wrong (`wrong_answer`, `wrong_concept`, `single_word`).
 
-Checks the first 60 characters of the response for affirmative phrases: "perfecto", "correcto", "exacto", "muy bien", "eso es", etc.
+Checks the first 60 characters of the response for affirmative phrases: "perfecto", "correcto", "exacto", "muy bien", "eso es", "perfect", "exactly", etc. (multi-language, accent-insensitive via `stripAccents()`).
 
 **Why check only the first 60 characters?** Because false confirmations almost always appear at the start of a response. The tutor says "¡Perfecto!" and then continues. Checking only the beginning avoids false positives from phrases like "eso no es correcto" (negation of the confirmation phrase).
 
-### Guardrail 3: State Reveal Check
+### Guardrail 3: Premature Confirmation Check
+
+**Function:** `checkPrematureConfirmation(response, classification)`
+
+Detects if the LLM prematurely confirms a partially correct or unjustified answer. Only active when the classification is `correct_no_reasoning`, `correct_wrong_reasoning`, or `partial_correct` — cases where the student has the right elements but has not yet provided adequate reasoning or has wrong reasoning.
+
+Uses the same 60-character window and confirmation phrase set as the false confirmation check. The distinction is the trigger context: false confirmation catches confirming a *wrong* answer, while premature confirmation catches confirming a *correct but unjustified* answer. The pedagogical harm is different — premature confirmation short-circuits the reasoning process by accepting "R1, R2, R4" without asking the student to explain *why*.
+
+### Guardrail 4: State Reveal Check
 
 **Function:** `checkStateReveal(response)`
 
-Detects if the LLM reveals the internal state of a specific resistance (e.g., "R5 está cortocircuitada" or "por R3 no circula corriente"). This is information the student must discover through analysis, not be told directly.
+Detects if the LLM reveals the internal state of a specific element (e.g., "R5 está cortocircuitada", "R3 is open circuit", "per R3 no circula corrent"). This is information the student must discover through analysis, not be told directly.
 
-The check splits the response into sentences and looks for sentences that contain BOTH a resistance mention (R1, R2, etc.) AND a state reveal phrase ("está cortocircuitad", "circuito abierto", "no circula corriente por", etc.). Questions are excluded — asking "¿qué crees que ocurre con R5?" is pedagogically sound.
+The check splits the response into sentences and looks for sentences that contain BOTH an element mention (R1, R2, etc.) AND a state reveal phrase ("está cortocircuitad", "circuito abierto", "is open", "is shorted", "curtcircuitada", etc., multi-language). Questions are excluded — asking "¿qué crees que ocurre con R5?" is pedagogically sound.
+
+### Guardrail 5: Element Naming Check
+
+**Function:** `checkElementNaming(response, evaluableElements)`
+
+Detects if the LLM names a specific evaluable element in a question or directive sentence. For example, "What about R5?" or "Fíjate en R3" tells the student exactly which element to analyze, undermining the Socratic approach.
+
+The check splits the response into sentences, identifies questions (contains `?` or `¿`) and directives (contains verbs like "analiza", "observa", "look at", "consider", "fixa't en", etc., multi-language), and then checks whether any evaluable element appears in that sentence with word-boundary validation.
+
+**Why this matters:** If the tutor says "What happens to R5?", the student knows to focus on R5. A proper Socratic question asks about concepts: "What happens when a component's two terminals are connected to the same node?" This forces the student to identify which component that applies to.
 
 ### Retry Mechanism
 
 When any guardrail detects a violation:
 
-1. A specific corrective instruction is appended to the system prompt (e.g., "Your previous response revealed the solution directly. Do NOT list the correct resistances together...")
+1. A specific corrective instruction is appended to the system prompt (e.g., "Your previous response revealed the solution directly. Do NOT list the correct elements together..."). Each corrective instruction is language-aware, loaded from `languageManager.js`.
 2. The LLM is called again with the stronger prompt
 3. The retry response replaces the original
 
-Each guardrail check runs sequentially (leak → confirm → state), and each can trigger one retry. In the worst case, the LLM is called 4 times for a single student message (1 original + 3 retries).
+Each guardrail check runs sequentially (leak → false confirm → premature confirm → state reveal → element naming), and each can trigger one retry. In the worst case, the LLM is called 6 times for a single student message (1 original + 5 retries).
 
-**Why not loop until all guardrails pass?** To avoid infinite retry loops. If the LLM keeps producing problematic responses despite stronger instructions, it is better to send a slightly imperfect response than to hang indefinitely. In practice, one retry per guardrail is sufficient — the corrective instructions are specific enough that the LLM almost always corrects the issue.
+### Deterministic Prefix Fallback
+
+After all 5 guardrail retries, if the response *still* starts with a confirmation phrase for a wrong or partially correct answer (and the student mentioned specific elements), the system applies a deterministic fix:
+
+1. `removeOpeningConfirmation(response)` iteratively strips all leading confirmation phrases (e.g., "¡Perfecto! Exacto, en un cortocircuito..." → "En un cortocircuito...")
+2. A random intermediate feedback phrase (e.g., "Hmm, no del tot..." / "Not quite...") is prepended
+3. A second pass of `removeOpeningConfirmation()` catches any confirmation phrases that survived after the first cleanup
+
+This ensures the student never receives a response that starts with "Correct!" when their answer is wrong or unjustified, even if the LLM persists across multiple retries. The fallback only activates when the student mentioned specific elements — when no elements are mentioned (student is answering a conceptual sub-question), the LLM confirming a correct concept is appropriate.
+
+**Why not loop until all guardrails pass?** To avoid infinite retry loops. If the LLM keeps producing problematic responses despite stronger instructions, the deterministic prefix fallback provides a reliable last resort. In practice, one retry per guardrail is sufficient — the corrective instructions are specific enough that the LLM almost always corrects the issue on the first retry.
 
 ---
 
@@ -446,15 +499,36 @@ Each guardrail check runs sequentially (leak → confirm → state), and each ca
 
 The LLM is called through Ollama's REST API. The middleware builds the complete message array and sends it as a non-streaming request.
 
+### Multi-Language Support
+
+The system supports three languages — Spanish (es), Valencian (val), and English (en) — via a centralized module `backend/src/utils/languageManager.js`.
+
+**Language detection**: `resolveLanguage(conversationHistory)` scans the conversation history (most recent first) for explicit language switch requests (e.g., "parla en valencià", "speak in english"). If no switch is found, it defaults to Spanish.
+
+**What is language-aware**:
+- **System prompt**: Language-specific tutoring rules (e.g., Valencian grammar conventions, technical terminology)
+- **Detection patterns**: All greetings, "don't know" expressions, reasoning indicators, concept keywords, confirmation phrases, reveal phrases, state reveal patterns, and frustration patterns are defined per-language in `languageManager.js` and fetched via `getAllPatterns()`
+- **Intermediate feedback phrases**: Deterministic starter phrases for wrong/partial classifications, per language
+- **Finish messages**: Congratulatory messages when the student completes the exercise, per language
+- **Guardrail corrective instructions**: Retry instructions appended when a guardrail triggers, per language
+- **Term normalization**: `normalizeToSpanish()` converts Valencian/English terms to Spanish equivalents for CRAG query reformulation (since the datasets are in Spanish)
+
 ### System Prompt Construction
 
 The system prompt is built in layers:
 
-1. **Base prompt** (`buildTutorSystemPrompt` in `utils/promptBuilder.js`): Contains the exercise description, circuit topology, and general tutoring instructions. This is exercise-specific.
+1. **Base prompt** (`buildTutorSystemPrompt` in `utils/promptBuilder.js`): Contains the exercise description, circuit topology, and general tutoring instructions. This is exercise-specific and language-aware — the builder receives the active language and includes appropriate language rules.
 
-2. **RAG augmentation**: The output from the pipeline orchestrator — classification hints, reference examples, domain knowledge, student history, and guardrail reminders.
+2. **Conversation progress hint** (`[CONVERSATION CONTEXT]`): Extracts the last question from the most recent assistant message and tells the LLM: "Your last question to the student was: '...'. Evaluate the student's current response as an answer to THIS question. If they answered it correctly, acknowledge and advance. Do NOT re-ask." This prevents the tutor from ignoring the student's response to a sub-question and re-asking the same thing.
 
-The final prompt sent to the LLM is: `basePrompt + "\n\n" + ragAugmentation`
+3. **Loop prevention hints** (when applicable): Up to three contextual hints may be injected depending on the conversation state:
+   - `[ANTI-LOOP]`: Injected when tutor repetition is detected (see Loop Prevention below). Forces the LLM to ask a NEW, DIFFERENT question.
+   - `[STUDENT FRUSTRATED]`: Injected when frustration is detected in the student's message. Forces empathy and forward progress.
+   - `[STUDENT IS STUCK]`: Injected when the conversation exceeds loop thresholds. Forces a complete strategy change with a concrete hint.
+
+4. **RAG augmentation**: The output from the pipeline orchestrator — classification hints with intermediate feedback phrases, per-element analysis, reference examples, domain knowledge, student history, and guardrail reminders.
+
+The final prompt sent to the LLM is: `basePrompt + "\n\n" + progressHint + repetitionHint + frustrationHint + stuckHint + ragAugmentation`
 
 ### Conversation History
 
@@ -491,12 +565,27 @@ POST {OLLAMA_CHAT_URL}/api/chat
 
 Before calling the LLM, the middleware checks if the exercise can be finished deterministically:
 
-- If classification is `correct_good_reasoning` → finish immediately with a congratulatory message
-- If classification is `correct_no_reasoning` AND the student has at least 2 previous messages → finish (they have been reasoning in prior turns)
-- If classification is `correct_no_reasoning` WITHOUT history → fall through to LLM (ask them to explain their reasoning)
-- If classification is `correct_wrong_reasoning` → fall through to LLM (correct the misconception)
+- If classification is `correct_good_reasoning` → finish immediately with a language-aware congratulatory message from `getFinishMessages(lang)`
+- If classification is `correct_no_reasoning` or `correct_wrong_reasoning` → check the loop override logic (see Loop Prevention below). If overridden to `correct_good_reasoning`, finish.
+- Otherwise → fall through to LLM (ask them to explain their reasoning or correct the misconception)
 
 This avoids unnecessary LLM calls when the answer is clear-cut.
+
+### Loop Prevention
+
+The middleware implements multiple mechanisms to prevent the conversation from getting stuck in repetitive loops:
+
+**Tutor Repetition Detection** (`detectTutorRepetition()`): Loads the last 4 assistant messages from the conversation and extracts the last question from each. Computes pairwise word overlap (words > 3 characters) between all question pairs. If any pair exceeds 50% overlap, repetition is detected. This catches not just consecutive repetitions but also alternating patterns (A-B-A-B) that a simple 2-message comparison would miss.
+
+**Student Frustration Detection** (`detectFrustration()`): Checks the student's current message for multi-language frustration patterns: "ya te lo he dicho", "ja t'ho he dit", "I already told you", "te lo acabo de decir", etc. These indicate the student feels they have already answered the tutor's question.
+
+**Loop Override**: If the student has given a correct or partially correct answer in previous turns, and tutor repetition is detected, the classification is overridden to `correct_good_reasoning` — ending the exercise immediately. The threshold for this override is lowered from 2 previous correct turns to 1 when tutor repetition is active.
+
+**Global Loop-Breaking** (`[STUDENT IS STUCK]` hint): If the count of consecutive wrong classifications exceeds `MAX_WRONG_STREAK` (default 4) or the total assistant turn count exceeds `MAX_TOTAL_TURNS` (default 16), a strong contextual hint is injected into the prompt. This hint tells the LLM to change strategy completely: summarize what the student got right, give a concrete hint about the circuit, and ask a very specific new question.
+
+**Anti-Loop Hint** (`[ANTI-LOOP]`): When tutor repetition is detected (but the loop override does not apply), this instruction forces the LLM to acknowledge what the student said correctly, give a concrete hint, and ask a question it has NOT asked before.
+
+**Frustration Hint** (`[STUDENT FRUSTRATED]`): When student frustration is detected, this instruction forces empathy: acknowledge effort, validate correct reasoning, and either accept the answer or give a more concrete hint before asking again.
 
 ---
 
@@ -577,6 +666,7 @@ The following shows how all 14 RAG modules connect to each other:
                     ├── ragPipeline.js
                     │   ├── config.js
                     │   ├── queryClassifier.js
+                    │   │   └── utils/languageManager.js (patterns)
                     │   ├── hybridSearch.js
                     │   │   ├── config.js
                     │   │   ├── embeddings.js ──► Ollama (nomic-embed-text)
@@ -584,8 +674,12 @@ The following shows how all 14 RAG modules connect to each other:
                     │   │   ├── bm25.js (in-memory index)
                     │   │   └── ragEventBus.js
                     │   ├── knowledgeGraph.js (in-memory KG)
+                    │   ├── utils/languageManager.js (feedback phrases, normalization)
                     │   └── ragEventBus.js
                     ├── guardrails.js
+                    │   └── utils/languageManager.js (reveal/confirm/state patterns, instructions)
+                    ├── utils/languageManager.js (language resolution, finish messages, frustration)
+                    ├── utils/promptBuilder.js (language-aware system prompt)
                     ├── knowledgeGraph.js (init only)
                     ├── bm25.js (init only)
                     ├── logger.js
@@ -598,4 +692,4 @@ External dependencies:
     └── MongoDB Atlas (exercises, interactions, user history)
 ```
 
-Every module depends on `config.js` for its parameters. The event bus (`ragEventBus.js`) is used by the three instrumented modules (middleware, pipeline, hybrid search) and broadcast by the WebSocket server. All other modules (classifier, guardrails, knowledge graph, BM25, embeddings, ChromaDB client, logger) are pure functions called by the three main orchestration modules.
+Every module depends on `config.js` for its parameters. The event bus (`ragEventBus.js`) is used by the three instrumented modules (middleware, pipeline, hybrid search) and broadcast by the WebSocket server. The `languageManager.js` module (in `utils/`, not `rag/`) is a cross-cutting dependency used by the middleware, pipeline, classifier, and guardrails for multi-language pattern matching, intermediate feedback phrases, and corrective instructions. All other modules (knowledge graph, BM25, embeddings, ChromaDB client, logger) are pure functions called by the three main orchestration modules.

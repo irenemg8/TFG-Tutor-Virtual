@@ -22,7 +22,10 @@ import RequestHistory from "./components/panels/RequestHistory.jsx";
 import ExportButton from "./components/panels/ExportExcel.jsx";
 import FlowDiagram from "./components/panels/FlowDiagram.jsx";
 
-var WS_URL = "ws://localhost:3000/ws/workflow";
+// WS endpoint del backend. Configurable via VITE_BACKEND_WS_URL.
+// Default :3030 porque es donde corre el backend en dev local (PORT=3030 en
+// backend/.env). Producción/Windows usa otro puerto, por eso es env var.
+var WS_URL = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:3030/ws/workflow";
 
 var nodeTypes = {
   pipelineStep: PipelineStepNode,

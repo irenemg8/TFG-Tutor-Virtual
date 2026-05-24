@@ -12,7 +12,8 @@ export default function ProtectedRoute({ children }) {
       try {
         setStatus("loading");
 
-        const resp = await fetch("/api/auth/me", {
+        const basePath = import.meta.env.VITE_BASE_PATH || "";
+        const resp = await fetch(basePath + "/api/auth/me", {
           method: "GET",
           credentials: "include",
           headers: { "Cache-Control": "no-cache" },

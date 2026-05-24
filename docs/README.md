@@ -19,7 +19,7 @@ The core innovation is an **agentic conditional RAG (Retrieval-Augmented Generat
 │  Workflow   │◄────────────────► │  │  └──────────┘  │ + RRF Fusion    │  │    │
 │  Monitor    │                   │  │  ┌──────────┐  └─────────────────┘  │    │
 │  port 5174  │                   │  │  │Knowledge │  ┌─────────────────┐  │    │
-└─────────────┘                   │  │  │  Graph   │  │   3 Guardrails  │  │    │
+└─────────────┘                   │  │  │  Graph   │  │   5 Guardrails  │  │    │
                                   │  │  └──────────┘  └─────────────────┘  │    │
                                   │  └─────────────────────────────────────┘    │
                                   │                    port 3000                │
@@ -53,7 +53,7 @@ The core innovation is an **agentic conditional RAG (Retrieval-Augmented Generat
 
 | Document | Description |
 |---|---|
-| **[Architecture Diagrams](architecture-diagrams.md)** | Full connection maps, UML component and sequence diagrams, classification decision tree, all 8 pipeline paths, guardrail chain, data model relationships |
+| **[Architecture Diagrams](architecture-diagrams.md)** | Full connection maps, UML component and sequence diagrams, classification decision tree, all 9 pipeline paths, guardrail chain, data model relationships |
 | **[Backend Architecture](backend.md)** | Server structure, API routes, data models, authentication, SSE streaming, environment variables |
 | **[RAG System](rag-system.md)** | Deep dive into all 14 RAG modules: classification, hybrid search, knowledge graph, CRAG, guardrails, LLM integration |
 | **[Evaluation System](evaluation.md)** | Automated quality metrics: Precision@K, Recall@K, MAP@K, MRR, Socratic rate, guardrail safety |
@@ -101,9 +101,9 @@ TFG-Tutor-Virtual/
 │   ├── src/
 │   │   ├── index.js           # Entry point
 │   │   ├── models/            # Mongoose schemas (4 models)
-│   │   ├── routes/            # API endpoints (6 route files)
+│   │   ├── routes/            # API endpoints (7 route files)
 │   │   ├── rag/               # RAG system (14 modules)
-│   │   ├── utils/             # Prompt builder
+│   │   ├── utils/             # Prompt builder + language manager
 │   │   └── static/            # Exercise images
 │   ├── logs/rag/              # JSONL interaction logs
 │   └── tests/                 # Verification scripts
@@ -148,9 +148,9 @@ An LLM-based classifier would be slower and non-deterministic. The same student 
 
 BM25 catches exact term matches (e.g., specific resistance names). Semantic search catches conceptual similarity even with different wording. RRF fusion combines both without needing to normalize their incompatible score scales.
 
-### Why Three Guardrails?
+### Why Five Guardrails?
 
-Each guardrail catches a different type of pedagogically harmful response: revealing answers, confirming wrong answers, and exposing internal circuit state. Running all three sequentially ensures comprehensive safety coverage.
+Each guardrail catches a different type of pedagogically harmful response: (1) revealing answers, (2) confirming wrong answers, (3) prematurely confirming correct answers before the student has justified them, (4) exposing internal circuit state, and (5) naming specific evaluable elements in questions (which tells the student where to look). Running all five sequentially ensures comprehensive safety coverage.
 
 ### Why Non-Streaming LLM Calls?
 

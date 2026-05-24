@@ -1,0 +1,212 @@
+[
+  {
+    "exerciseNum": 1,
+    "query": "R1 y R2 dado que las dos resistencia forman un divisor de tensión",
+    "expected": "En un divisor de tensión todos los componentes están conectados en serie y por todos ellos circula la misma corriente. ¿Se cumple esto en este circuito? ¿Por qué no has tenido en cuenta R4?",
+    "response": "Entiendo tu respuesta. ¿Podrías explicar por qué crees que R1 y R2 forman un divisor de tensión? ¿Cómo se relaciona esto con la diferencia de potencial entre N2 y 0?",
+    "timeSeconds": 12.99
+  },
+  {
+    "exerciseNum": 1,
+    "query": "R1, R4 y R5 porque R2 se elimina y R3 también",
+    "expected": "¿Por qué razón estás eliminando R2?",
+    "response": "Entiendo tu razonamiento. ¿Puedes explicar por qué crees que R5 no contribuye al valor de tensión entre N2 y 0? Ten en cuenta que el estado de R5 es importante para determinar su influencia en el circuito.",
+    "timeSeconds": 14.06
+  },
+  {
+    "exerciseNum": 1,
+    "query": "R1, R2 y R4 dado que R3 está en abierto y R5 cortocircuitada",
+    "expected": "Genial",
+    "response": "¿Estás seguro de eso? Vamos a analizar cada resistencia individualmente. ¿Qué te hace pensar que R5 está cortocircuitada?\n\nRecuerda, si dices que una resistencia no contribuye porque está en circuito abierto o cortocircuito, verifica primero el estado de esa resistencia en la NETLIST.",
+    "timeSeconds": 17.74
+  },
+  {
+    "exerciseNum": 1,
+    "query": "R1, R2 y R4 dado que R3 está en abierto",
+    "expected": "¿Y qué sucede con R5, por qué no la consideras?",
+    "response": "Perfecto, has identificado correctamente que R3 no contribuye debido a que está en circuito abierto. Ahora, ¿qué piensas sobre R5? Recuerda, según la información que tenemos, R5 está cortocircuitada. ¿Cómo afecta esto a su valor de tensión entre N2 y 0?",
+    "timeSeconds": 18.86
+  },
+  {
+    "exerciseNum": 1,
+    "query": "No lo sé",
+    "expected": "¿Por qué resistencias circula la corriente desde V1?",
+    "response": "Entiendo que no estás seguro. Vamos a empezar por el principio. ¿Puedes describir cómo se conectan las resistencias en serie y en paralelo? ¿Y cómo afecta eso a la corriente y al voltaje entre los nudos del circuito?",
+    "timeSeconds": 3.55
+  },
+  {
+    "exerciseNum": 3,
+    "query": "R4 y R5 dado que las dos resistencia forman un divisor de tensión",
+    "expected": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+    "response": "Entiendo tu respuesta. ¿Podrías explicar por qué crees que R4 y R5 forman un divisor de tensión? Recuerda, en este circuito todas las resistencias tienen el mismo valor. ¿Cómo afecta eso a la forma en que se distribuye la tensión entre N2 y tierra?",
+    "timeSeconds": 14.7
+  },
+  {
+    "exerciseNum": 3,
+    "query": "R3, R4 y R5 porque R1 está en paralelo con la fuente y R2 cortocircuitada",
+    "expected": "Perfecto",
+    "response": "Entiendo que estás considerando cómo las resistencias se conectan entre sí. ¿Puedes explicar por qué piensas que R1 está en paralelo con la fuente? ¿Y cuál es el efecto de tener una resistencia en cortocircuito, como lo mencionaste para R2?",
+    "timeSeconds": 14.82
+  },
+  {
+    "exerciseNum": 3,
+    "query": "R1, R3, R4 y R5 dado que R2 no hace nada",
+    "expected": "¿Cómo está conectada R1?",
+    "response": "¿Cómo está conectada R1? ¿Crees que la corriente pueda circular a través de ella?",
+    "timeSeconds": 17.63
+  },
+  {
+    "exerciseNum": 3,
+    "query": "R3, R4 y R5 dado que R2 está en cortocircuito y la tensión en R1 es la de la fuente",
+    "expected": "Muy bien justificado",
+    "response": "Entiendo tu razonamiento, pero veamos cada resistencia por separado. ¿Qué piensas sobre R2? Dijiste que está en cortocircuito, ¿cómo afecta eso a las otras resistencias en el circuito?\n\nAdemás, ¿por qué crees que la tensión en R1 es la de la fuente? Vamos a analizar esto más detenidamente.",
+    "timeSeconds": 19.06
+  },
+  {
+    "exerciseNum": 3,
+    "query": "R3 porque está en el medio del circuito",
+    "expected": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?",
+    "response": "¿Por qué crees que la posición de R3 en el circuito es relevante para determinar la tensión entre N2 y tierra?\n\n¿Has considerado cómo están conectadas las resistencias alrededor de N2? ¿Hay alguna otra resistencia que también influya en la tensión entre N2 y tierra?",
+    "timeSeconds": 19.25
+  },
+  {
+    "exerciseNum": 4,
+    "query": "R1, R2 y R3 porque son las resistencias que forman parte del circuito",
+    "expected": "Revisa de nuevo el circuito ¿Circulará corriente por R3?",
+    "response": "¿Puedes explicar por qué crees que R3 contribuye a la corriente I? ¿Hay algo en el circuito que indique que R3 está en un estado especial?",
+    "timeSeconds": 18.48
+  },
+  {
+    "exerciseNum": 4,
+    "query": "R1 y R2 porque podemos eliminar R3 ya que está en circuito abierto",
+    "expected": "Perfecto",
+    "response": "Eso es un buen comienzo. ¿Puedes explicar por qué R3 no contribuye a la corriente que sale de la fuente? ¿Y cuáles resistencias sí contribuyen a esa corriente?",
+    "timeSeconds": 19.29
+  },
+  {
+    "exerciseNum": 4,
+    "query": "R3 porque R1 y R2 se pueden quitar al estar en paraleo con la fuente",
+    "expected": "Ten en cuenta que R3 está conectada a un circuito abierto, ¿circulará corriente por ella?",
+    "response": "¿Por qué crees que R3 no contribuye a la corriente I, mientras que R1 y R2 sí lo hacen?",
+    "timeSeconds": 18.92
+  },
+  {
+    "exerciseNum": 4,
+    "query": "R1 porque está más cerca de la fuente",
+    "expected": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?",
+    "response": "¿Por qué crees que la distancia a la fuente afecta a las resistencias en este circuito?\n\n¿Has considerado cómo están conectadas las resistencias entre sí? ¿Hay alguna resistencia que no contribuye directamente al flujo de corriente pedido?",
+    "timeSeconds": 19.36
+  },
+  {
+    "exerciseNum": 4,
+    "query": "R3 porque está más cerca del nodo N1",
+    "expected": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?",
+    "response": "¿Por qué crees que la proximidad de R3 al nodo N1 afecta a la corriente I?\n\nRecuerda que estamos analizando el circuito para determinar cuáles resistencias contribuyen a la corriente I. ¿Puedes explicar cómo se relacionan las posiciones de las resistencias con su contribución a la corriente?",
+    "timeSeconds": 19.44
+  },
+  {
+    "exerciseNum": 5,
+    "query": "R1 y R2 porque están conectadas en serie con la fuente",
+    "expected": "¿Por qué no estás considerando R3 y R4?. Razona tu respuesta",
+    "response": "Interesante observación sobre R1 y R2. ¿Podrías explicar por qué no consideramos R3 en este análisis? Recuerda, cada resistencia tiene un estado específico según la NETLIST. ¿Has revisado el estado de todas las resistencias del circuito?",
+    "timeSeconds": 18.96
+  },
+  {
+    "exerciseNum": 5,
+    "query": "R1, R2, R3 y R4 porque son las resistencias que forman parte del circuito",
+    "expected": "Revisa de nuevo el circuito. ¿Circula corriente por R3?",
+    "response": "Entiendo tu respuesta. ¿Podrías explicar por qué crees que R3 forma parte de la corriente I? Recuerda, estamos buscando cuáles resistencias contribuyen a la corriente I según la Ley de Ohm.",
+    "timeSeconds": 18.15
+  },
+  {
+    "exerciseNum": 5,
+    "query": "R1 y R2 porque R3 se puede quitar y R4 está en paralelo con la fuente",
+    "expected": "Para que una resistencia esté en paralelo con la fuente sus dos terminales deberían estar conectados a los mismos puntos que la fuente. ¿Sucede esto en este cirtuito?",
+    "response": "Gracias por tu respuesta. Veamos esto paso a paso.\n\n¿Podrías explicar por qué crees que R3 se puede quitar del circuito? ¿Qué te hace pensar que R3 no contribuye a la corriente I?\n\nAdemás, ¿qué significa que una resistencia esté \"en paralelo con la fuente\"? ¿Cómo afecta esto a la corriente que pasa por esa resistencia?",
+    "timeSeconds": 19.46
+  },
+  {
+    "exerciseNum": 5,
+    "query": "Sí",
+    "expected": "Razona tu respuesta",
+    "response": "Perfecto, ¿podrías explicarme por qué crees que R3 contribuye a la corriente I? Recuerda, en nuestro razonamiento anterior se mencionó que R3 está en un estado especial. ¿Has analizado todas las resistencias del circuito y sus estados?",
+    "timeSeconds": 4.1
+  },
+  {
+    "exerciseNum": 5,
+    "query": "R3 porque está en paralelo con la fuente",
+    "expected": "Mira bien circuito. ¿Por qué resistencias circulará la corriente?",
+    "response": "Entiendo que estás pensando en cómo las resistencias se conectan. ¿Podrías explicar por qué crees que R3 está en paralelo con la fuente? Vamos a revisar juntos el circuito para entender mejor esta conexión.",
+    "timeSeconds": 18.37
+  },
+  {
+    "exerciseNum": 6,
+    "query": "Por ninguna, todas las resistencias poseen la misma corriente ya que están conectadas en serie",
+    "expected": "Muy bien justificado. Al estar todas las resistencias en serie la corriente que circula es la misma en todas ellas.",
+    "response": "Eso está muy bien explicado. ¿Podrías ahora identificar qué ocurre con la corriente en cada una de las resistencias del circuito?",
+    "timeSeconds": 20.6
+  },
+  {
+    "exerciseNum": 6,
+    "query": "En R1 ya que es la resistencia que está conectada a la fuente",
+    "expected": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?",
+    "response": "Revisa de nuevo el circuito. ¿Cómo están conectadas todas las resistencias entre sí? ¿Puedes describir cómo se distribuye la corriente en un circuito con resistencias en serie?",
+    "timeSeconds": 31.15
+  },
+  {
+    "exerciseNum": 6,
+    "query": "En R6 porque es la última resistencia",
+    "expected": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?",
+    "response": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias? ¿Hay alguna otra resistencia en un estado especial que debamos considerar?",
+    "timeSeconds": 18.02
+  },
+  {
+    "exerciseNum": 6,
+    "query": "En R2",
+    "expected": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?",
+    "response": "¿Por qué crees que la resistencia R2 atraviesa mayor corriente que las demás? ¿Has considerado cómo están conectadas todas las resistencias en el circuito?",
+    "timeSeconds": 18.25
+  },
+  {
+    "exerciseNum": 6,
+    "query": "En R5 y R6 pasa más corriente que en el resto",
+    "expected": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?",
+    "response": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias entre sí?",
+    "timeSeconds": 18.62
+  },
+  {
+    "exerciseNum": 7,
+    "query": "Por R1 ya que es la primera resistencia",
+    "expected": "Revisa el circuito. ¿Cómo están conectadas las resistencias?",
+    "response": "¿Cómo están conectadas las resistencias en el circuito? ¿Qué te hace pensar que R1 circula mayor corriente por ser la primera resistencia?",
+    "timeSeconds": 18.82
+  },
+  {
+    "exerciseNum": 7,
+    "query": "Por todas las resistencias circula la misma corriente ya que todas poseen el mismo valor y están en paralelo con la fuente",
+    "expected": "Genial. Al estar conectadas todas las resistencias en paralelo y ser iguales, por ellas circula la misma corriente.",
+    "response": "Genial, has identificado correctamente que las resistencias están en paralelo y que tienen el mismo valor. ¿Podrías explicar por qué, al estar conectadas en paralelo, la corriente es la misma en todas ellas?",
+    "timeSeconds": 19.31
+  },
+  {
+    "exerciseNum": 7,
+    "query": "Todas las resistencias están conectadas en paralelo",
+    "expected": "De acuerdo. Entonces ¿Por qué resistencia circula más corriente?",
+    "response": "¿Puedes explicar con tus palabras lo que significa \"en paralelo\"? ¿Cómo se relaciona esto con el comportamiento de la corriente y el voltaje en cada resistencia?",
+    "timeSeconds": 17.87
+  },
+  {
+    "exerciseNum": 7,
+    "query": "Por R1 y R3",
+    "expected": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?",
+    "response": "¿Podrías razonar por qué crees que la corriente es mayor en R1 y R3? ¿Cómo están conectadas estas resistencias con respecto a las demás?",
+    "timeSeconds": 18.87
+  },
+  {
+    "exerciseNum": 7,
+    "query": "Por la que está más lejos de la fuente",
+    "expected": "¿La posición de las resistencias afecta a la corriente que circula por todo el circuito?",
+    "response": "¿La posición de las resistencias afecta a la corriente que circula por todo el circuito?",
+    "timeSeconds": 17.75
+  }
+]

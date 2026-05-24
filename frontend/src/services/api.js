@@ -4,7 +4,7 @@ import axios from "axios";
 // Importante: baseURL vacío => mismo origen (158.42.187.55)
 // withCredentials => manda cookies de sesión (demo/CAS)
 export const api = axios.create({
-  baseURL: "",
+  baseURL: import.meta.env.VITE_BASE_PATH || "",
   withCredentials: true,
 });
 

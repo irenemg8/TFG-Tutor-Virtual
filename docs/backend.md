@@ -26,7 +26,8 @@ backend/
 │   ├── index.js                  # Server entry point
 │   ├── authRoutes.js             # CAS + demo authentication
 │   ├── utils/
-│   │   └── promptBuilder.js      # System prompt construction
+│   │   ├── promptBuilder.js      # System prompt construction
+│   │   └── languageManager.js    # Multi-language support (es, val, en)
 │   ├── models/
 │   │   ├── ejercicio.js          # Exercise schema
 │   │   ├── interaccion.js        # Conversation schema
@@ -38,6 +39,7 @@ backend/
 │   │   ├── ollamaChatRoutes.js   # LLM chat (non-RAG fallback)
 │   │   ├── resultados.js         # Exercise results + AC classification
 │   │   ├── progresoRoutes.js     # Progress analytics
+│   │   ├── exportRoutes.js       # Data export (JSON/CSV)
 │   │   └── usuarios.js           # User CRUD
 │   ├── rag/                      # RAG system (see rag-system.md)
 │   │   ├── config.js
@@ -132,6 +134,24 @@ Each message in the `conversacion` array has:
 | `role` | String (enum: user, assistant) | Who sent the message |
 | `content` | String | The message text |
 | `timestamp` | Date | When the message was sent |
+| `metadata` | Object (default: null) | Per-message metadata (present on assistant messages from the RAG pipeline) |
+
+The `metadata` object (when present) contains:
+
+| Field | Type | Description |
+|---|---|---|
+| `classification` | String | Query classification type (e.g., "correct_no_reasoning") |
+| `decision` | String | Pipeline routing decision (e.g., "rag_examples", "deterministic_finish") |
+| `guardrails.solutionLeak` | Boolean | Whether the solution leak guardrail triggered |
+| `guardrails.falseConfirmation` | Boolean | Whether the false confirmation guardrail triggered |
+| `guardrails.prematureConfirmation` | Boolean | Whether the premature confirmation guardrail triggered |
+| `guardrails.stateReveal` | Boolean | Whether the state reveal guardrail triggered |
+| `timing.pipelineMs` | Number | RAG pipeline duration in milliseconds |
+| `timing.ollamaMs` | Number | LLM call duration in milliseconds |
+| `timing.totalMs` | Number | Total request duration in milliseconds |
+| `sourcesCount` | Number | Number of retrieved documents used |
+| `isCorrectAnswer` | Boolean | Whether the student's answer was correct |
+| `studentResponseMs` | Number | Time since last assistant message (on user messages only) |
 
 ### Resultado (Result)
 
@@ -257,6 +277,29 @@ Returns:
 - **Streak data**: current consecutive day streak, longest streak ever
 - **Aggregate metrics**: total exercises, average score, total time, overall efficiency
 - **Personalized recommendations**: Generated based on identified weak areas
+
+### Export — `/api/export`
+
+**File:** `backend/src/routes/exportRoutes.js`
+
+Data export endpoints for interactions and results. Supports JSON and CSV formats with filtering.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET /interacciones` | Export interactions. One row per message in CSV mode, with full metadata |
+| `GET /resultados` | Export exercise results with error analysis and scores |
+
+**Query parameters** (all optional):
+
+| Parameter | Description | Example |
+|---|---|---|
+| `userId` | Filter by student (MongoDB ObjectId) | `64a1b2c3d4e5f6a7b8c9d0e1` |
+| `exerciseId` | Filter by exercise (MongoDB ObjectId) | `64a1b2c3d4e5f6a7b8c9d0e2` |
+| `from` | Start date (ISO 8601) | `2024-01-01` |
+| `to` | End date (ISO 8601) | `2024-12-31` |
+| `format` | Output format: `json` (default) or `csv` | `csv` |
+
+The CSV format for interactions flattens one row per message, including: session start/end, user info, message index, role, content, classification, decision, guardrail violations, timing breakdown (pipelineMs, ollamaMs, totalMs), sources count, and student response timing.
 
 ### Users — `/api/usuarios`
 
@@ -393,6 +436,8 @@ All configuration is done through `backend/.env`. The following variables are us
 | `RAG_MED_THRESHOLD` | Medium quality / CRAG trigger threshold | `0.4` |
 | `CHROMA_URL` | ChromaDB server URL | `http://localhost:8000` |
 | `HISTORY_MAX_MESSAGES` | Max conversation messages in LLM context | `8` |
+| `RAG_MAX_WRONG_STREAK` | Max consecutive wrong classifications before injecting stuck hint | `4` |
+| `RAG_MAX_TOTAL_TURNS` | Max total assistant turns before injecting stuck hint | `16` |
 
 ### Authentication
 

@@ -14,7 +14,7 @@ import {
   BookOpenIcon,
 } from '@heroicons/react/24/outline';
 
-
+import logoTutor from "../assets/logotutor.png";
 
 
 const navigation = [
@@ -39,7 +39,7 @@ export default function Navbar() {
             <div className="navbar-inner">
               <div className="navbar-logo">
                 <img
-                  src="/logotutor.png"
+                  src={logoTutor}
                   alt="Logo"
                   className="logo-img"
                 />

@@ -100,27 +100,13 @@ export default function EjerciciosPage() {
           return;
         }
 
-        // ✅ Fallback de rutas (porque ahora mismo te da 404 en /completed)
-        const candidates = [
-          `/api/resultados/completed/${userId}`,
-          `/api/resultados/completados/${userId}`,
-          `/api/resultados/completed?userId=${userId}`,
-          `/api/resultados/completados?userId=${userId}`,
-        ];
-
+        // userId from session on server (not sent from client)
         let completedData = null;
-        for (const url of candidates) {
-          try {
-            const r = await api.get(url, { signal: ctrl.signal });
-            completedData = r.data;
-            break;
-          } catch (e) {
-            // si es 404, probamos la siguiente; si es otra cosa, también probamos pero sin romper
-          }
-        }
-
-        if (!completedData) {
-          // No hay endpoint válido ahora mismo -> sin ticks, pero la pantalla funciona
+        try {
+          const r = await api.get(`/api/resultados/completed`, { signal: ctrl.signal });
+          completedData = r.data;
+        } catch (e) {
+          // Endpoint failed -> no ticks, but screen still works
           setCompletedIds(new Set());
           return;
         }
@@ -204,7 +190,17 @@ export default function EjerciciosPage() {
   }, [navigate]);
 
   const ejerciciosFiltrados = useMemo(() => {
-    return allEjercicios.filter((ejercicio) => {
+    const CONCEPT_ORDER = ["Ley de Ohm", "Semiconductores", "Polarización", "Norton", "Thevenin"];
+    const conceptRank = (c) => {
+      const i = CONCEPT_ORDER.indexOf(c);
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    const extractExerciseNumber = (titulo) => {
+      const match = typeof titulo === "string" ? titulo.match(/\d+/) : null;
+      return match ? parseInt(match[0], 10) : Number.MAX_SAFE_INTEGER;
+    };
+
+    const filtered = allEjercicios.filter((ejercicio) => {
       if (asig && ejercicio.asignatura !== asig) return false;
       if (
         conceptosSeleccionados.length > 0 &&
@@ -213,6 +209,15 @@ export default function EjerciciosPage() {
         return false;
       if (nivel > 0 && ejercicio.nivel != nivel) return false;
       return true;
+    });
+
+    return filtered.sort((a, b) => {
+      const ca = conceptRank(a.concepto) - conceptRank(b.concepto);
+      if (ca !== 0) return ca;
+      const na = extractExerciseNumber(a.titulo);
+      const nb = extractExerciseNumber(b.titulo);
+      if (na !== nb) return na - nb;
+      return (a.nivel || 0) - (b.nivel || 0);
     });
   }, [allEjercicios, asig, conceptosSeleccionados, nivel]);
 
@@ -437,7 +442,7 @@ export default function EjerciciosPage() {
                           <div className="ej-panel-media">
                             {ejercicio.imagen && (
                               <img
-                                src={`/static/${ejercicio.imagen}`}
+                                src={`${import.meta.env.VITE_BASE_PATH || ""}/static/${ejercicio.imagen}`}
                                 alt={ejercicio.titulo}
                                 className="ej-panel-img"
                               />

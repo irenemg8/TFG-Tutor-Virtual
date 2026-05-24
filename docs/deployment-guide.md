@@ -139,6 +139,8 @@ CHROMA_URL=http://localhost:8000
 RAG_HIGH_THRESHOLD=0.7
 RAG_MED_THRESHOLD=0.4
 HISTORY_MAX_MESSAGES=8
+RAG_MAX_WRONG_STREAK=4
+RAG_MAX_TOTAL_TURNS=16
 
 # ==========================================
 # Authentication

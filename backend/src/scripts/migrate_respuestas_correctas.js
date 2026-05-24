@@ -2,7 +2,7 @@ const path = require("path");
 const fs = require("fs");
 const mongoose = require("mongoose");
 
-const Ejercicio = require("../models/ejercicio");
+const Ejercicio = require("../infrastructure/persistence/mongodb/models/ejercicio");
 
 // ✅ Ajusta si tu variable se llama distinto
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;

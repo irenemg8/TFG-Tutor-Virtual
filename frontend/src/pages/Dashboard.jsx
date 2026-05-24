@@ -178,8 +178,8 @@ export default function Dashboard() {
           return;
         }
 
-        // 2) Progreso real
-        const res = await axios.get(`${backendBase}/api/progreso/${uid}`, {
+        // 2) Progreso real (userId from session, not URL)
+        const res = await axios.get(`${backendBase}/api/progreso`, {
           withCredentials: true,
           timeout: 12000
         });

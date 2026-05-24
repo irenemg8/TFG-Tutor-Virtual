@@ -1,0 +1,104 @@
+"use strict";
+
+/**
+ * Shared mutable context object (blackboard pattern) that flows through
+ * the agent pipeline. Each agent reads what it needs and writes its output.
+ */
+class AgentContext {
+  /**
+   * @param {object} request
+   * @param {string}      request.userId
+   * @param {string}      request.exerciseId
+   * @param {string}      request.userMessage
+   * @param {string|null} request.interactionId
+   */
+  constructor(request) {
+    // --- Input (immutable) ---
+    this.userId = request.userId;
+    this.exerciseId = request.exerciseId;
+    this.userMessage = request.userMessage;
+    this.interactionId = request.interactionId || null;
+    this.budgetMs = request.budgetMs || null;           // optional time budget
+    this.reqId = request.reqId || null;                  // optional trace id
+    // Optional per-token callback. When set, TutorAgent uses streaming so
+    // the user sees text appearing live instead of waiting for the full
+    // 10-25s LLM response. Signature: (token: string) => void.
+    this.tokenStreamHandler =
+      typeof request.tokenStreamHandler === "function" ? request.tokenStreamHandler : null;
+    // Accumulator of what we actually streamed to the user, so the HTTP
+    // adapter can decide whether the post-pipeline finalResponse differs
+    // from the streamed text and emit a {replace:true} correction envelope.
+    this.streamedText = "";
+
+    // --- Populated by ContextAgent ---
+    this.exercise = null;
+    this.exerciseNum = null;
+    this.correctAnswer = [];
+    this.evaluableElements = [];
+    /** @type {import('../../entities/Message')[]} */
+    this.history = [];
+    this.lang = "es";
+    this.loopState = {
+      prevCorrectTurns: 0,
+      consecutiveWrongTurns: 0,
+      totalAssistantTurns: 0,
+      tutorRepeating: false,
+      studentFrustrated: false,
+    };
+
+    // --- Populated by InputGuardrailAgent ---
+    this.inputSecurity = { safe: true, category: "safe", matchedPattern: null };
+    this.inputBlocked = false;
+
+    // --- Populated by ClassifierAgent ---
+    this.classification = null;
+
+    // --- Populated by RetrievalAgent ---
+    this.ragResult = {
+      augmentation: "",
+      decision: null,
+      sources: [],
+    };
+    // True when the per-stage budget aborted the RAG pipeline (NS-3). The
+    // tutor still runs with whatever augmentation the pipeline gathered;
+    // the orchestrator surfaces this flag in telemetry so we can spot
+    // chronic Chroma slowness in logs.
+    this.retrievalTimedOut = false;
+
+    // --- Populated by TutorAgent ---
+    this.llmResponse = null;
+    this.llmMessages = [];                // messages array actually sent to LLM (needed for consolidated retry)
+
+    // --- Shared config snapshot (for guardrails that need KG patterns) ---
+    this.kgConceptPatterns = [];
+
+    // --- Populated by GuardrailAgent ---
+    this.finalResponse = null;
+    this.guardrailsTriggered = {
+      solutionLeak: false,
+      falseConfirmation: false,
+      prematureConfirmation: false,
+      stateReveal: false,
+      elementNaming: false,
+      didacticExplanation: false,
+      datasetStyle: false,
+    };
+    this.guardrailPath = null;            // e.g. "primary_ok", "surgical_ok", "llm_retry_ok"
+    this.guardrailLlmRetries = 0;         // number of LLM retries (0 or 1 with new pipeline)
+    this.guardrailSurgicalFixes = [];     // ids of surgical fixes that applied
+
+    // --- Timing ---
+    this.timing = {
+      pipelineStartMs: Date.now(),
+      pipelineMs: null,
+      ollamaMs: null,
+      totalMs: null,
+    };
+
+    // --- Flags ---
+    this.deterministicFinish = false;
+    this.fallthrough = false;
+  }
+}
+
+module.exports = AgentContext;
