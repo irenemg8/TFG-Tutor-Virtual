@@ -1,0 +1,53 @@
+{
+  "benchmark_id": "rag_benchmark_1779274306",
+  "method": "RAG",
+  "timestamp": "2026-05-20T12:51:46.752334",
+  "models_tested": [
+    "qwen2.5:latest"
+  ],
+  "exercises_covered": [
+    3
+  ],
+  "total_evaluations": 1,
+  "results": [
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 3,
+      "sample_id": 1,
+      "student_answer": "R4 y R5 dado que las dos resistencia forman un divisor de tensión",
+      "expected_tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 dado que las dos resistencia forman un divisor de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Qué papel juega R2 en el circuito y por qué no contribuye a la diferencia de potencial entre N2 y 0?",
+      "think_content": "",
+      "tutor_response": "¿Qué papel juega R2 en el circuito y por qué no contribuye a la diferencia de potencial entre N2 y 0?",
+      "latencia": 114.69801568984985,
+      "tokens_generados": 31,
+      "detected_acs": [
+        "AC13"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [
+        "AC9"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 13,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T12:24:45.051540"
+    }
+  ]
+}

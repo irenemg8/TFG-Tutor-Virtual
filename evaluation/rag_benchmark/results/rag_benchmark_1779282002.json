@@ -1,0 +1,343 @@
+{
+  "benchmark_id": "rag_benchmark_1779282002",
+  "method": "RAG",
+  "timestamp": "2026-05-20T15:00:02.806001",
+  "models_tested": [
+    "qwen2.5:latest"
+  ],
+  "exercises_covered": [
+    1
+  ],
+  "total_evaluations": 8,
+  "results": [
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 1,
+      "sample_id": 2,
+      "conversation_id": 1,
+      "turn": 2,
+      "student_answer": "R1 y R2 dado que se pide la tensión en R2",
+      "expected_tutor": "Fíjate por donde circula la corriente que proporciona la fuente de alimentación. ¿Por qué no has tenido en cuenta R4?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1 y R2 dado que se pide la tensión en R2\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo podrías relacionar las tensiones y corrientes en R1 y R2 para determinar la tensión en R2?",
+      "think_content": "",
+      "tutor_response": "¿Cómo podrías relacionar las tensiones y corrientes en R1 y R2 para determinar la tensión en R2?",
+      "latencia": 152.84556698799133,
+      "tokens_generados": 30,
+      "detected_acs": [
+        "AC1"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC1"
+      ],
+      "false_negatives": [
+        "AC9"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:44:27.929159"
+    },
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 1,
+      "sample_id": 6,
+      "conversation_id": 2,
+      "turn": 3,
+      "student_answer": "R1, R2, R3 y R4 porque por R5 no circula corriente",
+      "expected_tutor": "¿Puede circular corriente por R3 con el interruptor abierto?",
+      "expected_acs": [
+        "AC1",
+        "AC6"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2, R3 y R4 porque por R5 no circula corriente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo afectaría un cortocircuito en R5 a la circulación de corriente a través de R1, R2, R3 y R4?",
+      "think_content": "",
+      "tutor_response": "¿Cómo afectaría un cortocircuito en R5 a la circulación de corriente a través de R1, R2, R3 y R4?",
+      "latencia": 128.23774695396423,
+      "tokens_generados": 37,
+      "detected_acs": [
+        "AC1",
+        "AC6"
+      ],
+      "true_positives": [
+        "AC1",
+        "AC6"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:55:37.631743"
+    },
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 1,
+      "sample_id": 9,
+      "conversation_id": 3,
+      "turn": 3,
+      "student_answer": "R1, R4 y R5 porque R2 se elimina y R3 también",
+      "expected_tutor": "¿Por qué razón estás eliminando R2?",
+      "expected_acs": [
+        "AC1",
+        "AC6"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R4 y R5 porque R2 se elimina y R3 también\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Por qué crees que R3 debería o no incluirse en tu lista?",
+      "think_content": "",
+      "tutor_response": "¿Por qué crees que R3 debería o no incluirse en tu lista?",
+      "latencia": 87.54433584213257,
+      "tokens_generados": 19,
+      "detected_acs": [],
+      "true_positives": [],
+      "false_positives": [],
+      "false_negatives": [
+        "AC1",
+        "AC6"
+      ],
+      "ac_precision": 1.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 13,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Clarificación: pide que el alumno explique su razonamiento. Precisión Conceptual 2/5 (Pobre): Respuesta genérica: sin vocabulario técnico ni diagnóstico del error. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T14:03:05.908687"
+    },
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 1,
+      "sample_id": 13,
+      "conversation_id": 5,
+      "turn": 1,
+      "student_answer": "R1, R2, R4 y R5 dado que R3 sobra",
+      "expected_tutor": "¿Estás seguro/a de que circula corriente por R5?",
+      "expected_acs": [
+        "AC1",
+        "AC6"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2, R4 y R5 dado que R3 sobra\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Crees que el interruptor entre N2 y N3 afecte a cómo se comportan las resistencias?",
+      "think_content": "",
+      "tutor_response": "¿Crees que el interruptor entre N2 y N3 afecte a cómo se comportan las resistencias?",
+      "latencia": 171.3628134727478,
+      "tokens_generados": 25,
+      "detected_acs": [
+        "AC1",
+        "AC9"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [
+        "AC9"
+      ],
+      "false_negatives": [
+        "AC6"
+      ],
+      "ac_precision": 0.5,
+      "ac_recall": 0.5,
+      "ac_f1": 0.5,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T14:14:57.724909"
+    },
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 1,
+      "sample_id": 19,
+      "conversation_id": 7,
+      "turn": 1,
+      "student_answer": "R1, R2 y R4 dado que por R3 y por R5 no circula corriente",
+      "expected_tutor": "Genial",
+      "expected_acs": [
+        "AC1",
+        "AC6"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R4 dado que por R3 y por R5 no circula corriente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo afecta un interruptor abierto a la circulación de corriente entre sus terminales?",
+      "think_content": "",
+      "tutor_response": "¿Cómo afecta un interruptor abierto a la circulación de corriente entre sus terminales?",
+      "latencia": 99.66771245002747,
+      "tokens_generados": 24,
+      "detected_acs": [
+        "AC1",
+        "AC6"
+      ],
+      "true_positives": [
+        "AC1",
+        "AC6"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 4,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 4/5 (Andamiaje para detección): Andamiaje para detección: identifica el área del error y plantea pregunta que confronta con la teoría. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T14:31:38.348314"
+    },
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 1,
+      "sample_id": 23,
+      "conversation_id": 8,
+      "turn": 2,
+      "student_answer": "R1, R2 y R4 dado que R3 sobra",
+      "expected_tutor": "¿Y qué sucede con R5, por qué no la consideras?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R4 dado que R3 sobra\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo afectaría la omisión de R3 en el circuito, considerando su rol como resistor en serie con R4?",
+      "think_content": "",
+      "tutor_response": "¿Cómo afectaría la omisión de R3 en el circuito, considerando su rol como resistor en serie con R4?",
+      "latencia": 88.0795431137085,
+      "tokens_generados": 28,
+      "detected_acs": [],
+      "true_positives": [],
+      "false_positives": [],
+      "false_negatives": [
+        "AC1"
+      ],
+      "ac_precision": 1.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 4,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T14:42:07.314784"
+    },
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 1,
+      "sample_id": 26,
+      "conversation_id": 9,
+      "turn": 2,
+      "student_answer": "R1, R2 y R4 dado que  R5 cortocircuitada",
+      "expected_tutor": "¿Y qué sucede con R3, por qué no la consideras?",
+      "expected_acs": [
+        "AC6"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R4 dado que  R5 cortocircuitada\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo afectaría un cortocircuito en R5 a las rutas de corriente entre los nodos donde se encuentran R1, R2 y R4?",
+      "think_content": "",
+      "tutor_response": "¿Cómo afectaría un cortocircuito en R5 a las rutas de corriente entre los nodos donde se encuentran R1, R2 y R4?",
+      "latencia": 110.05569815635681,
+      "tokens_generados": 38,
+      "detected_acs": [
+        "AC1",
+        "AC6",
+        "AC9"
+      ],
+      "true_positives": [
+        "AC6"
+      ],
+      "false_positives": [
+        "AC1",
+        "AC9"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.3333333333333333,
+      "ac_recall": 1.0,
+      "ac_f1": 0.5,
+      "socraticidad": 3,
+      "precision_conceptual": 4,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 17,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 4/5 (Bueno): Bueno: identifica claramente la concepción alternativa con lenguaje técnico preciso. Tutor de alto rendimiento: guía socrática experta con diagnóstico preciso.",
+      "timestamp": "2026-05-20T14:49:57.703347"
+    },
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 1,
+      "sample_id": 29,
+      "conversation_id": 10,
+      "turn": 2,
+      "student_answer": "R1, R2 y R4 dado que R3 se puede quitar",
+      "expected_tutor": "¿Y qué sucede con R5, por qué no la consideras?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 1 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3\n    Estrategia pedagógica: Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito\n    Estrategia pedagógica: Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R4 dado que R3 se puede quitar\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cuál es el efecto de la resistencia R3 en la corriente que fluye a través de R1, R2 y R4?",
+      "think_content": "",
+      "tutor_response": "¿Cuál es el efecto de la resistencia R3 en la corriente que fluye a través de R1, R2 y R4?",
+      "latencia": 111.11555027961731,
+      "tokens_generados": 34,
+      "detected_acs": [
+        "AC1"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T14:57:49.208302"
+    }
+  ]
+}

@@ -1,0 +1,1675 @@
+{
+  "benchmark_id": "rag_benchmark_1779276357",
+  "method": "RAG",
+  "timestamp": "2026-05-20T13:25:57.257002",
+  "models_tested": [
+    "llama",
+    "phi4"
+  ],
+  "exercises_covered": [
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "total_evaluations": 41,
+  "results": [
+    {
+      "model": "phi4",
+      "ejercicio": 3,
+      "sample_id": 1,
+      "conversation_id": 1,
+      "turn": 1,
+      "student_answer": "R4 y R5 dado que las dos resistencia forman un divisor de tensión",
+      "expected_tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 dado que las dos resistencia forman un divisor de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puedes identificar qué hace con el circuito a R1 si está conectada directamente entre los dos terminales de su fuente, y cómo eso afecta el papel de las resistencias restantes N2-R3, R4 y R5?",
+      "think_content": "",
+      "tutor_response": "¿Puedes identificar qué hace con el circuito a R1 si está conectada directamente entre los dos terminales de su fuente, y cómo eso afecta el papel de las resistencias restantes N2-R3, R4 y R5?",
+      "latencia": 42.38235664367676,
+      "tokens_generados": 48,
+      "detected_acs": [
+        "AC6",
+        "AC13",
+        "AC9"
+      ],
+      "true_positives": [
+        "AC9"
+      ],
+      "false_positives": [
+        "AC13",
+        "AC6"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.3333333333333333,
+      "ac_recall": 1.0,
+      "ac_f1": 0.5,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:30.136090"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 3,
+      "sample_id": 2,
+      "conversation_id": 1,
+      "turn": 2,
+      "student_answer": "R4 y R5 dado que se pide la tensión en R4",
+      "expected_tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 dado que se pide la tensión en R4\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo determinarías el valor del voltaje de referencia para medir las tensiones a través de R4 y R5, dado su arreglo con R1?",
+      "think_content": "",
+      "tutor_response": "¿Cómo determinarías el valor del voltaje de referencia para medir las tensiones a través de R4 y R5, dado su arreglo con R1?",
+      "latencia": 0.7011475563049316,
+      "tokens_generados": 33,
+      "detected_acs": [],
+      "true_positives": [],
+      "false_positives": [],
+      "false_negatives": [
+        "AC9"
+      ],
+      "ac_precision": 1.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:30.838236"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 3,
+      "sample_id": 3,
+      "conversation_id": 1,
+      "turn": 3,
+      "student_answer": "R4 y R5 por identificar un divisor de tensión",
+      "expected_tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 por identificar un divisor de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿El papel de R1 afectaría tu cálculo para medir el voltaje directamente a través de R4 y R5, considerando su configuración?",
+      "think_content": "",
+      "tutor_response": "¿El papel de R1 afectaría tu cálculo para medir el voltaje directamente a través de R4 y R5, considerando su configuración?",
+      "latencia": 0.5837831497192383,
+      "tokens_generados": 30,
+      "detected_acs": [],
+      "true_positives": [],
+      "false_positives": [],
+      "false_negatives": [
+        "AC9"
+      ],
+      "ac_precision": 1.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:31.423543"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 3,
+      "sample_id": 4,
+      "conversation_id": 2,
+      "turn": 1,
+      "student_answer": "R4 y R5 hacen un divisor de tensión",
+      "expected_tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 hacen un divisor de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puedes indicar qué relación tiene entre los terminales del nodo N2, considerando el estado actual del circuito para R1 y R2?",
+      "think_content": "",
+      "tutor_response": "¿Puedes indicar qué relación tiene entre los terminales del nodo N2, considerando el estado actual del circuito para R1 y R2?",
+      "latencia": 0.5875492095947266,
+      "tokens_generados": 29,
+      "detected_acs": [
+        "AC6",
+        "AC13"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13",
+        "AC6"
+      ],
+      "false_negatives": [
+        "AC9"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 13,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:32.012087"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 3,
+      "sample_id": 5,
+      "conversation_id": 2,
+      "turn": 2,
+      "student_answer": "R3, R4 y R5 porque son las resistencias que están conectadas a N2",
+      "expected_tutor": "Justifica mejor tu respuesta. ¿Por qué no tienes en cuenta R1 y R2?",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR3, R4 y R5 porque son las resistencias que están conectadas a N2\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Podrían los terminales del nodo N1 interactuar con el estado de R3, R4 y R5 para determinar su función dentro del circuito?",
+      "think_content": "",
+      "tutor_response": "¿Podrían los terminales del nodo N1 interactuar con el estado de R3, R4 y R5 para determinar su función dentro del circuito?",
+      "latencia": 0.6751806735992432,
+      "tokens_generados": 33,
+      "detected_acs": [
+        "AC6",
+        "AC13"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13",
+        "AC6"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 5,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 18,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 5/5 (Excelente): Excelente: identifica la concepción alternativa específica y la conecta con la topología del circuito. Tutor de alto rendimiento: guía socrática experta con diagnóstico preciso.",
+      "timestamp": "2026-05-20T13:24:32.687267"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 3,
+      "sample_id": 6,
+      "conversation_id": 2,
+      "turn": 3,
+      "student_answer": "R3, R4 y R5 porque están en paralelo",
+      "expected_tutor": "Las resistencias conectadas en paralelo comparten los dos terminales. ¿Ocurre esto en este circuito?",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR3, R4 y R5 porque están en paralelo\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Podría examinar el camino del flujo de corriente desde N1 hacia abajo para identificar si hay una configuración paralela con R3, R4 y R5?",
+      "think_content": "",
+      "tutor_response": "¿Podría examinar el camino del flujo de corriente desde N1 hacia abajo para identificar si hay una configuración paralela con R3, R4 y R5?",
+      "latencia": 0.6165080070495605,
+      "tokens_generados": 35,
+      "detected_acs": [],
+      "true_positives": [],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:33.304775"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 4,
+      "sample_id": 7,
+      "conversation_id": 3,
+      "turn": 1,
+      "student_answer": "R1, R2 y R3 porque son las resistencias que forman parte del circuito",
+      "expected_tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R3 porque son las resistencias que forman parte del circuito\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "Si el interruptor entre N1 y N2 está abierto, ¿cuál es el estado de corriente a través de R3 y cómo afecta esto a la contribución total del circuito?",
+      "think_content": "",
+      "tutor_response": "Si el interruptor entre N1 y N2 está abierto, ¿cuál es el estado de corriente a través de R3 y cómo afecta esto a la contribución total del circuito?",
+      "latencia": 0.7706239223480225,
+      "tokens_generados": 39,
+      "detected_acs": [
+        "AC1",
+        "AC13"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.5,
+      "ac_recall": 1.0,
+      "ac_f1": 0.6666666666666666,
+      "socraticidad": 3,
+      "precision_conceptual": 5,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 5/5 (Excelente): Excelente: identifica la concepción alternativa específica y la conecta con la topología del circuito. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:34.076398"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 4,
+      "sample_id": 8,
+      "conversation_id": 3,
+      "turn": 2,
+      "student_answer": "R1, R2 y R3 porque están conectadas a la fuente de tensión",
+      "expected_tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R3 porque están conectadas a la fuente de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "Si el interruptor se cierra repentinamente entre N1, N2 y R3, ¿cómo cambiaría esto su análisis del flujo de corriente a través de cada resistencia?",
+      "think_content": "",
+      "tutor_response": "Si el interruptor se cierra repentinamente entre N1, N2 y R3, ¿cómo cambiaría esto su análisis del flujo de corriente a través de cada resistencia?",
+      "latencia": 0.6053903102874756,
+      "tokens_generados": 38,
+      "detected_acs": [
+        "AC1",
+        "AC13"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.5,
+      "ac_recall": 1.0,
+      "ac_f1": 0.6666666666666666,
+      "socraticidad": 3,
+      "precision_conceptual": 4,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 4/5 (Bueno): Bueno: identifica claramente la concepción alternativa con lenguaje técnico preciso. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:34.681788"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 4,
+      "sample_id": 9,
+      "conversation_id": 3,
+      "turn": 3,
+      "student_answer": "R1, R2 y R3 porque están conectadas en paralelo",
+      "expected_tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R3 porque están conectadas en paralelo\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "El circuito consiste tanto en ramas paralelas como series; ¿cómo deberíamos abordar el cálculo del flujo total de corriente teniendo en cuenta las características únicas de estas conexiones?",
+      "think_content": "",
+      "tutor_response": "El circuito consiste tanto en ramas paralelas como series; ¿cómo deberíamos abordar el cálculo del flujo total de corriente teniendo en cuenta las características únicas de estas conexiones?",
+      "latencia": 0.5970108509063721,
+      "tokens_generados": 34,
+      "detected_acs": [
+        "AC13",
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13",
+        "AC14"
+      ],
+      "false_negatives": [
+        "AC1"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:35.278800"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 4,
+      "sample_id": 10,
+      "conversation_id": 4,
+      "turn": 1,
+      "student_answer": "R1, R2 y R3 porque están conectadas en serie",
+      "expected_tutor": "Las resistencias conectadas en serie comparten sólo un nudo y no hay ningún otro componente conectado a ese nudo. ¿Sucede esto en este circuito?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R3 porque están conectadas en serie\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puedes describir cómo interactúan las resistencias R1, R2 y R3 con respecto a sus terminales para determinar el camino de corriente desde V1? ¿Están todos conectados en serie o incluye algún cortocircuito que excluya un componente del flujo de corriente?",
+      "think_content": "",
+      "tutor_response": "¿Puedes describir cómo interactúan las resistencias R1, R2 y R3 con respecto a sus terminales para determinar el camino de corriente desde V1? ¿Están todos conectados en serie o incluye algún cortocircuito que excluya un componente del flujo de corriente?",
+      "latencia": 0.8787086009979248,
+      "tokens_generados": 60,
+      "detected_acs": [
+        "AC1",
+        "AC13",
+        "AC14"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [
+        "AC13",
+        "AC14"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.3333333333333333,
+      "ac_recall": 1.0,
+      "ac_f1": 0.5,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 4,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Clarificación: pide que el alumno explique su razonamiento. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:36.158504"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 4,
+      "sample_id": 11,
+      "conversation_id": 4,
+      "turn": 2,
+      "student_answer": "R1 y R2 porque son las resistencias por las que pasa corriente",
+      "expected_tutor": "Correcto, pero ¿por qué no has tenido en cuenta R3?",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1 y R2 porque son las resistencias por las que pasa corriente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Consideraste si los terminales de todas las tres resistencias R1, R2 y R3 están conectados o si una configuración podría estar causando un cortocircuito, excluyendo a alguna resistencia del camino para el flujo de corriente?",
+      "think_content": "",
+      "tutor_response": "¿Consideraste si los terminales de todas las tres resistencias R1, R2 y R3 están conectados o si una configuración podría estar causando un cortocircuito, excluyendo a alguna resistencia del camino para el flujo de corriente?",
+      "latencia": 0.7635242938995361,
+      "tokens_generados": 51,
+      "detected_acs": [
+        "AC13",
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13",
+        "AC14"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 5,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 18,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 5/5 (Excelente): Excelente: identifica la concepción alternativa específica y la conecta con la topología del circuito. Tutor de alto rendimiento: guía socrática experta con diagnóstico preciso.",
+      "timestamp": "2026-05-20T13:24:36.922028"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 4,
+      "sample_id": 12,
+      "conversation_id": 4,
+      "turn": 3,
+      "student_answer": "R1 y R2 porque están conectadas en paralelo con la fuente",
+      "expected_tutor": "Correcto, pero ¿por qué no has tenido en cuenta R3?",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1 y R2 porque están conectadas en paralelo con la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Podemos confirmar si las configuraciones paralela o serie de los resistores influyen juntos con R3, y cómo afectaría esto el flujo total de corriente desde V1? ¿Es posible que una configuración parallel conectada a un circuito paralelo esté causando una distribución diferente del voltaje u impedancia en comparación con la conexión directa al fuente principal?",
+      "think_content": "",
+      "tutor_response": "¿Podemos confirmar si las configuraciones paralela o serie de los resistores influyen juntos con R3, y cómo afectaría esto el flujo total de corriente desde V1? ¿Es posible que una configuración parallel conectada a un circuito paralelo esté causando una distribución diferente del voltaje u impedancia en comparación con la conexión directa al fuente principal?",
+      "latencia": 0.7580900192260742,
+      "tokens_generados": 72,
+      "detected_acs": [
+        "AC13",
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13",
+        "AC14"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 5,
+      "precision_conceptual": 4,
+      "consistencia": 2,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 5/5 (Inducción a la contradicción): Inducción a la contradicción: usa contraejemplo o reducción al absurdo. Precisión Conceptual 4/5 (Bueno): Bueno: identifica claramente la concepción alternativa con lenguaje técnico preciso. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:37.693282"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 5,
+      "sample_id": 13,
+      "conversation_id": 5,
+      "turn": 1,
+      "student_answer": "R1 y R2 porque están conectadas en serie con la fuente",
+      "expected_tutor": "¿Por qué no estás considerando R3 y R4?. Razona tu respuesta",
+      "expected_acs": [
+        "AC14"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1 y R2 porque están conectadas en serie con la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puede confirmar si el estado del interruptor entre N3 y N4 afecta cómo las resistencias R1, R2 y R4 interactúan con respecto a la corriente de V1?",
+      "think_content": "",
+      "tutor_response": "¿Puede confirmar si el estado del interruptor entre N3 y N4 afecta cómo las resistencias R1, R2 y R4 interactúan con respecto a la corriente de V1?",
+      "latencia": 0.6963634490966797,
+      "tokens_generados": 40,
+      "detected_acs": [
+        "AC1"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC1"
+      ],
+      "false_negatives": [
+        "AC14"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:38.389646"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 5,
+      "sample_id": 14,
+      "conversation_id": 5,
+      "turn": 2,
+      "student_answer": "R1 y R2 porque están conectadas en paralelo con la fuente",
+      "expected_tutor": "La conexión en paraleo se da cuando los dos terminales de los componentes se encuentran conectados a los mismos dos puntos. ¿Ocurre eso en este circuito?",
+      "expected_acs": [
+        "AC14"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1 y R2 porque están conectadas en paralelo con la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Consideraría el impacto de una interrupción entre N3 y N4 sobre las propiedades paralelismo del circuito, particularmente cómo podrían R1 y R2 comportarse con respecto a su relación con los otros componentes como R3 y R2?",
+      "think_content": "",
+      "tutor_response": "¿Consideraría el impacto de una interrupción entre N3 y N4 sobre las propiedades paralelismo del circuito, particularmente cómo podrían R1 y R2 comportarse con respecto a su relación con los otros componentes como R3 y R2?",
+      "latencia": 0.7817234992980957,
+      "tokens_generados": 51,
+      "detected_acs": [],
+      "true_positives": [],
+      "false_positives": [],
+      "false_negatives": [
+        "AC14"
+      ],
+      "ac_precision": 1.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Respuesta genérica: sin vocabulario técnico ni diagnóstico del error. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:39.172369"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 5,
+      "sample_id": 15,
+      "conversation_id": 5,
+      "turn": 3,
+      "student_answer": "R1, R2, y R4 porque están conectadas en serie con la fuente",
+      "expected_tutor": "La respuesta es correcta pero no has explicado por qué no estás considerando R3. Explícalo, por favor.",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2, y R4 porque están conectadas en serie con la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Podría explicar cómo las interacciones entre los interruptores N1/N2 y N3/N4 podrían influir en el comportamiento de R1, R2, y R4 dentro del circuito?",
+      "think_content": "",
+      "tutor_response": "¿Podría explicar cómo las interacciones entre los interruptores N1/N2 y N3/N4 podrían influir en el comportamiento de R1, R2, y R4 dentro del circuito?",
+      "latencia": 0.9510791301727295,
+      "tokens_generados": 42,
+      "detected_acs": [
+        "AC1"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC1"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:40.124798"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 5,
+      "sample_id": 16,
+      "conversation_id": 6,
+      "turn": 1,
+      "student_answer": "R1, R2 y R4 porque por R3 no pasa corriente",
+      "expected_tutor": "La respuesta es correcta pero no has explicado por qué no pasa corriente por R3. Explícalo, por favor.",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R4 porque por R3 no pasa corriente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puedes verificar si la corriente puede fluir a través del interruptor abierto entre N3 y N4, y de ser así, cómo esto afecta el papel de R3 en la configuración general?",
+      "think_content": "",
+      "tutor_response": "¿Puedes verificar si la corriente puede fluir a través del interruptor abierto entre N3 y N4, y de ser así, cómo esto afecta el papel de R3 en la configuración general?",
+      "latencia": 0.7134778499603271,
+      "tokens_generados": 41,
+      "detected_acs": [
+        "AC1"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 5,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 5/5 (Excelente): Excelente: identifica la concepción alternativa específica y la conecta con la topología del circuito. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:40.838276"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 5,
+      "sample_id": 17,
+      "conversation_id": 6,
+      "turn": 2,
+      "student_answer": "R1, R2 y R4 porque R3 está en circuito abierto",
+      "expected_tutor": "Muy bien. Dado que R3 está en cictuito abierto no pasa corriente por ella, por eso no se tiene en cuenta en los cálculos.",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R4 porque R3 está en circuito abierto\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "Si R3 estuviera cerrado, ¿cómo influiría esto en el flujo de corriente a través de los otros componentes y qué impacto tendría en su papel dentro del circuito?",
+      "think_content": "",
+      "tutor_response": "Si R3 estuviera cerrado, ¿cómo influiría esto en el flujo de corriente a través de los otros componentes y qué impacto tendría en su papel dentro del circuito?",
+      "latencia": 0.5842125415802002,
+      "tokens_generados": 36,
+      "detected_acs": [],
+      "true_positives": [],
+      "false_positives": [],
+      "false_negatives": [
+        "AC1"
+      ],
+      "ac_precision": 1.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 13,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:41.422488"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 5,
+      "sample_id": 18,
+      "conversation_id": 6,
+      "turn": 3,
+      "student_answer": "R1, R2, R3 y R4 porque son las resistencias que forman parte del circuito",
+      "expected_tutor": "Revisa de nuevo el circuito. ¿Circula corriente por R3?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2, R3 y R4 porque son las resistencias que forman parte del circuito\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Podría el estudiante explicar cómo se distribuye la tensión de manera uniforme a través de todas las resistencias R1, R2, R3 y R4 si están conectadas paralelamente? ¿Cómo influiría un circuito abierto en R3 comparado con una configuración donde R3 estuviera cerrada?",
+      "think_content": "",
+      "tutor_response": "¿Podría el estudiante explicar cómo se distribuye la tensión de manera uniforme a través de todas las resistencias R1, R2, R3 y R4 si están conectadas paralelamente? ¿Cómo influiría un circuito abierto en R3 comparado con una configuración donde R3 estuviera cerrada?",
+      "latencia": 0.7323517799377441,
+      "tokens_generados": 66,
+      "detected_acs": [
+        "AC1",
+        "AC14"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [
+        "AC14"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.5,
+      "ac_recall": 1.0,
+      "ac_f1": 0.6666666666666666,
+      "socraticidad": 3,
+      "precision_conceptual": 4,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 17,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 4/5 (Bueno): Bueno: identifica claramente la concepción alternativa con lenguaje técnico preciso. Tutor de alto rendimiento: guía socrática experta con diagnóstico preciso.",
+      "timestamp": "2026-05-20T13:24:42.154840"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 6,
+      "sample_id": 19,
+      "conversation_id": 7,
+      "turn": 1,
+      "student_answer": "Por ninguna, todas las resistencias poseen la misma corriente ya que están conectadas en serie",
+      "expected_tutor": "Muy bien justificado. Al estar todas las resistencias en serie la corriente que circula es la misma en todas ellas.",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 6 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)\n    Estrategia pedagógica: Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que las seis resistencias están en paralelo en lugar de en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparte cada par de resistencias consecutivas",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 6 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)\n    Estrategia pedagógica: Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que las seis resistencias están en paralelo en lugar de en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparte cada par de resistencias consecutivas\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nPor ninguna, todas las resistencias poseen la misma corriente ya que están conectadas en serie\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puede explicar por qué, a pesar de estar en serie, cada resistencia no tendría una cantidad diferente de corriente fluyendo a través de ella?",
+      "think_content": "",
+      "tutor_response": "¿Puede explicar por qué, a pesar de estar en serie, cada resistencia no tendría una cantidad diferente de corriente fluyendo a través de ella?",
+      "latencia": 0.5760011672973633,
+      "tokens_generados": 30,
+      "detected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC14",
+        "AC2"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 4,
+      "consistencia": 4,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 4/5 (Bueno): Bueno: identifica claramente la concepción alternativa con lenguaje técnico preciso. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:42.730841"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 6,
+      "sample_id": 20,
+      "conversation_id": 7,
+      "turn": 2,
+      "student_answer": "En ninguna",
+      "expected_tutor": "Razona tu respuesta",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 6 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)\n    Estrategia pedagógica: Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que las seis resistencias están en paralelo en lugar de en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparte cada par de resistencias consecutivas",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nEn ninguna\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Por qué podrían las resistencias, incluso si están conectadas en serie, no compartir una cantidad igual de corriente?",
+      "think_content": "",
+      "tutor_response": "¿Por qué podrían las resistencias, incluso si están conectadas en serie, no compartir una cantidad igual de corriente?",
+      "latencia": 0.5411560535430908,
+      "tokens_generados": 25,
+      "detected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC14",
+        "AC2"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 4,
+      "consistencia": 2,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 4/5 (Bueno): Bueno: identifica claramente la concepción alternativa con lenguaje técnico preciso. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:43.273252"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 6,
+      "sample_id": 21,
+      "conversation_id": 7,
+      "turn": 3,
+      "student_answer": "La corriente es la misma en todas las resistencias porque es un circuito serie",
+      "expected_tutor": "Muy bien justificado. Al estar todas las resistencias en serie la corriente que circula es la misma en todas ellas.",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 6 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)\n    Estrategia pedagógica: Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que las seis resistencias están en paralelo en lugar de en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparte cada par de resistencias consecutivas",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nLa corriente es la misma en todas las resistencias porque es un circuito serie\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puede explicar por qué el concepto de 'circuito series' podría llevar a una suposición errónea sobre los niveles de corriente equitativamente distribuidos, ignorando las propiedades inherentes del circuito eléctrico?",
+      "think_content": "",
+      "tutor_response": "¿Puede explicar por qué el concepto de 'circuito series' podría llevar a una suposición errónea sobre los niveles de corriente equitativamente distribuidos, ignorando las propiedades inherentes del circuito eléctrico?",
+      "latencia": 0.6920080184936523,
+      "tokens_generados": 45,
+      "detected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC14",
+        "AC2"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 4,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:43.965261"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 6,
+      "sample_id": 22,
+      "conversation_id": 8,
+      "turn": 1,
+      "student_answer": "En R1 ya que es la primera resistencia",
+      "expected_tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?",
+      "expected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 6 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)\n    Estrategia pedagógica: Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que las seis resistencias están en paralelo en lugar de en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparte cada par de resistencias consecutivas",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 6 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)\n    Estrategia pedagógica: Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que las seis resistencias están en paralelo en lugar de en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparte cada par de resistencias consecutivas\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nEn R1 ya que es la primera resistencia\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puede explicar por qué, si consideramos el flujo de corriente a través del circuito, se debe o no compartir entre diferentes resistencias conectadas una sola vez?",
+      "think_content": "",
+      "tutor_response": "¿Puede explicar por qué, si consideramos el flujo de corriente a través del circuito, se debe o no compartir entre diferentes resistencias conectadas una sola vez?",
+      "latencia": 0.710385799407959,
+      "tokens_generados": 34,
+      "detected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "true_positives": [
+        "AC14",
+        "AC2"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:44.676645"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 6,
+      "sample_id": 23,
+      "conversation_id": 8,
+      "turn": 2,
+      "student_answer": "En R1 ya que la corriente se va consumiendo en las resistencias",
+      "expected_tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?",
+      "expected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 6 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)\n    Estrategia pedagógica: Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que las seis resistencias están en paralelo en lugar de en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparte cada par de resistencias consecutivas",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nEn R1 ya que la corriente se va consumiendo en las resistencias\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo afecta el concepto de carga equivalente a nuestro entendimiento del flujo de corriente compartido entre R1 y otras resistencias conectadas en serie?",
+      "think_content": "",
+      "tutor_response": "¿Cómo afecta el concepto de carga equivalente a nuestro entendimiento del flujo de corriente compartido entre R1 y otras resistencias conectadas en serie?",
+      "latencia": 0.5840094089508057,
+      "tokens_generados": 31,
+      "detected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "true_positives": [
+        "AC14",
+        "AC2"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 4,
+      "precision_conceptual": 4,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 18,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 4/5 (Andamiaje para detección): Andamiaje para detección: identifica el área del error y plantea pregunta que confronta con la teoría. Precisión Conceptual 4/5 (Bueno): Bueno: identifica claramente la concepción alternativa con lenguaje técnico preciso. Tutor de alto rendimiento: guía socrática experta con diagnóstico preciso.",
+      "timestamp": "2026-05-20T13:24:45.260654"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 6,
+      "sample_id": 24,
+      "conversation_id": 8,
+      "turn": 3,
+      "student_answer": "En R1 ya que es la resistencia que está conectada a la fuente",
+      "expected_tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?",
+      "expected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 6 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)\n    Estrategia pedagógica: Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que las seis resistencias están en paralelo en lugar de en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparte cada par de resistencias consecutivas",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nEn R1 ya que es la resistencia que está conectada a la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo determina el concepto de resistencias serie una carga equivalente para entender dónde va toda la corriente en un circuito con varias resistencias conectadas una sola vez?",
+      "think_content": "",
+      "tutor_response": "¿Cómo determina el concepto de resistencias serie una carga equivalente para entender dónde va toda la corriente en un circuito con varias resistencias conectadas una sola vez?",
+      "latencia": 0.6150872707366943,
+      "tokens_generados": 33,
+      "detected_acs": [
+        "AC2",
+        "AC14"
+      ],
+      "true_positives": [
+        "AC14",
+        "AC2"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 4,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 4/5 (Bueno): Bueno: identifica claramente la concepción alternativa con lenguaje técnico preciso. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:45.875741"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 7,
+      "sample_id": 25,
+      "conversation_id": 9,
+      "turn": 1,
+      "student_answer": "Por R1 ya que es la primera resistencia",
+      "expected_tutor": "Revisa el circuito. ¿Cómo están conectadas las resistencias?",
+      "expected_acs": [
+        "AC2"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 7 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo\n    Estrategia pedagógica: Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1\n  • AC14-near – Topología — confunde paralelo con secuencia: \n    Error típico: Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente\n    Estrategia pedagógica: Pregunta entre qué nudos están conectadas las tres resistencias\n  • AC14-series – Topología serie/paralelo: \n    Error típico: Cree que las tres resistencias están en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 7 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo\n    Estrategia pedagógica: Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1\n  • AC14-near – Topología — confunde paralelo con secuencia: \n    Error típico: Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente\n    Estrategia pedagógica: Pregunta entre qué nudos están conectadas las tres resistencias\n  • AC14-series – Topología serie/paralelo: \n    Error típico: Cree que las tres resistencias están en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nPor R1 ya que es la primera resistencia\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Puede explicar por qué el orden de las resistencias podría afectar cómo fluye la corriente si todas están conectadas entre dos terminales?",
+      "think_content": "",
+      "tutor_response": "¿Puede explicar por qué el orden de las resistencias podría afectar cómo fluye la corriente si todas están conectadas entre dos terminales?",
+      "latencia": 0.6012849807739258,
+      "tokens_generados": 29,
+      "detected_acs": [
+        "AC2",
+        "AC14-near",
+        "AC14-series"
+      ],
+      "true_positives": [
+        "AC2"
+      ],
+      "false_positives": [
+        "AC14-near",
+        "AC14-series"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.3333333333333333,
+      "ac_recall": 1.0,
+      "ac_f1": 0.5,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:46.477026"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 7,
+      "sample_id": 26,
+      "conversation_id": 9,
+      "turn": 2,
+      "student_answer": "Por R1 ya que consume la corriente que genera la fuente",
+      "expected_tutor": "Revisa el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC2"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 7 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo\n    Estrategia pedagógica: Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1\n  • AC14-near – Topología — confunde paralelo con secuencia: \n    Error típico: Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente\n    Estrategia pedagógica: Pregunta entre qué nudos están conectadas las tres resistencias\n  • AC14-series – Topología serie/paralelo: \n    Error típico: Cree que las tres resistencias están en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nPor R1 ya que consume la corriente que genera la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Podría explicar cómo el concepto de caída de tensión afecta a las corrientes a través de R1 y si su posición entre otras resistencias influiría en la corriente total según Kirchhoff's Voltage Law?",
+      "think_content": "",
+      "tutor_response": "¿Podría explicar cómo el concepto de caída de tensión afecta a las corrientes a través de R1 y si su posición entre otras resistencias influiría en la corriente total según Kirchhoff's Voltage Law?",
+      "latencia": 0.6267964839935303,
+      "tokens_generados": 44,
+      "detected_acs": [
+        "AC2",
+        "AC14-near",
+        "AC14-series"
+      ],
+      "true_positives": [
+        "AC2"
+      ],
+      "false_positives": [
+        "AC14-near",
+        "AC14-series"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.3333333333333333,
+      "ac_recall": 1.0,
+      "ac_f1": 0.5,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:47.104814"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 7,
+      "sample_id": 27,
+      "conversation_id": 9,
+      "turn": 3,
+      "student_answer": "Por R1 ya que la corriente se la encuentra en primer lugar",
+      "expected_tutor": "Revisa el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC2"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 7 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo\n    Estrategia pedagógica: Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1\n  • AC14-near – Topología — confunde paralelo con secuencia: \n    Error típico: Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente\n    Estrategia pedagógica: Pregunta entre qué nudos están conectadas las tres resistencias\n  • AC14-series – Topología serie/paralelo: \n    Error típico: Cree que las tres resistencias están en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nPor R1 ya que la corriente se la encuentra en primer lugar\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo influiría el hecho de que R1 esté ubicado primero respecto a las leyes del circuito, especialmente con base en los principios de superposición o distribución de corriente?",
+      "think_content": "",
+      "tutor_response": "¿Cómo influiría el hecho de que R1 esté ubicado primero respecto a las leyes del circuito, especialmente con base en los principios de superposición o distribución de corriente?",
+      "latencia": 0.6677308082580566,
+      "tokens_generados": 36,
+      "detected_acs": [
+        "AC14-near"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC14-near"
+      ],
+      "false_negatives": [
+        "AC2"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 2,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 2/5 (Pobre): Pobre: responde de forma genérica sin diagnosticar el error conceptual. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:47.772545"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 7,
+      "sample_id": 28,
+      "conversation_id": 10,
+      "turn": 1,
+      "student_answer": "Por R1 ya que está más cerca de la fuente",
+      "expected_tutor": "¿La posición de las resistencias afecta a la corriente que circula por todo el circuito?",
+      "expected_acs": [
+        "AC2"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 7 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo\n    Estrategia pedagógica: Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1\n  • AC14-near – Topología — confunde paralelo con secuencia: \n    Error típico: Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente\n    Estrategia pedagógica: Pregunta entre qué nudos están conectadas las tres resistencias\n  • AC14-series – Topología serie/paralelo: \n    Error típico: Cree que las tres resistencias están en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 7 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo\n    Estrategia pedagógica: Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1\n  • AC14-near – Topología — confunde paralelo con secuencia: \n    Error típico: Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente\n    Estrategia pedagógica: Pregunta entre qué nudos están conectadas las tres resistencias\n  • AC14-series – Topología serie/paralelo: \n    Error típico: Cree que las tres resistencias están en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nPor R1 ya que está más cerca de la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Consideras que el posicionamiento relativo dentro del circuito afecta cuánta corriente atraviesa cada resistencia cuando están conectadas en paralelo, o es solo una cuestión de la diferencia de potencial entre los terminales N1 y 0?",
+      "think_content": "",
+      "tutor_response": "¿Consideras que el posicionamiento relativo dentro del circuito afecta cuánta corriente atraviesa cada resistencia cuando están conectadas en paralelo, o es solo una cuestión de la diferencia de potencial entre los terminales N1 y 0?",
+      "latencia": 0.6990950107574463,
+      "tokens_generados": 48,
+      "detected_acs": [
+        "AC2",
+        "AC14-near",
+        "AC14-series"
+      ],
+      "true_positives": [
+        "AC2"
+      ],
+      "false_positives": [
+        "AC14-near",
+        "AC14-series"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.3333333333333333,
+      "ac_recall": 1.0,
+      "ac_f1": 0.5,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:48.476074"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 7,
+      "sample_id": 29,
+      "conversation_id": 10,
+      "turn": 2,
+      "student_answer": "Por R2 ya que R1 se puede quitar al estar en paralelo con la fuente",
+      "expected_tutor": "Revisa el circuito. ¿Cómo están conectadas las resistencias?",
+      "expected_acs": [
+        "AC2",
+        "AC14-near"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 7 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo\n    Estrategia pedagógica: Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1\n  • AC14-near – Topología — confunde paralelo con secuencia: \n    Error típico: Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente\n    Estrategia pedagógica: Pregunta entre qué nudos están conectadas las tres resistencias\n  • AC14-series – Topología serie/paralelo: \n    Error típico: Cree que las tres resistencias están en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nPor R2 ya que R1 se puede quitar al estar en paralelo con la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿El hecho de tener dos resistencias en paralelo cambia las reglas sobre cómo calcular el equivalente total, lo cual influiría en cuánta corriente fluye a través de R1 y R2?",
+      "think_content": "",
+      "tutor_response": "¿El hecho de tener dos resistencias en paralelo cambia las reglas sobre cómo calcular el equivalente total, lo cual influiría en cuánta corriente fluye a través de R1 y R2?",
+      "latencia": 0.8634319305419922,
+      "tokens_generados": 42,
+      "detected_acs": [
+        "AC2",
+        "AC14-near",
+        "AC14-series"
+      ],
+      "true_positives": [
+        "AC14-near",
+        "AC2"
+      ],
+      "false_positives": [
+        "AC14-series"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.6666666666666666,
+      "ac_recall": 1.0,
+      "ac_f1": 0.8,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:49.339507"
+    },
+    {
+      "model": "phi4",
+      "ejercicio": 7,
+      "sample_id": 30,
+      "conversation_id": 10,
+      "turn": 3,
+      "student_answer": "Por R3 ya que R1 y R2 se pueden quitar por estar en paralelo con la fuente",
+      "expected_tutor": "Revisa el circuito. ¿Cómo están conectadas las resistencias?",
+      "expected_acs": [
+        "AC2",
+        "AC14-near"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 7 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC2 – Modelo de la atenuación: Cree que la corriente se atenúa o consume al pasar por las resistencias\n    Error típico: Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo\n    Estrategia pedagógica: Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1\n  • AC14-near – Topología — confunde paralelo con secuencia: \n    Error típico: Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente\n    Estrategia pedagógica: Pregunta entre qué nudos están conectadas las tres resistencias\n  • AC14-series – Topología serie/paralelo: \n    Error típico: Cree que las tres resistencias están en serie\n    Estrategia pedagógica: Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nPor R3 ya que R1 y R2 se pueden quitar por estar en paralelo con la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Confirma el cálculo del corriente total a través de las fuentes, o no es relevante, cuando R1 y R2 están conectados en paralelo con respecto al flujo a través de R3?",
+      "think_content": "",
+      "tutor_response": "¿Confirma el cálculo del corriente total a través de las fuentes, o no es relevante, cuando R1 y R2 están conectados en paralelo con respecto al flujo a través de R3?",
+      "latencia": 0.6583523750305176,
+      "tokens_generados": 41,
+      "detected_acs": [
+        "AC2",
+        "AC14-near"
+      ],
+      "true_positives": [
+        "AC14-near",
+        "AC2"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:50.002106"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 3,
+      "sample_id": 31,
+      "conversation_id": 11,
+      "turn": 1,
+      "student_answer": "R4 y R5 dado que las dos resistencia forman un divisor de tensión",
+      "expected_tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 dado que las dos resistencia forman un divisor de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿No deberías considerar también la resistencia R3, ya que forma parte del camino eléctrico que conecta el nodo N2 con el referencia de 0 volts? ¿Cómo afecta R3 a la diferencia de potencial entre N2 y 0 en este circuito?",
+      "think_content": "",
+      "tutor_response": "¿No deberías considerar también la resistencia R3, ya que forma parte del camino eléctrico que conecta el nodo N2 con el referencia de 0 volts? ¿Cómo afecta R3 a la diferencia de potencial entre N2 y 0 en este circuito?",
+      "latencia": 2.9805102348327637,
+      "tokens_generados": 61,
+      "detected_acs": [
+        "AC13"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [
+        "AC9"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 4,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 4/5 (Andamiaje para detección): Andamiaje para detección: identifica el área del error y plantea pregunta que confronta con la teoría. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:53.136778"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 3,
+      "sample_id": 32,
+      "conversation_id": 11,
+      "turn": 2,
+      "student_answer": "R4 y R5 dado que se pide la tensión en R4",
+      "expected_tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 dado que se pide la tensión en R4\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿La tensión en R4 no dependerá también de la corriente que fluye a través de ella, y cómo se relaciona esa corriente con las resistencias R3, R4 y R5 en este circuito?",
+      "think_content": "",
+      "tutor_response": "¿La tensión en R4 no dependerá también de la corriente que fluye a través de ella, y cómo se relaciona esa corriente con las resistencias R3, R4 y R5 en este circuito?",
+      "latencia": 3.6112732887268066,
+      "tokens_generados": 52,
+      "detected_acs": [
+        "AC9"
+      ],
+      "true_positives": [
+        "AC9"
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:24:56.748051"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 3,
+      "sample_id": 33,
+      "conversation_id": 11,
+      "turn": 3,
+      "student_answer": "R4 y R5 por identificar un divisor de tensión",
+      "expected_tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 por identificar un divisor de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Estás seguro de que solo necesitas considerar R4 y R5 para calcular la tensión en R4, sin tener en cuenta la relación de las resistencias con el resto del circuito? ¿Cómo afecta la configuración del circuito a la tensión que se divide entre R4 y R5?",
+      "think_content": "",
+      "tutor_response": "¿Estás seguro de que solo necesitas considerar R4 y R5 para calcular la tensión en R4, sin tener en cuenta la relación de las resistencias con el resto del circuito? ¿Cómo afecta la configuración del circuito a la tensión que se divide entre R4 y R5?",
+      "latencia": 4.327930450439453,
+      "tokens_generados": 67,
+      "detected_acs": [
+        "AC13",
+        "AC9"
+      ],
+      "true_positives": [
+        "AC9"
+      ],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.5,
+      "ac_recall": 1.0,
+      "ac_f1": 0.6666666666666666,
+      "socraticidad": 4,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 15,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 4/5 (Andamiaje para detección): Andamiaje para detección: identifica el área del error y plantea pregunta que confronta con la teoría. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:25:01.075982"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 3,
+      "sample_id": 34,
+      "conversation_id": 12,
+      "turn": 1,
+      "student_answer": "R4 y R5 hacen un divisor de tensión",
+      "expected_tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 hacen un divisor de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Qué relación hay entre la conexión de R3 y el nodo N2 en el circuito, y cómo podría afectar la diferencia de potencial entre N2 y 0?",
+      "think_content": "",
+      "tutor_response": "¿Qué relación hay entre la conexión de R3 y el nodo N2 en el circuito, y cómo podría afectar la diferencia de potencial entre N2 y 0?",
+      "latencia": 2.314263105392456,
+      "tokens_generados": 38,
+      "detected_acs": [
+        "AC13"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [
+        "AC9"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:25:03.390245"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 3,
+      "sample_id": 35,
+      "conversation_id": 12,
+      "turn": 2,
+      "student_answer": "R3, R4 y R5 porque son las resistencias que están conectadas a N2",
+      "expected_tutor": "Justifica mejor tu respuesta. ¿Por qué no tienes en cuenta R1 y R2?",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR3, R4 y R5 porque son las resistencias que están conectadas a N2\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo se determina el voltaje en el nodo N2 si R4 y R5 forman un divisor de tensión con una fuente de voltaje y una resistencia en serie?",
+      "think_content": "",
+      "tutor_response": "¿Cómo se determina el voltaje en el nodo N2 si R4 y R5 forman un divisor de tensión con una fuente de voltaje y una resistencia en serie?",
+      "latencia": 2.9823126792907715,
+      "tokens_generados": 41,
+      "detected_acs": [
+        "AC13"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 5,
+      "consistencia": 4,
+      "tasa_alucinacion": 5,
+      "score_total": 17,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 5/5 (Excelente): Excelente: identifica la concepción alternativa específica y la conecta con la topología del circuito. Tutor de alto rendimiento: guía socrática experta con diagnóstico preciso.",
+      "timestamp": "2026-05-20T13:25:06.372557"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 3,
+      "sample_id": 36,
+      "conversation_id": 12,
+      "turn": 3,
+      "student_answer": "R3, R4 y R5 porque están en paralelo",
+      "expected_tutor": "Las resistencias conectadas en paralelo comparten los dos terminales. ¿Ocurre esto en este circuito?",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR3, R4 y R5 porque están en paralelo\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Están R3, R4 y R5 realmente configurados en paralelo en relación con el nodo N2, o podría haber una configuración diferente que involucre un divisor de tensión?",
+      "think_content": "",
+      "tutor_response": "¿Están R3, R4 y R5 realmente configurados en paralelo en relación con el nodo N2, o podría haber una configuración diferente que involucre un divisor de tensión?",
+      "latencia": 3.2040255069732666,
+      "tokens_generados": 44,
+      "detected_acs": [],
+      "true_positives": [],
+      "false_positives": [],
+      "false_negatives": [],
+      "ac_precision": 1.0,
+      "ac_recall": 1.0,
+      "ac_f1": 1.0,
+      "socraticidad": 3,
+      "precision_conceptual": 5,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 18,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 5/5 (Excelente): Excelente: identifica la concepción alternativa específica y la conecta con la topología del circuito. Tutor de alto rendimiento: guía socrática experta con diagnóstico preciso.",
+      "timestamp": "2026-05-20T13:25:09.576583"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 4,
+      "sample_id": 37,
+      "conversation_id": 13,
+      "turn": 1,
+      "student_answer": "R1, R2 y R3 porque son las resistencias que forman parte del circuito",
+      "expected_tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R3 porque son las resistencias que forman parte del circuito\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo puede circular corriente a través de R3 si hay un interruptor abierto entre N1 y N2 que interrumpe el camino de la corriente?",
+      "think_content": "",
+      "tutor_response": "¿Cómo puede circular corriente a través de R3 si hay un interruptor abierto entre N1 y N2 que interrumpe el camino de la corriente?",
+      "latencia": 1.9633591175079346,
+      "tokens_generados": 38,
+      "detected_acs": [
+        "AC1",
+        "AC13"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.5,
+      "ac_recall": 1.0,
+      "ac_f1": 0.6666666666666666,
+      "socraticidad": 3,
+      "precision_conceptual": 5,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 5/5 (Excelente): Excelente: identifica la concepción alternativa específica y la conecta con la topología del circuito. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:25:11.540954"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 4,
+      "sample_id": 38,
+      "conversation_id": 13,
+      "turn": 2,
+      "student_answer": "R1, R2 y R3 porque están conectadas a la fuente de tensión",
+      "expected_tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R3 porque están conectadas a la fuente de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Qué sucedería con el flujo de corriente si R3 estuviera conectada en serie con un cortocircuito en lugar de estar conectada a la fuente de tensión?",
+      "think_content": "",
+      "tutor_response": "¿Qué sucedería con el flujo de corriente si R3 estuviera conectada en serie con un cortocircuito en lugar de estar conectada a la fuente de tensión?",
+      "latencia": 3.2965192794799805,
+      "tokens_generados": 45,
+      "detected_acs": [
+        "AC13",
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13",
+        "AC14"
+      ],
+      "false_negatives": [
+        "AC1"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:25:14.837473"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 4,
+      "sample_id": 39,
+      "conversation_id": 13,
+      "turn": 3,
+      "student_answer": "R1, R2 y R3 porque están conectadas en paralelo",
+      "expected_tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R3 porque están conectadas en paralelo\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo afectaría la conexión en paralelo de R1, R2 y R3 a la caída de tensión en cada una de ellas si la fuente de tensión es la misma para todas?",
+      "think_content": "",
+      "tutor_response": "¿Cómo afectaría la conexión en paralelo de R1, R2 y R3 a la caída de tensión en cada una de ellas si la fuente de tensión es la misma para todas?",
+      "latencia": 3.2359633445739746,
+      "tokens_generados": 45,
+      "detected_acs": [
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC14"
+      ],
+      "false_negatives": [
+        "AC1"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:25:18.073437"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 4,
+      "sample_id": 40,
+      "conversation_id": 14,
+      "turn": 1,
+      "student_answer": "R1, R2 y R3 porque están conectadas en serie",
+      "expected_tutor": "Las resistencias conectadas en serie comparten sólo un nudo y no hay ningún otro componente conectado a ese nudo. ¿Sucede esto en este circuito?",
+      "expected_acs": [
+        "AC1"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1, R2 y R3 porque están conectadas en serie\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "Si el interruptor entre N1 y N2 está abierto, ¿cómo puede fluir corriente a través de R3?",
+      "think_content": "",
+      "tutor_response": "Si el interruptor entre N1 y N2 está abierto, ¿cómo puede fluir corriente a través de R3?",
+      "latencia": 1.890279769897461,
+      "tokens_generados": 30,
+      "detected_acs": [
+        "AC1",
+        "AC13"
+      ],
+      "true_positives": [
+        "AC1"
+      ],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.5,
+      "ac_recall": 1.0,
+      "ac_f1": 0.6666666666666666,
+      "socraticidad": 3,
+      "precision_conceptual": 5,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 5/5 (Excelente): Excelente: identifica la concepción alternativa específica y la conecta con la topología del circuito. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:25:19.966475"
+    },
+    {
+      "model": "llama",
+      "ejercicio": 4,
+      "sample_id": 41,
+      "conversation_id": 14,
+      "turn": 2,
+      "student_answer": "R1 y R2 porque son las resistencias por las que pasa corriente",
+      "expected_tutor": "Correcto, pero ¿por qué no has tenido en cuenta R3?",
+      "expected_acs": [],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 4 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto\n    Estrategia pedagógica: Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)\n    Estrategia pedagógica: Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+      "rag_prompt": "\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1 y R2 porque son las resistencias por las que pasa corriente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Y qué sucede con la resistencia total del circuito cuando R1 y R2 están conectadas en serie con R3, en lugar de solo considerar R1 y R2?",
+      "think_content": "",
+      "tutor_response": "¿Y qué sucede con la resistencia total del circuito cuando R1 y R2 están conectadas en serie con R3, en lugar de solo considerar R1 y R2?",
+      "latencia": 2.805285692214966,
+      "tokens_generados": 41,
+      "detected_acs": [
+        "AC14"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC14"
+      ],
+      "false_negatives": [],
+      "ac_precision": 0.0,
+      "ac_recall": 1.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T13:25:22.772759"
+    }
+  ]
+}
