@@ -23,12 +23,12 @@ class ContextAgent extends AgentInterface {
     this.interaccionRepo = deps.interaccionRepo;
     this.messageRepo = deps.messageRepo;
     this.config = deps.config;
-    // Optional. When provided AND the conversation has more turns than
-    // HISTORY_MAX_MESSAGES, ContextAgent will summarise the older tail and
-    // expose it as context.historySummary for the TutorAgent to inject as
-    // a second system message. Absence is tolerated: the agent simply falls
-    // back to the original "last-N messages only" behaviour.
-    this.historySummarizer = deps.historySummarizer || null;
+    // Required. When the conversation exceeds HISTORY_MAX_MESSAGES, ContextAgent
+    // calls summarize() on the older tail and exposes context.historySummary for
+    // TutorAgent to inject as a second system message.
+    // Use NullHistorySummarizer when summarization is intentionally disabled.
+    if (!deps.historySummarizer) throw new Error("ContextAgent requires deps.historySummarizer");
+    this.historySummarizer = deps.historySummarizer;
   }
 
   async execute(context) {
@@ -95,11 +95,11 @@ class ContextAgent extends AgentInterface {
       : context.history;
     context.lang = this._resolveLanguage(historyWithCurrent);
 
-    // 4b. Summarise the older tail. Best-effort: if the summariser fails the
-    //     turn proceeds with just the recent window (= pre-B2 behaviour), so
-    //     a flaky summariser can never block the chat.
+    // 4b. Summarise the older tail. Best-effort: if the summariser call fails
+    //     (network error, LLM timeout) the turn proceeds with just the recent
+    //     window so a flaky LLM can never block the chat.
     context.historySummary = null;
-    if (this.historySummarizer && olderMessages.length > 0) {
+    if (olderMessages.length > 0) {
       try {
         const olderForLlm = olderMessages.map((m) => m.toOllamaFormat());
         context.historySummary = await this.historySummarizer.summarize(
@@ -376,23 +376,9 @@ class ContextAgent extends AgentInterface {
 
   _canonicalExerciseNum(exerciseNum) {
     if (exerciseNum == null) return exerciseNum;
-    const map = (this.config && this.config.EXERCISE_DATASET_MAP) || null;
+    const map = this.config && this.config.CANONICAL_EXERCISE_MAP;
     if (!map) return exerciseNum;
-    const target = map[exerciseNum];
-    if (!target) return exerciseNum;
-    // Walk all entries of the map; the canonical exercise is the FIRST
-    // (smallest) exercise number whose dataset file matches.
-    let canonical = exerciseNum;
-    let bestNum = Infinity;
-    const keys = Object.keys(map);
-    for (let i = 0; i < keys.length; i++) {
-      const num = Number(keys[i]);
-      if (map[num] === target && num < bestNum) {
-        bestNum = num;
-        canonical = num;
-      }
-    }
-    return canonical;
+    return map[exerciseNum] ?? exerciseNum;
   }
 
   _detectFrustration(message) {

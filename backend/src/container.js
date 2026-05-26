@@ -112,9 +112,11 @@ const container = {
       console.warn("[Container] BM25 indices not loaded:", err.message);
     }
 
-    // Health check: verify Chroma collections are populated. Non-fatal —
-    // the system can still serve traffic with BM25 in-memory only, but we
-    // log a clear warning so a forgotten ingestion is visible at boot.
+    // Health check: verify Chroma collections are populated.
+    // In production (CHROMA_REQUIRED !== "false") an empty ChromaDB is FATAL —
+    // the system would silently serve degraded responses without semantic search.
+    // Set CHROMA_REQUIRED=false in development environments that run without ChromaDB.
+    const chromaRequired = (process.env.CHROMA_REQUIRED || "true").toLowerCase() !== "false";
     try {
       const { getCollection } = require("./infrastructure/vectordb/chromaClient");
       const expectedCollections = ["exercise_1", "exercise_3", "exercise_4",
@@ -132,13 +134,20 @@ const container = {
         }
       }
       if (totalDocs === 0) {
-        console.warn("[Container] WARNING: ChromaDB collections look empty. " +
+        const msg = "[Container] ChromaDB collections are empty. " +
           "Run 'node src/infrastructure/vectordb/ingest.js' to populate them. " +
-          "Status: " + JSON.stringify(counts));
+          "Status: " + JSON.stringify(counts);
+        if (chromaRequired) {
+          throw new Error(msg + " Set CHROMA_REQUIRED=false to start in BM25-only mode.");
+        }
+        console.warn("[Container] WARNING (CHROMA_REQUIRED=false): " + msg);
       } else {
         console.log("[Container] Chroma collections: " + JSON.stringify(counts));
       }
     } catch (err) {
+      if (chromaRequired && err.message.includes("ChromaDB collections are empty")) {
+        throw err;
+      }
       console.warn("[Container] Chroma health check skipped: " + err.message +
         " (BM25 in-memory will still work, semantic search disabled)");
     }

@@ -1,6 +1,11 @@
 "use strict";
 
 const IGuardrail = require("../../domain/ports/services/IGuardrail");
+const {
+  HEURISTIC_STOPWORDS,
+  getAllPatterns,
+  getRepeatedQuestionRetryHint,
+} = require("../../domain/services/languageManager");
 
 /**
  * BUG-010-C (2026-05-03): red de seguridad post-LLM contra repetición
@@ -14,27 +19,20 @@ const IGuardrail = require("../../domain/ports/services/IGuardrail");
  *     por solapamiento de tokens-no-stopword. Si ratio >= 0.7, viola.
  *   - surgicalFix(): no rescribe la pregunta (no podemos saber qué AC
  *     debería atacar). Devuelve null para forzar retry con el hint.
- *   - buildRetryHint(): refuerza la instrucción de variar.
+ *   - buildRetryHint(): centralised in languageManager.
  *
  * No dispara si la respuesta nueva no contiene "?". No dispara si no hay
  * pregunta previa identificable.
  */
 
+// Combined stopwords for question tokenization: union of all language stopwords
+// plus common question-framing words. Sourced from languageManager so adding
+// a 4th language only requires editing that file.
 const STOPWORDS = new Set([
-  // ES
-  "el","la","los","las","un","una","de","del","y","o","u","que","qué","es","en",
-  "se","su","sus","con","sin","para","por","si","no","sí","te","le","me","la","lo",
-  "este","esta","estos","estas","ese","esa","esos","esas","aquí","allí","cómo",
-  "cuál","cuándo","dónde","podrías","podrias","decirme","explicarme","crees",
-  "piensas","puedes","creo","pienso","yo","tú","tu","él","ella","nos","nosotros",
-  // VAL
-  "els","les","i","però","perquè","amb","sense","és","són","i","així","com","quin",
-  // EN
-  "the","a","an","of","to","and","or","but","because","for","with","without","in",
-  "on","at","is","are","was","were","you","your","he","she","it","we","they",
-  "this","that","these","those","what","which","when","where","how","do","does",
-  "did","have","has","think","could","would","should",
-  // funcionales
+  ...getAllPatterns(HEURISTIC_STOPWORDS),
+  // Extra question-framing words not in the heuristic set
+  "del","u","te","le","me","lo","este","esta","estos","estas","ese","esa","esos","esas",
+  "podrías","podrias","decirme","explicarme","piensas","puedes","tu","él","ella","nos","nosotros",
   "más","mas","menos","muy","tan","tanto","ya","aún","también",
 ]);
 
@@ -112,40 +110,10 @@ class RepeatedQuestionGuardrail extends IGuardrail {
   }
 
   buildRetryHint(lang, ctx) {
-    // Si tenemos ctx.messages, citar literalmente la pregunta previa para
-    // que qwen2.5 no la repita. El hint genérico solo lo ignora.
-    var prevQ = "";
-    if (ctx && Array.isArray(ctx.messages)) {
-      prevQ = _findLastAssistantQuestion(ctx.messages);
-    }
-    var literal = prevQ.length > 0
-      ? "\nPrevious question to AVOID: «" + prevQ.replace(/\s+/g, " ").trim() + "»"
+    const prevQ = ctx && Array.isArray(ctx.messages)
+      ? _findLastAssistantQuestion(ctx.messages)
       : "";
-    if (lang === "en") {
-      return (
-        "\n\nIMPORTANT: Your previous reply repeated almost verbatim the " +
-        "Socratic question you already asked the previous turn." + literal +
-        "\nPick a DIFFERENT angle: change the element you focus on, change the " +
-        "question shape (yes/no vs open), or give a concrete factual hint " +
-        "and ask whether the student agrees."
-      );
-    }
-    if (lang === "val") {
-      return (
-        "\n\nIMPORTANT: La teua resposta anterior repetia quasi paraula per " +
-        "paraula la pregunta socràtica del torn previ." + literal +
-        "\nTria un ANGLE DIFERENT: canvia l'element en què et centres, canvia la forma de " +
-        "la pregunta (sí/no vs oberta), o dóna un fet concret i pregunta " +
-        "si l'alumne hi està d'acord."
-      );
-    }
-    return (
-      "\n\nIMPORTANTE: Tu respuesta anterior repetía casi palabra por " +
-      "palabra la pregunta socrática del turno previo." + literal +
-      "\nElige un ÁNGULO DIFERENTE: cambia el elemento en el que te centras, cambia la " +
-      "forma de la pregunta (sí/no vs abierta), o da un hecho concreto y " +
-      "pregunta si el alumno está de acuerdo."
-    );
+    return getRepeatedQuestionRetryHint(lang, prevQ);
   }
 }
 

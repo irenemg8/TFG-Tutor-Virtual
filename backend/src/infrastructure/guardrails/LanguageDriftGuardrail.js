@@ -1,7 +1,7 @@
 "use strict";
 
 const IGuardrail = require("../../domain/ports/services/IGuardrail");
-const { detectLanguageHeuristic } = require("../../domain/services/languageManager");
+const { detectLanguageHeuristic, getLanguageDriftRetryHint } = require("../../domain/services/languageManager");
 
 /**
  * BUG-002 (CRÍTICO 2026-05-03): qwen2.5:7b ocasionalmente mezcla chino
@@ -158,28 +158,7 @@ class LanguageDriftGuardrail extends IGuardrail {
    * el uso de cualquier script no-latino o de inglés mezclado.
    */
   buildRetryHint(lang) {
-    if (lang === "en") {
-      return (
-        "\n\nIMPORTANT: Your previous reply contained characters from a " +
-        "non-Latin script (Chinese, Cyrillic, etc). Rewrite your reply " +
-        "using ONLY the Latin alphabet, in English. One short Socratic " +
-        "question, no element names."
-      );
-    }
-    if (lang === "val") {
-      return (
-        "\n\nIMPORTANT: La teua resposta anterior contenia text en un " +
-        "altre idioma (anglés o caràcters d'un alfabet no-llatí). Reescriu la " +
-        "resposta ÍNTEGRAMENT en valencià, una sola pregunta socràtica " +
-        "curta, sense nomenar elements i sense barrejar paraules angleses."
-      );
-    }
-    return (
-      "\n\nIMPORTANTE: Tu respuesta anterior contenía texto en otro idioma " +
-      "(inglés o caracteres no-latinos). Reescribe la respuesta " +
-      "ÍNTEGRAMENTE en español, una sola pregunta socrática corta, sin " +
-      "nombrar elementos y sin mezclar palabras inglesas."
-    );
+    return getLanguageDriftRetryHint(lang);
   }
 }
 

@@ -938,6 +938,71 @@ function normalizeToSpanish(query) {
 }
 
 // =====================
+// Guardrail hints: language drift + repeated question
+// Centralised here so adding a 4th language only requires editing this file.
+// =====================
+
+function getLanguageDriftRetryHint(lang) {
+  if (lang === "en") {
+    return (
+      "\n\nIMPORTANT: Your previous reply contained characters from a " +
+      "non-Latin script (Chinese, Cyrillic, etc). Rewrite your reply " +
+      "using ONLY the Latin alphabet, in English. One short Socratic " +
+      "question, no element names."
+    );
+  }
+  if (lang === "val") {
+    return (
+      "\n\nIMPORTANT: La teua resposta anterior contenia text en un " +
+      "altre idioma (anglés o caràcters d'un alfabet no-llatí). Reescriu la " +
+      "resposta ÍNTEGRAMENT en valencià, una sola pregunta socràtica " +
+      "curta, sense nomenar elements i sense barrejar paraules angleses."
+    );
+  }
+  return (
+    "\n\nIMPORTANTE: Tu respuesta anterior contenía texto en otro idioma " +
+    "(inglés o caracteres no-latinos). Reescribe la respuesta " +
+    "ÍNTEGRAMENTE en español, una sola pregunta socrática corta, sin " +
+    "nombrar elementos y sin mezclar palabras inglesas."
+  );
+}
+
+function getRepeatedQuestionRetryHint(lang, prevQ) {
+  const literal = prevQ && prevQ.length > 0
+    ? "\n" + (lang === "en"
+        ? "Previous question to AVOID: «" + prevQ.replace(/\s+/g, " ").trim() + "»"
+        : (lang === "val"
+            ? "Pregunta anterior a EVITAR: «" + prevQ.replace(/\s+/g, " ").trim() + "»"
+            : "Pregunta anterior a EVITAR: «" + prevQ.replace(/\s+/g, " ").trim() + "»"))
+    : "";
+  if (lang === "en") {
+    return (
+      "\n\nIMPORTANT: Your previous reply repeated almost verbatim the " +
+      "Socratic question you already asked the previous turn." + literal +
+      "\nPick a DIFFERENT angle: change the element you focus on, change the " +
+      "question shape (yes/no vs open), or give a concrete factual hint " +
+      "and ask whether the student agrees."
+    );
+  }
+  if (lang === "val") {
+    return (
+      "\n\nIMPORTANT: La teua resposta anterior repetia quasi paraula per " +
+      "paraula la pregunta socràtica del torn previ." + literal +
+      "\nTria un ANGLE DIFERENT: canvia l'element en què et centres, canvia la forma de " +
+      "la pregunta (sí/no vs oberta), o dóna un fet concret i pregunta " +
+      "si l'alumne hi està d'acord."
+    );
+  }
+  return (
+    "\n\nIMPORTANTE: Tu respuesta anterior repetía casi palabra por " +
+    "palabra la pregunta socrática del turno previo." + literal +
+    "\nElige un ÁNGULO DIFERENTE: cambia el elemento en el que te centras, cambia la " +
+    "forma de la pregunta (sí/no vs abierta), o da un hecho concreto y " +
+    "pregunta si el alumno está de acuerdo."
+  );
+}
+
+// =====================
 // Utility: flatten all language arrays into one
 // =====================
 
@@ -965,6 +1030,7 @@ function getAllPatterns(dict) {
 module.exports = {
   SUPPORTED_LANGS,
   DEFAULT_LANG,
+  HEURISTIC_STOPWORDS,
   detectLanguageSwitch,
   detectLanguageHeuristic,
   resolveLanguage,
@@ -977,6 +1043,8 @@ module.exports = {
   getCompleteSolutionInstruction,
   getStateRevealInstruction,
   getElementNamingInstruction,
+  getLanguageDriftRetryHint,
+  getRepeatedQuestionRetryHint,
   getIntermediateFeedback,
   getRandomIntermediatePhrase,
   startsWithIntermediatePhrase,

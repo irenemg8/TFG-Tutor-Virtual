@@ -147,9 +147,19 @@ app.use("/api", globalAuth);
 app.use("/api/usuarios", userRoutes);
 app.use("/api/ejercicios", ejerciciosRoutes);
 app.use("/api/interacciones", interaccionesRoutes);
-// Orchestrator takes priority when USE_ORCHESTRATOR=1 (Phase 5 refactor).
-// If disabled or unready it calls next() and ragMiddleware handles the request.
+// Orchestrator handles all chat requests. ragMiddleware is DEPRECATED and kept
+// only as a last-resort fallback while USE_ORCHESTRATOR=1 ramps to 100%.
+// TODO: delete ragMiddleware once the E2E test suite confirms 100% coverage.
 app.use("/api/ollama", orchestratorMiddleware);
+app.use("/api/ollama", (req, res, next) => {
+  if (req.path === "/chat/stream") {
+    console.warn(
+      "[DEPRECATED] ragMiddleware fallback hit — orchestrator did not handle request. " +
+      "Check orchestrator health or set USE_ORCHESTRATOR=1."
+    );
+  }
+  next();
+});
 app.use("/api/ollama", ragMiddleware);
 app.use("/api/ollama", ollamaChatRoutes);
 app.use("/api/progreso", progresoRoutes);

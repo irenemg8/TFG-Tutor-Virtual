@@ -24,10 +24,8 @@ class TutorAgent extends AgentInterface {
     this.llmService = deps.llmService;
     this.buildSystemPrompt = deps.buildSystemPrompt;
     this.config = deps.config;
-    // Lazy fallback only triggered if the container forgets to inject. Domain
-    // code should not normally reach into infrastructure.
-    this.debugLogger = deps.debugLogger ||
-      require("../../infrastructure/events/pipelineDebugLogger");
+    if (!deps.debugLogger) throw new Error("TutorAgent requires deps.debugLogger");
+    this.debugLogger = deps.debugLogger;
   }
 
   async execute(context) {

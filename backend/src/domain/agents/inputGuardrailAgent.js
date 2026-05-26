@@ -24,11 +24,11 @@ class InputGuardrailAgent extends AgentInterface {
   }
 
   async execute(context) {
-    const result = this.securityService.analyzeInput(context.userMessage, {
+    const result = await Promise.resolve(this.securityService.analyzeInput(context.userMessage, {
       lang: context.lang,
       exercise: context.exercise,
       evaluableElements: context.evaluableElements,
-    });
+    }));
 
     context.inputSecurity = {
       safe: result.safe,

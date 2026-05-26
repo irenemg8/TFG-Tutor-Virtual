@@ -1,7 +1,6 @@
 "use strict";
 
 const AgentInterface = require("./base/AgentInterface");
-const trace = require("../../infrastructure/events/pipelineDebugLogger");
 
 /**
  * GuardrailAgent (refactored): delegates to the new GuardrailPipeline.
@@ -22,9 +21,9 @@ class GuardrailAgent extends AgentInterface {
     if (!deps || !deps.guardrailPipeline) {
       throw new Error("GuardrailAgent requires a guardrailPipeline dependency");
     }
+    if (!deps.debugLogger) throw new Error("GuardrailAgent requires deps.debugLogger");
     this.pipeline = deps.guardrailPipeline;
-    // Static, loaded once at boot. Passed to each guardrail ctx so StateReveal
-    // adapter can flag KG-derived concept terms.
+    this.debugLogger = deps.debugLogger;
     this.kgConceptPatterns = deps.kgConceptPatterns || [];
   }
 
@@ -109,7 +108,7 @@ class GuardrailAgent extends AgentInterface {
       repeatedQuestion: anyFor("repeated_question"),
     };
 
-    trace.logGuardrail && trace.logGuardrail(context.guardrailsTriggered, context.finalResponse);
+    this.debugLogger.logGuardrail && this.debugLogger.logGuardrail(context.guardrailsTriggered, context.finalResponse);
   }
 }
 

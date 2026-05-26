@@ -165,6 +165,13 @@ class TutoringOrchestrator {
           ": elapsed=" + retrievalElapsed +
           "ms slice=" + ctx.retrievalBudgetMs + "ms reqId=" + (ctx.reqId || "")
         );
+        // Notify the SSE layer so the frontend can log the degradation.
+        // The LLM will still respond but without semantic augmentation.
+        this.emitEvent("rag_degraded", "retrieve", {
+          reason: ctx.retrievalTimedOut ? "budget_abort" : "budget_exceeded",
+          elapsedMs: retrievalElapsed,
+          budgetMs: ctx.retrievalBudgetMs,
+        });
       }
       this.emitEvent("agent_end", "retrieve", {
         agent: "retrievalAgent",

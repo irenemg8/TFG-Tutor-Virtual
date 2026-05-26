@@ -47,19 +47,13 @@ function initRAG() {
     // Load knowledge graph into memory
     loadKG();
 
-    // Build canonical mapping and load BM25 for all exercises
-    const fileToFirst = {};
+    // Canonical mapping: use pre-computed map from config (single source of truth).
+    Object.assign(canonicalExercise, config.CANONICAL_EXERCISE_MAP);
     const exerciseNums = Object.keys(config.EXERCISE_DATASET_MAP);
 
     for (let i = 0; i < exerciseNums.length; i++) {
       const num = Number(exerciseNums[i]);
       const fileName = config.EXERCISE_DATASET_MAP[num];
-
-      // Track first exercise number for each dataset file (for ChromaDB collection lookup)
-      if (fileToFirst[fileName] == null) {
-        fileToFirst[fileName] = num;
-      }
-      canonicalExercise[num] = fileToFirst[fileName];
 
       // Load BM25 index for this exercise
       const filePath = path.join(config.DATASETS_DIR, fileName);

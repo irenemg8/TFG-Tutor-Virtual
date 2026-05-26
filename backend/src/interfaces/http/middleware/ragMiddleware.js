@@ -58,20 +58,10 @@ let kgConceptPatterns = [];
 
 function initRAG() {
   try {
-    // Build canonical mapping (always — needed even when the container already
-    // loaded the KG and BM25 indices). Maps each exercise number to the first
-    // one that uses the same dataset file (so e.g. exercise 2 reuses the
-    // ChromaDB collection of exercise 1).
-    const fileToFirst = {};
+    // Canonical mapping: exercise → lowest exercise that shares the same dataset.
+    // Pre-computed in config.CANONICAL_EXERCISE_MAP (single source of truth).
+    Object.assign(canonicalExercise, config.CANONICAL_EXERCISE_MAP);
     const exerciseNums = Object.keys(config.EXERCISE_DATASET_MAP);
-    for (let i = 0; i < exerciseNums.length; i++) {
-      const num = Number(exerciseNums[i]);
-      const fileName = config.EXERCISE_DATASET_MAP[num];
-      if (fileToFirst[fileName] == null) {
-        fileToFirst[fileName] = num;
-      }
-      canonicalExercise[num] = fileToFirst[fileName];
-    }
 
     // KG + BM25 are now loaded by the container. Only recompute concept
     // patterns from the in-memory KG if they're not already exposed by the

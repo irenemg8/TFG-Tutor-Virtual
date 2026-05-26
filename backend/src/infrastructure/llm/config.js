@@ -103,6 +103,31 @@ module.exports = {
     7: "dataset_exercise_7.json",
   },
 
+  // Pre-computed canonical exercise map: maps each exercise number to the
+  // lowest exercise number that shares the same dataset file.
+  // ChromaDB collection names use the canonical number, so retrieval must
+  // use it or the search hits an empty collection and degrades to BM25 only.
+  // Single source of truth — contextAgent and ragMiddleware both read from here.
+  CANONICAL_EXERCISE_MAP: (() => {
+    const datasetMap = {
+      1: "dataset_exercise_1.json",
+      2: "dataset_exercise_1.json",
+      3: "dataset_exercise_3.json",
+      4: "dataset_exercise_4.json",
+      5: "dataset_exercise_5.json",
+      6: "dataset_exercise_6.json",
+      7: "dataset_exercise_7.json",
+    };
+    const fileToFirst = {};
+    const canonical = {};
+    for (const [num, file] of Object.entries(datasetMap)) {
+      const n = Number(num);
+      if (fileToFirst[file] == null) fileToFirst[file] = n;
+      canonical[n] = fileToFirst[file];
+    }
+    return canonical;
+  })(),
+
   // Loop-breaking: max consecutive wrong classifications before forcing scaffold
   MAX_WRONG_STREAK: Number(process.env.RAG_MAX_WRONG_STREAK || 4),
   // Loop-breaking: max total assistant turns before forcing stronger hints

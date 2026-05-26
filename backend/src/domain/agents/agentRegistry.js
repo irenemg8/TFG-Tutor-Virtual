@@ -74,6 +74,7 @@ function createAgentRegistry(deps) {
     guardrail: new GuardrailAgent({
       guardrailPipeline: deps.guardrailPipeline,
       kgConceptPatterns: deps.kgConceptPatterns || [],
+      debugLogger: deps.debugLogger,
     }),
 
     persistence: new PersistenceAgent({
