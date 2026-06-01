@@ -47,7 +47,7 @@ let requestCounter = 0;
 
 const router = express.Router();
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
-const FIN_TOKEN = "<FIN_EJERCICIO>";
+const FIN_TOKEN = "<END_EXERCISE>";
 
 // Canonical exercise number mapping (exercise 2 → 1 because they share the same dataset in ChromaDB)
 const canonicalExercise = {};
@@ -730,7 +730,7 @@ router.post("/chat/stream", async function (req, res, next) {
       if (demandJustification) {
         justificationHint = "[DEMAND JUSTIFICATION]\n"
           + "CRITICAL: The student has given the CORRECT answer " + prevCorrectCount + " time(s) WITHOUT any justification, or with INCORRECT reasoning.\n"
-          + "You MUST NOT accept the answer as final. You MUST NOT emit <FIN_EJERCICIO>.\n"
+          + "You MUST NOT accept the answer as final. You MUST NOT emit <END_EXERCISE>.\n"
           + "Your ONLY task this turn is:\n"
           + "1. Briefly acknowledge that they have the right elements.\n"
           + "2. Ask DIRECTLY and CLEARLY: 'Explica por que' / 'Explain why' / 'Explica per que', requiring them to use a concept such as cortocircuito, circuito abierto, divisor de tension, ley de Ohm, Kirchhoff, etc.\n"
@@ -968,11 +968,11 @@ router.post("/chat/stream", async function (req, res, next) {
         guardrailTriggered = true;
       }
 
-      // 11f. Pedagogical safeguard: never allow <FIN_EJERCICIO> unless the
+      // 11f. Pedagogical safeguard: never allow <END_EXERCISE> unless the
       // classification is correct_good_reasoning. Strips the token (and any
       // partial prefix) if the LLM tried to close without real justification.
       if (ragResult.classification !== "correct_good_reasoning" && fullResponse.includes(FIN_TOKEN)) {
-        console.log("[RAG] Stripping FIN_EJERCICIO token: classification=" + ragResult.classification + " (closure requires correct_good_reasoning)");
+        console.log("[RAG] Stripping END_EXERCISE token: classification=" + ragResult.classification + " (closure requires correct_good_reasoning)");
         fullResponse = fullResponse.replaceAll(FIN_TOKEN, "").trimEnd();
         guardrailTriggered = true;
         emitEvent("guardrail_fin_stripped", "end", { classification: ragResult.classification });

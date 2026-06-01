@@ -112,7 +112,11 @@ describe("ragPipeline budget enforcement", () => {
     }));
     jest.doMock("../../src/container", () => ({ _initialized: false }), { virtual: false });
 
-    const { runFullPipeline } = require("../../src/domain/services/rag/ragPipeline");
+    const { createRagPipeline } = require("../../src/domain/services/rag/ragPipeline");
+    const { hybridSearch } = require("../../src/infrastructure/search/hybridSearch");
+    const { searchKG } = require("../../src/infrastructure/search/knowledgeGraph");
+    const ragCfg = require("../../src/infrastructure/llm/config");
+    const { runFullPipeline } = createRagPipeline({ hybridSearch, searchKG, emitEvent: () => {}, config: ragCfg });
 
     const start = Date.now();
     // R3 y R5 are NOT in the correct answer (R1, R2, R4) — classifier returns
@@ -143,7 +147,11 @@ describe("ragPipeline budget enforcement", () => {
     }));
     jest.doMock("../../src/container", () => ({ _initialized: false }), { virtual: false });
 
-    const { runFullPipeline } = require("../../src/domain/services/rag/ragPipeline");
+    const { createRagPipeline } = require("../../src/domain/services/rag/ragPipeline");
+    const { hybridSearch } = require("../../src/infrastructure/search/hybridSearch");
+    const { searchKG } = require("../../src/infrastructure/search/knowledgeGraph");
+    const ragCfg = require("../../src/infrastructure/llm/config");
+    const { runFullPipeline } = createRagPipeline({ hybridSearch, searchKG, emitEvent: () => {}, config: ragCfg });
 
     const result = await runFullPipeline(
       "R3 y R5 porque están en paralelo",

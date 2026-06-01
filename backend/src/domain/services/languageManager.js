@@ -938,6 +938,101 @@ function normalizeToSpanish(query) {
 }
 
 // =====================
+// SolutionLeak guardrail patterns
+// Centralised here so adding a 4th language only requires editing this file.
+// =====================
+
+const SOLUTION_LEAK_AFFIRM_PATTERNS = [
+  // es
+  /\b(?:son|eran)\s+(?:las|los)\s+que\b/i,
+  /\b(?:contribuyen|importan|aportan|cuentan|afectan|determinan)\b[^.?!]*\b(?:son|eran)\s+(?:las|los)\b/i,
+  /\b(?:exactamente|así\s+es|tienes\s+razón|en\s+efecto|correcto)\b/i,
+  // val
+  /\b(?:són|eren)\s+les\s+que\b/i,
+  /\b(?:contribueixen|importen|aporten|afecten|determinen)\b[^.?!]*\b(?:són|eren)\s+les\b/i,
+  /\b(?:exactament|així\s+és|tens\s+raó|correcte)\b/i,
+  // en
+  /\b(?:are|were)\s+the\s+ones\s+that\b/i,
+  /\b(?:contribute|matter|count|affect|determine)\b[^.?!]*\b(?:are|were)\s+the\s+ones\b/i,
+  /\b(?:exactly|that's\s+right|you'?re\s+right|correct)\b/i,
+];
+
+const SOLUTION_LEAK_PLACEHOLDER_PATTERNS = [
+  /\bese\s+conjunto\s+de\s+elementos\b/i,
+  /\beixe\s+conjunt\s+d['e]\s*elements\b/i,
+  /\bthat\s+set\s+of\s+elements\b/i,
+  /\besas?\s+resistencias?\b/i,
+  /\beixa\s+resist[èe]ncia\b/i,
+  /\beixes\s+resist[èe]ncies\b/i,
+  /\bthose\s+resistors?\b/i,
+  /\bthat\s+resistor\b/i,
+  /\besos\s+elementos\b/i,
+  /\beixos\s+elements\b/i,
+  /\bthose\s+elements\b/i,
+];
+
+// =====================
+// DidacticExplanation guardrail patterns
+// =====================
+
+const DIDACTIC_FALLBACK_QUESTIONS = {
+  es: [
+    "¿Qué condición necesita una rama del circuito para que circule corriente por ella?",
+    "¿Qué ocurre con la tensión entre dos puntos que están al mismo potencial?",
+    "¿Cómo se distribuye la corriente entre ramas en paralelo?",
+    "¿Qué efecto tiene un camino sin resistencia entre dos nodos?",
+  ],
+  val: [
+    "Quina condició necessita una branca del circuit perquè hi circule corrent?",
+    "Què passa amb la tensió entre dos punts que estan al mateix potencial?",
+    "Com es distribueix el corrent entre branques en paral·lel?",
+    "Quin efecte té un camí sense resistència entre dos nodes?",
+  ],
+  en: [
+    "What condition does a branch of the circuit need for current to flow through it?",
+    "What happens to the voltage between two points that share the same potential?",
+    "How does current distribute among parallel branches?",
+    "What is the effect of a path with no resistance between two nodes?",
+  ],
+};
+
+const DIDACTIC_FALLBACK_PREFIX = {
+  es: "Vamos a no adelantar la explicación.",
+  val: "No avancem l'explicació.",
+  en: "Let's hold off on the explanation.",
+};
+
+function getDidacticFallbackQuestions(lang) {
+  return DIDACTIC_FALLBACK_QUESTIONS[lang] || DIDACTIC_FALLBACK_QUESTIONS.es;
+}
+
+function getDidacticFallbackPrefix(lang) {
+  return DIDACTIC_FALLBACK_PREFIX[lang] || DIDACTIC_FALLBACK_PREFIX.es;
+}
+
+// =====================
+// Adherence guardrail verb patterns (Spanish/Valencian conjugations)
+// If a 4th language is added, extend these regex strings.
+// =====================
+
+const ADHERENCE_NEGATIVE_VERBS = "(?:no|tampoco)\\s+(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
+const ADHERENCE_POSITIVE_VERBS = "(?:s[ií]\\s+)?(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
+
+// =====================
+// RepeatedQuestion stopwords (question-frame function words, es-dominant)
+// These supplement HEURISTIC_STOPWORDS when tokenizing questions for
+// similarity comparison. Extend if a 4th language is added.
+// =====================
+
+const QUESTION_FRAME_STOPWORDS = [
+  "del", "u", "te", "le", "me", "lo",
+  "este", "esta", "estos", "estas", "ese", "esa", "esos", "esas",
+  "podrías", "podrias", "decirme", "explicarme", "piensas", "puedes",
+  "tu", "él", "ella", "nos", "nosotros",
+  "más", "mas", "menos", "muy", "tan", "tanto", "ya", "aún", "también",
+];
+
+// =====================
 // Guardrail hints: language drift + repeated question
 // Centralised here so adding a 4th language only requires editing this file.
 // =====================
@@ -1043,6 +1138,13 @@ module.exports = {
   getCompleteSolutionInstruction,
   getStateRevealInstruction,
   getElementNamingInstruction,
+  SOLUTION_LEAK_AFFIRM_PATTERNS,
+  SOLUTION_LEAK_PLACEHOLDER_PATTERNS,
+  getDidacticFallbackQuestions,
+  getDidacticFallbackPrefix,
+  ADHERENCE_NEGATIVE_VERBS,
+  ADHERENCE_POSITIVE_VERBS,
+  QUESTION_FRAME_STOPWORDS,
   getLanguageDriftRetryHint,
   getRepeatedQuestionRetryHint,
   getIntermediateFeedback,

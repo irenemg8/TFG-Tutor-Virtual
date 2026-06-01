@@ -4,50 +4,15 @@ const IGuardrail = require("../../domain/ports/services/IGuardrail");
 const { extractResistances } = require("../../domain/services/text/elementExtractor");
 const { containsAll } = require("../../domain/services/text/setComparison");
 const { splitSentencesKeepEnd } = require("../../domain/services/text/sentenceSplitter");
-const { getAllPatterns, revealPhrases: revealDict, getStrongerInstruction } = require("../../domain/services/languageManager");
+const {
+  getAllPatterns,
+  revealPhrases: revealDict,
+  getStrongerInstruction,
+  SOLUTION_LEAK_AFFIRM_PATTERNS: SEMANTIC_AFFIRM_PATTERNS,
+  SOLUTION_LEAK_PLACEHOLDER_PATTERNS: PLACEHOLDER_PATTERNS,
+} = require("../../domain/services/languageManager");
 
 const revealPhrases = getAllPatterns(revealDict);
-
-// Affirmative connectors that, when paired with a redacted element list,
-// still tell the student "you got it right" semantically — even after the
-// element list itself was replaced with a placeholder. Detected per-language
-// because qwen2.5 mixes them with valencià/EN.
-//   "son los que / las que contribuyen"
-//   "are the ones that contribute"
-//   "són les que contribueixen"
-// We don't try to enumerate every verb — pattern is generic: redacted noun
-// phrase followed by "son los que / are the ones / són les que" + ANY verb.
-const SEMANTIC_AFFIRM_PATTERNS = [
-  // es
-  /\b(?:son|eran)\s+(?:las|los)\s+que\b/i,
-  /\b(?:contribuyen|importan|aportan|cuentan|afectan|determinan)\b[^.?!]*\b(?:son|eran)\s+(?:las|los)\b/i,
-  /\b(?:exactamente|así\s+es|tienes\s+razón|en\s+efecto|correcto)\b/i,
-  // val
-  /\b(?:són|eren)\s+les\s+que\b/i,
-  /\b(?:contribueixen|importen|aporten|afecten|determinen)\b[^.?!]*\b(?:són|eren)\s+les\b/i,
-  /\b(?:exactament|així\s+és|tens\s+raó|correcte)\b/i,
-  // en
-  /\b(?:are|were)\s+the\s+ones\s+that\b/i,
-  /\b(?:contribute|matter|count|affect|determine)\b[^.?!]*\b(?:are|were)\s+the\s+ones\b/i,
-  /\b(?:exactly|that's\s+right|you'?re\s+right|correct)\b/i,
-];
-
-// Placeholders left by redactElementMentions — used to detect post-redaction
-// semantic leaks (BUG-005): "esa(s) resistencia(s)/ese conjunto..." + an
-// affirmative verb still constitutes a confirmation.
-const PLACEHOLDER_PATTERNS = [
-  /\bese\s+conjunto\s+de\s+elementos\b/i,
-  /\beixe\s+conjunt\s+d['e]\s*elements\b/i,
-  /\bthat\s+set\s+of\s+elements\b/i,
-  /\besas?\s+resistencias?\b/i,
-  /\beixa\s+resist[èe]ncia\b/i,
-  /\beixes\s+resist[èe]ncies\b/i,
-  /\bthose\s+resistors?\b/i,
-  /\bthat\s+resistor\b/i,
-  /\besos\s+elementos\b/i,
-  /\beixos\s+elements\b/i,
-  /\bthose\s+elements\b/i,
-];
 
 function _sentenceHasPlaceholder(s) {
   for (let p = 0; p < PLACEHOLDER_PATTERNS.length; p++) {

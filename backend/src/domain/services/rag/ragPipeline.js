@@ -1,11 +1,11 @@
 // Main agentic RAG pipeline: classifier -> retrieval -> CRAG -> augmentation
 
-const config = require("../../../infrastructure/llm/config");
 const { classifyQuery, extractResistances, types } = require("./queryClassifier");
-const { hybridSearch } = require("../../../infrastructure/search/hybridSearch");
-const { searchKG } = require("../../../infrastructure/search/knowledgeGraph");
-const { emitEvent } = require("../../../infrastructure/events/ragEventBus");
-const { getAllPatterns, conceptKeywords: conceptDict, normalizeToSpanish, getIntermediateFeedback } = require("../languageManager");
+const { getAllPatterns, conceptKeywords: conceptDict, normalizeToSpanish } = require("../languageManager");
+
+// Infrastructure deps — injected by createRagPipeline() at startup.
+// Never require() infrastructure directly from domain code.
+let hybridSearch, searchKG, emitEvent, config;
 
 // Foundational KG concepts to scaffold the tutor's hints when the student is
 // wrong/partial but did NOT use any concept keyword. Picks the building blocks
@@ -544,4 +544,18 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
   return result;
 }
 
-module.exports = { runFullPipeline };
+/**
+ * Factory: inject infrastructure dependencies so domain code stays clean.
+ * Call once from container.js at startup:
+ *   const { runFullPipeline } = createRagPipeline({ hybridSearch, searchKG, emitEvent, config });
+ * The returned runFullPipeline is then passed to createAgentRegistry as a dep.
+ */
+function createRagPipeline(deps) {
+  hybridSearch = deps.hybridSearch;
+  searchKG    = deps.searchKG;
+  emitEvent   = deps.emitEvent;
+  config      = deps.config;
+  return { runFullPipeline };
+}
+
+module.exports = { createRagPipeline };

@@ -135,7 +135,7 @@ const trace = require("../../../infrastructure/events/pipelineDebugLogger");
 const ALLOW_INSECURE_TLS = process.env.OLLAMA_INSECURE_TLS === "1";
 
 // Token fin (para que el frontend lo detecte)
-const FIN_TOKEN = "<FIN_EJERCICIO>";
+const FIN_TOKEN = "<END_EXERCISE>";
 
 // =====================
 // Helpers

@@ -118,7 +118,7 @@ function dumpOrchestratorContext(reqId, ctx) {
 }
 
 const router = express.Router();
-const FIN_TOKEN = "<FIN_EJERCICIO>";
+const FIN_TOKEN = "<END_EXERCISE>";
 
 function sseSend(res, payload) {
   res.write("data: " + JSON.stringify(payload) + "\n\n");

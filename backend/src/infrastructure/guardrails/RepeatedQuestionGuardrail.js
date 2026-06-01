@@ -5,6 +5,7 @@ const {
   HEURISTIC_STOPWORDS,
   getAllPatterns,
   getRepeatedQuestionRetryHint,
+  QUESTION_FRAME_STOPWORDS,
 } = require("../../domain/services/languageManager");
 
 /**
@@ -30,10 +31,7 @@ const {
 // a 4th language only requires editing that file.
 const STOPWORDS = new Set([
   ...getAllPatterns(HEURISTIC_STOPWORDS),
-  // Extra question-framing words not in the heuristic set
-  "del","u","te","le","me","lo","este","esta","estos","estas","ese","esa","esos","esas",
-  "podrías","podrias","decirme","explicarme","piensas","puedes","tu","él","ella","nos","nosotros",
-  "más","mas","menos","muy","tan","tanto","ya","aún","también",
+  ...QUESTION_FRAME_STOPWORDS,
 ]);
 
 function _tokenizeContent(text) {

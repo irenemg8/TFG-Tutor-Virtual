@@ -124,7 +124,7 @@ class TutorAgent extends AgentInterface {
         "[DEMAND JUSTIFICATION]\n" +
         "CRITICAL: the student has given the CORRECT elements " + prevCorrect +
         " time(s) without justifying them or with incorrect reasoning.\n" +
-        "Do NOT accept the answer as final. Do NOT emit <FIN_EJERCICIO>.\n" +
+        "Do NOT accept the answer as final. Do NOT emit <END_EXERCISE>.\n" +
         "This turn must do exactly two things:\n" +
         "1. A short acknowledgement that they have the right elements (avoid generic praise).\n" +
         "2. ONE Socratic question that forces them to justify their choice using a circuit concept " +

@@ -193,10 +193,13 @@ const container = {
     const { createAgentRegistry } = require("./domain/agents/agentRegistry");
     const TutoringOrchestrator = require("./domain/agents/orchestrator");
     const { classifyQuery } = require("./domain/services/rag/queryClassifier");
-    const { runFullPipeline } = require("./domain/services/rag/ragPipeline");
+    const { createRagPipeline } = require("./domain/services/rag/ragPipeline");
+    const { hybridSearch } = require("./infrastructure/search/hybridSearch");
+    const { searchKG } = require("./infrastructure/search/knowledgeGraph");
+    const ragConfig = require("./infrastructure/llm/config");
+    const { runFullPipeline } = createRagPipeline({ hybridSearch, searchKG, emitEvent, config: ragConfig });
     const { buildTutorSystemPrompt } = require("./domain/services/promptBuilder");
     const { logInteraction } = require("./infrastructure/llm/logger");
-    const ragConfig = require("./infrastructure/llm/config");
 
     this.agents = createAgentRegistry({
       ejercicioRepo: this.ejercicioRepo,

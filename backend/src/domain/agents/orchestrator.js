@@ -226,7 +226,7 @@ class TutoringOrchestrator {
         triggered: ctx.guardrailsTriggered,
       });
 
-      // Last-resort safety net: if the LLM emitted <FIN_EJERCICIO> in a
+      // Last-resort safety net: if the LLM emitted <END_EXERCISE> in a
       // turn that should NOT close the exercise (i.e. classification is not
       // correct_good_reasoning OR we haven't accumulated enough correct
       // turns), strip the token so the frontend doesn't end the session
@@ -292,7 +292,7 @@ class TutoringOrchestrator {
   }
 
   /**
-   * Defense in depth: strip <FIN_EJERCICIO> from the LLM output unless the
+   * Defense in depth: strip <END_EXERCISE> from the LLM output unless the
    * orchestrator's own deterministic-finish criteria are met
    * (correct_good_reasoning + ≥2 prior correct turns). The legacy path did
    * this in ragMiddleware:981-986; the orchestrator path was missing it,
@@ -329,7 +329,7 @@ class TutoringOrchestrator {
   }
 
   _stripUnauthorizedFinToken(ctx) {
-    const FIN = "<FIN_EJERCICIO>";
+    const FIN = "<END_EXERCISE>";
     const final = ctx && ctx.finalResponse;
     if (typeof final !== "string" || final.indexOf(FIN) === -1) return;
     if (ctx.deterministicFinish) return;
@@ -343,19 +343,19 @@ class TutoringOrchestrator {
 
   /**
    * Closure message: congratulate, ask for remaining doubts, and mark
-   * <FIN_EJERCICIO> so the frontend closes the session. The student can
+   * <END_EXERCISE> so the frontend closes the session. The student can
    * still ask follow-up questions in the same chat; those are re-evaluated
    * by the pipeline on the next turn.
    */
   _buildFinishMessage(ctx) {
     const lang = ctx.lang;
     if (lang === "en") {
-      return "Excellent work! You've correctly identified the answer and justified it well. Before we close: do you have any remaining doubts about this circuit or the concepts involved? <FIN_EJERCICIO>";
+      return "Excellent work! You've correctly identified the answer and justified it well. Before we close: do you have any remaining doubts about this circuit or the concepts involved? <END_EXERCISE>";
     }
     if (lang === "val") {
-      return "Excel·lent treball! Has identificat correctament la resposta i l'has justificat bé. Abans de tancar: tens algun dubte pendent sobre aquest circuit o els conceptes implicats? <FIN_EJERCICIO>";
+      return "Excel·lent treball! Has identificat correctament la resposta i l'has justificat bé. Abans de tancar: tens algun dubte pendent sobre aquest circuit o els conceptes implicats? <END_EXERCISE>";
     }
-    return "¡Excelente trabajo! Has identificado correctamente la respuesta y la has justificado bien. Antes de cerrar: ¿te queda alguna duda sobre este circuito o los conceptos implicados? <FIN_EJERCICIO>";
+    return "¡Excelente trabajo! Has identificado correctamente la respuesta y la has justificado bien. Antes de cerrar: ¿te queda alguna duda sobre este circuito o los conceptos implicados? <END_EXERCISE>";
   }
 }
 

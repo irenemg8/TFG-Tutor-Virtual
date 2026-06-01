@@ -2,7 +2,7 @@
 
 const { detect } = require("tinyld");
 
-const FIN_TOKEN = "<FIN_EJERCICIO>";
+const FIN_TOKEN = "<END_EXERCISE>";
 
 function safeStr(x) {
   if (typeof x !== "string") return "";

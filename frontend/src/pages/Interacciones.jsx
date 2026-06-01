@@ -6,7 +6,7 @@ import { getCurrentUser } from "../services/auth";
 import { api } from "../services/api";
 import MessageRenderer from "../components/MessageRenderer";
 
-const FIN_TOKEN = "<FIN_EJERCICIO>";
+const FIN_TOKEN = "<END_EXERCISE>";
 
 // Placeholder shown while the backend's guardrail is regenerating a response
 // it judged unsafe (e.g. solution leak). Replaces the live-typed draft so the

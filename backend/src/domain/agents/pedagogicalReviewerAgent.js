@@ -200,6 +200,7 @@ class PedagogicalReviewerAgent extends AgentInterface {
 
   _fixDidacticExplanation(text, lang) {
     const { checkDidacticExplanation } = require("../services/rag/guardrails");
+    const { getDidacticFallbackQuestions, getDidacticFallbackPrefix } = require("../services/languageManager");
     const r = checkDidacticExplanation(text);
     if (!r || !r.explaining) return text;
     // Same surgical strategy as DidacticExplanationGuardrail: keep questions
@@ -211,33 +212,8 @@ class PedagogicalReviewerAgent extends AgentInterface {
     if (cleanQs.length > 0) {
       return cleanQs.slice(0, 2).join(" ").trim();
     }
-    const FALLBACK_QUESTIONS = {
-      es: [
-        "¿Qué condición necesita una rama del circuito para que circule corriente por ella?",
-        "¿Qué ocurre con la tensión entre dos puntos que están al mismo potencial?",
-        "¿Cómo se distribuye la corriente entre ramas en paralelo?",
-        "¿Qué efecto tiene un camino sin resistencia entre dos nodos?",
-      ],
-      val: [
-        "Quina condició necessita una branca del circuit perquè hi circule corrent?",
-        "Què passa amb la tensió entre dos punts que estan al mateix potencial?",
-        "Com es distribueix el corrent entre branques en paral·lel?",
-        "Quin efecte té un camí sense resistència entre dos nodes?",
-      ],
-      en: [
-        "What condition does a branch of the circuit need for current to flow through it?",
-        "What happens to the voltage between two points that share the same potential?",
-        "How does current distribute among parallel branches?",
-        "What is the effect of a path with no resistance between two nodes?",
-      ],
-    };
-    const PREFIX = {
-      es: "Vamos a no adelantar la explicación.",
-      val: "No avancem l'explicació.",
-      en: "Let's hold off on the explanation.",
-    };
-    const pool = FALLBACK_QUESTIONS[lang] || FALLBACK_QUESTIONS.es;
-    const prefix = PREFIX[lang] || PREFIX.es;
+    const pool = getDidacticFallbackQuestions(lang);
+    const prefix = getDidacticFallbackPrefix(lang);
     return prefix + " " + pool[Math.floor(Math.random() * pool.length)];
   }
 

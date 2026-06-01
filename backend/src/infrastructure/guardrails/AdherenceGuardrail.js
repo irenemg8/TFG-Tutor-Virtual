@@ -1,6 +1,10 @@
 "use strict";
 
 const IGuardrail = require("../../domain/ports/services/IGuardrail");
+const {
+  ADHERENCE_NEGATIVE_VERBS: NEGATIVE_VERBS,
+  ADHERENCE_POSITIVE_VERBS: POSITIVE_VERBS,
+} = require("../../domain/services/languageManager");
 
 /**
  * AdherenceGuardrail (NS-33) — defensa en profundidad post-LLM contra
@@ -165,8 +169,6 @@ function _esc(s) {
 // Same principle StateRevealGuardrail applies. Without this gate the
 // guardrail destroys the Socratic question and the student receives a
 // truncated affirmation with no question
-const NEGATIVE_VERBS = "(?:no|tampoco)\\s+(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
-const POSITIVE_VERBS = "(?:s[ií]\\s+)?(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
 
 function _findContradictions(text, correctSet) {
   if (!text || correctSet.size === 0) return [];

@@ -731,7 +731,7 @@ Student: "R1, R2 y R4"
                                                           │ If student has prior exchanges   │
                                                           │ (history >= 2 messages):         │
                                                           │ → FINISH directly with           │
-                                                          │   "¡Correcto!" + <FIN_EJERCICIO> │
+                                                          │   "¡Correcto!" + <END_EXERCISE> │
                                                           │                                  │
                                                           │ If no prior conversation:        │
                                                           │ → Ask for reasoning via LLM      │
@@ -831,7 +831,7 @@ Student: "R1, R2 y R4 porque R3 está en abierto y R5 cortocircuitada"
                               │ ALWAYS finishes directly:         │
                               │ "¡Correcto! Has identificado      │
                               │  bien las resistencias."          │
-                              │  + <FIN_EJERCICIO> token          │
+                              │  + <END_EXERCISE> token          │
                               │                                   │
                               │ LLM is NOT called.                │
                               │ Guardrails are NOT needed.        │
@@ -1478,14 +1478,14 @@ End-to-end flow from the student opening the application to completing an exerci
 │  Repeat until:                                                                       │
 │  - Student gives correct resistances + good reasoning → deterministic finish         │
 │  - Student gives correct resistances (after prior reasoning) → deterministic finish  │
-│  - Response contains <FIN_EJERCICIO> token → frontend detects exercise complete      │
+│  - Response contains <END_EXERCISE> token → frontend detects exercise complete      │
 │                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─ EXERCISE COMPLETION ────────────────────────────────────────────────────────────────┐
 │                                                                                      │
-│  1. Frontend detects <FIN_EJERCICIO> in response                                     │
+│  1. Frontend detects <END_EXERCISE> in response                                     │
 │  2. POST /api/resultados/finalizar                                                   │
 │     { userId, ejercicioId, interaccionId, respuestaFinal, tiempoTotal }              │
 │  3. Backend loads full conversation from MongoDB                                     │

@@ -34,7 +34,7 @@ let requestCounter = 0;
 
 const router = express.Router();
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
-const FIN_TOKEN = "<FIN_EJERCICIO>";
+const FIN_TOKEN = "<END_EXERCISE>";
 
 // Canonical exercise number mapping (exercise 2 → 1 because they share the same dataset in ChromaDB)
 const canonicalExercise = {};
