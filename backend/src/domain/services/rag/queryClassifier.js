@@ -202,10 +202,25 @@ function detectNegation(message, position, elementLength) {
 
 // Extract mentioned elements from a message, given a list of evaluable elements.
 // If evaluableElements is provided, searches for those. Otherwise, falls back to R\d+ regex.
-// Returns array of { element: "R4", position: 5 }
+// Returns array of { element: "R4", position: 5, positions: [5, 42] } — ONE entry
+// per element (first-seen order), with `position` = first occurrence (kept for
+// backward compatibility) and `positions` = ALL occurrences in ascending order.
+//
+// Why positions[]: previously we kept only the first occurrence, so negation
+// attached to a LATER restatement was lost (e.g. "...corriente por R3, por lo
+// que R3 no influye" — the "no influye" hangs off the SECOND R3, which used to
+// be discarded). classifyQuery now evaluates negation across every occurrence.
 function extractMentionedElements(message, evaluableElements) {
-  var mentions = [];
-  var seen = {};
+  var order = [];   // element names in first-seen order
+  var posMap = {};  // normalized name -> [positions]
+
+  function record(normalized, idx) {
+    if (!posMap[normalized]) {
+      posMap[normalized] = [];
+      order.push(normalized);
+    }
+    posMap[normalized].push(idx);
+  }
 
   if (Array.isArray(evaluableElements) && evaluableElements.length > 0) {
     var lower = message.toLowerCase();
@@ -225,11 +240,7 @@ function extractMentionedElements(message, evaluableElements) {
         var validAfter = /[\s,;:).?!"'\-]/.test(charAfter) || idx + elemLower.length === lower.length;
 
         if (validBefore && validAfter) {
-          var normalized = elem.toUpperCase();
-          if (!seen[normalized]) {
-            seen[normalized] = true;
-            mentions.push({ element: normalized, position: idx });
-          }
+          record(elem.toUpperCase(), idx);
         }
         searchFrom = idx + 1;
       }
@@ -239,12 +250,15 @@ function extractMentionedElements(message, evaluableElements) {
     var regex = /R\d+/gi;
     var match;
     while ((match = regex.exec(message)) !== null) {
-      var normalized = match[0].toUpperCase();
-      if (!seen[normalized]) {
-        seen[normalized] = true;
-        mentions.push({ element: normalized, position: match.index });
-      }
+      record(match[0].toUpperCase(), match.index);
     }
+  }
+
+  var mentions = [];
+  for (var k = 0; k < order.length; k++) {
+    var name = order[k];
+    var positions = posMap[name].slice().sort(function (a, b) { return a - b; });
+    mentions.push({ element: name, position: positions[0], positions: positions });
   }
 
   return mentions;
@@ -449,11 +463,22 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
   // Extract mentioned elements with positions (generic or regex fallback)
   var mentions = extractMentionedElements(userMessage, evaluableElements);
 
-  // Separate proposed vs negated elements
+  // Separate proposed vs negated elements.
+  // An element can appear several times; evaluate negation at EACH occurrence
+  // and let the LAST mention decide. Students restate or correct themselves,
+  // and the final mention reflects their actual intent — e.g. "...corriente
+  // por R3, por lo que R3 no influye": the first R3 looks neutral, the last is
+  // negated, so the element is negated. (Previously only the first occurrence
+  // was checked, so this whole phrasing was misread as proposed=[R3].)
   var proposed = [];
   var negated = [];
   for (var i = 0; i < mentions.length; i++) {
-    if (detectNegation(userMessage, mentions[i].position, mentions[i].element.length)) {
+    var positions = mentions[i].positions || [mentions[i].position];
+    var negatedHere = false;
+    for (var p = 0; p < positions.length; p++) {
+      negatedHere = detectNegation(userMessage, positions[p], mentions[i].element.length);
+    }
+    if (negatedHere) {
       negated.push(mentions[i].element);
     } else {
       proposed.push(mentions[i].element);

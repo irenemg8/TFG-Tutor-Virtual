@@ -128,6 +128,18 @@ const c6c = classifyQuery("sí", correct, evalEl, "¿Es R3 una resistencia que c
 assert("'sí' replying to closed reasoning question → correct_no_reasoning",
   c6c.type === "correct_no_reasoning", "got: " + c6c.type);
 
+// Negation attached to a LATER restatement of the same element (req5 in prod).
+// The element appears twice; the first mention is neutral, the second carries
+// "no influye". Before the multi-occurrence fix this was misread as
+// proposed=[R3] and the tutor contradicted a correct student → repeated loop.
+const c7msg = "El interruptor abierto impide el paso de la corriente por R3, por lo que R3 no influye en el valor de tensión entre N2 y 0";
+const c7 = classifyQuery(c7msg, correct, evalEl);
+assert("restated-negation 'R3 ... R3 no influye' → R3 negated, not proposed",
+  c7.negated.indexOf("R3") >= 0 && c7.proposed.indexOf("R3") < 0,
+  "got proposed=[" + c7.proposed.join(",") + "] negated=[" + c7.negated.join(",") + "]");
+assert("restated-negation 'R3 no influye' (R3 not in correct) → partial_correct",
+  c7.type === "partial_correct", "got: " + c7.type);
+
 // ─── 6. ELEMENT_NAMING retry hint plagiarism ────────────────────────────────
 section("6. ElementNaming retry hint contains a quotable example");
 // C5: the retry hint must NOT always contain the same example phrase the LLM
