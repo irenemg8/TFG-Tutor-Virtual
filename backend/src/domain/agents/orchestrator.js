@@ -312,12 +312,17 @@ class TutoringOrchestrator {
     // 1. Insert a space after sentence terminators that are immediately
     //    followed by an uppercase / lowercase letter or "¿"/"¡"/digit.
     out = out.replace(/([.!?…])([A-Za-zÁÉÍÓÚÜÑáéíóúüñ¿¡0-9])/g, "$1 $2");
-    // 1b. Insert a space when a lowercase letter is followed directly by
-    //     an uppercase one — qwen2.5 sometimes produces "identificarAhora"
-    //     (missing space when concatenating placeholder + LLM continuation).
-    //     Skip CamelCase identifiers and acronym-like patterns by requiring
-    //     the lowercase token to be at least 4 chars.
-    out = out.replace(/([a-záéíóúñü]{4,})([A-ZÁÉÍÓÚÑÜ¿¡])/g, "$1 $2");
+    // 1b. Insert a space when a 4+ char lowercase run is glued to the start of
+    //     a new clause. BUG-ORC (2026-06-10): the old rule split before ANY
+    //     uppercase, so it could also break a legitimately-glued uppercase RUN
+    //     (acronyms) or a lone capital. We now only split in the two cases that
+    //     are unambiguously concat errors:
+    //       (i)  glued to an opening "¿"/"¡" (an opener never glues legitimately)
+    //       (ii) glued to a Title-case word start (uppercase FOLLOWED BY
+    //            lowercase, e.g. "identificarAhora") — not before an acronym
+    //            run ("DC"/"AC") nor a lone capital.
+    out = out.replace(/([a-záéíóúñü]{4,})([¿¡])/g, "$1 $2");
+    out = out.replace(/([a-záéíóúñü]{4,})([A-ZÁÉÍÓÚÑÜ])(?=[a-záéíóúñü])/g, "$1 $2");
     // 2. Collapse runs of whitespace to a single space (but keep newlines).
     out = out.replace(/[ \t]+/g, " ");
     // 3. Trim leading whitespace.

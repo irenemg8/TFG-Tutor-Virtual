@@ -59,9 +59,14 @@ function _similarity(qa, qb) {
   for (let i = 0; i < a.length; i++) {
     if (setB.has(a[i])) overlap++;
   }
-  // Solapamiento sobre la lista más corta — más sensible cuando una pregunta
-  // tiene 5 tokens content y la otra 6: si los 5 coinciden, similarity=1.0.
-  return overlap / Math.min(a.length, b.length);
+  // BUG-G4 (2026-06-10): the denominator used to be min(len), which is
+  // ASYMMETRIC — a short new question whose content tokens are a SUBSET of a
+  // longer, semantically different previous question scored 1.0 and was
+  // flagged as a repeat (false positive, forcing a needless retry). max(len)
+  // is symmetric: a true repeat (similar length, high overlap) still scores
+  // high, but "¿qué resistencias importan?" vs a long unrelated question no
+  // longer reaches the 0.7 threshold.
+  return overlap / Math.max(a.length, b.length);
 }
 
 function _findLastAssistantQuestion(messages) {

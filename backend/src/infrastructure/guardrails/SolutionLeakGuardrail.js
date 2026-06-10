@@ -4,6 +4,7 @@ const IGuardrail = require("../../domain/ports/services/IGuardrail");
 const { extractResistances } = require("../../domain/services/text/elementExtractor");
 const { containsAll } = require("../../domain/services/text/setComparison");
 const { splitSentencesKeepEnd } = require("../../domain/services/text/sentenceSplitter");
+const { stripAccents } = require("../../domain/services/text/accentNormalizer");
 const {
   getAllPatterns,
   revealPhrases: revealDict,
@@ -14,16 +15,32 @@ const {
 
 const revealPhrases = getAllPatterns(revealDict);
 
+// BUG-SL (2026-06-10): this was the last guardrail in the set still comparing
+// raw-lowercased text against ACCENTED dictionaries/regexes, so an accent-less
+// LLM reveal ("La solucion es R1", "Asi es, esos elementos contribuyen") — and
+// the ENTIRE Valencian reveal set — slipped through. Same recurring class as
+// G1/S1. We fold accents on both sides: precompute accent-stripped copies of
+// the reveal phrases and of the regex patterns (stripping accents from the
+// pattern .source), and match against accent-folded text.
+const revealPhrasesF = revealPhrases.map(function (p) { return stripAccents(p); });
+function _foldPattern(re) {
+  try { return new RegExp(stripAccents(re.source), re.flags); } catch (_) { return re; }
+}
+const SEMANTIC_AFFIRM_PATTERNS_F = SEMANTIC_AFFIRM_PATTERNS.map(_foldPattern);
+const PLACEHOLDER_PATTERNS_F = PLACEHOLDER_PATTERNS.map(_foldPattern);
+
 function _sentenceHasPlaceholder(s) {
-  for (let p = 0; p < PLACEHOLDER_PATTERNS.length; p++) {
-    if (PLACEHOLDER_PATTERNS[p].test(s)) return true;
+  const folded = stripAccents(s);
+  for (let p = 0; p < PLACEHOLDER_PATTERNS_F.length; p++) {
+    if (PLACEHOLDER_PATTERNS_F[p].test(folded)) return true;
   }
   return false;
 }
 
 function _sentenceHasAffirm(s) {
-  for (let q = 0; q < SEMANTIC_AFFIRM_PATTERNS.length; q++) {
-    if (SEMANTIC_AFFIRM_PATTERNS[q].test(s)) return true;
+  const folded = stripAccents(s);
+  for (let q = 0; q < SEMANTIC_AFFIRM_PATTERNS_F.length; q++) {
+    if (SEMANTIC_AFFIRM_PATTERNS_F[q].test(folded)) return true;
   }
   return false;
 }
@@ -83,15 +100,15 @@ class SolutionLeakGuardrail extends IGuardrail {
       };
     }
 
-    const lower = response.toLowerCase();
+    const lowerFolded = stripAccents(response.toLowerCase());
     const mentioned = extractResistances(response);
     if (!containsAll(mentioned, correctAnswer)) {
       return { violated: false };
     }
 
-    // (a) explicit reveal phrase
-    for (let i = 0; i < revealPhrases.length; i++) {
-      if (lower.includes(revealPhrases[i])) {
+    // (a) explicit reveal phrase — matched accent-folded (BUG-SL).
+    for (let i = 0; i < revealPhrasesF.length; i++) {
+      if (lowerFolded.includes(revealPhrasesF[i])) {
         return {
           violated: true,
           evidence: "reveal_phrase: '" + revealPhrases[i] + "'",
@@ -193,15 +210,9 @@ function stripSemanticAffirmation(text) {
   for (let i = 0; i < sentences.length; i++) {
     const s = sentences[i];
     if (s.includes("?")) { kept.push(s); continue; }
-    let hasPlaceholder = false;
-    for (let p = 0; p < PLACEHOLDER_PATTERNS.length; p++) {
-      if (PLACEHOLDER_PATTERNS[p].test(s)) { hasPlaceholder = true; break; }
-    }
-    let hasAffirm = false;
-    for (let q = 0; q < SEMANTIC_AFFIRM_PATTERNS.length; q++) {
-      if (SEMANTIC_AFFIRM_PATTERNS[q].test(s)) { hasAffirm = true; break; }
-    }
-    if (hasPlaceholder && hasAffirm) continue;
+    // Reuse the accent-folded helpers (BUG-SL) so the stripper catches the same
+    // accent-less leaks that looksLikeSemanticAffirmation now detects.
+    if (_sentenceHasPlaceholder(s) && _sentenceHasAffirm(s)) continue;
     kept.push(s);
   }
   return kept.join("").trim();

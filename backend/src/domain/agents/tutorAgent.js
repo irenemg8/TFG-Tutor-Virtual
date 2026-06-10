@@ -148,7 +148,14 @@ class TutorAgent extends AgentInterface {
     //    estrategia + razonamiento experto del catálogo y del KG.
     let verdictBanner = "";
     const verdict = context.turnVerdict;
-    if (verdict && verdict.proposed && verdict.proposed.length > 0) {
+    // BUG-A1 (2026-06-10): el gate exigía proposed.length>0, así que el veredicto
+    // "only_negation" (el alumno SOLO rechazó un elemento que SÍ es correcto,
+    // p.ej. "R1 no influye" con R1 correcto) suprimía todo el banner — incluida
+    // la instrucción "Wrongly rejected … RETA su rechazo, no cedas". El LLM
+    // nunca sabía del rechazo erróneo y podía ceder en silencio (el camino
+    // legacy ragPipeline.analyzeStudentElements sí emitía [WRONG REJECTION]).
+    // Ahora el banner también se renderiza cuando hay rechazos erróneos.
+    if (this._shouldRenderVerdictBanner(verdict)) {
       const { getStrategyForAC, getExpertReasoningForAC } = require("../services/kgRegistry");
       const detectedForBanner = (context.detectedACs || []).filter((a) => a.confidence >= 0.6);
       const topAC = detectedForBanner[0] || null;
@@ -521,6 +528,17 @@ class TutorAgent extends AgentInterface {
    *   - dont_know: stop asking generic questions; introduce a concrete
    *     definitional anchor and ask the student to react.
    */
+  // BUG-A1 (2026-06-10): extracted so the gate is unit-testable. The verdict
+  // banner must render when the student proposed something OR when they wrongly
+  // rejected a correct element (verdict "only_negation") — otherwise the
+  // "challenge the wrong rejection" instruction never reaches the LLM.
+  _shouldRenderVerdictBanner(verdict) {
+    if (!verdict) return false;
+    const hasProposed = !!(verdict.proposed && verdict.proposed.length > 0);
+    const hasWrongRejection = !!(verdict.wronglyNegated && verdict.wronglyNegated.length > 0);
+    return hasProposed || hasWrongRejection;
+  }
+
   _buildStrategyHint(currentType, streak, lastType) {
     if (!currentType || streak < 2) return "";
     if (lastType && lastType !== currentType) return "";

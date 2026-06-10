@@ -403,6 +403,11 @@ function checkElementNaming(response, evaluableElements) {
 // Used when the guardrail retry still produces a confirmation — we strip it and prepend a deterministic prefix
 // Iteratively strips all confirmation phrases from the start to avoid contradictions like:
 // "Hmm, no estoy seguro. Exacto, en un cortocircuito..." → "Hmm, no estoy seguro. En un cortocircuito..."
+// Single-word confirmations that also open non-confirming idioms/adverbials
+// ("claro está que…", "justo por eso…"). Accent-stripped lowercase to match
+// `phraseLower`. Guarded inside removeOpeningConfirmation (BUG-S2).
+var AMBIGUOUS_SOLO_CONFIRM = ["claro", "clar", "justo"];
+
 function removeOpeningConfirmation(response, lang) {
   var result = response.trim();
   var changed = true;
@@ -428,8 +433,37 @@ function removeOpeningConfirmation(response, lang) {
         if (nextChar && /[a-zA-Z0-9ñü]/.test(nextChar)) {
           continue; // dentro de palabra, no es la phrase real
         }
-        // Strip the phrase and any following punctuation/whitespace
-        var afterPhrase = stripped.substring(confirmPhrases[i].length).replace(/^[,;:!.\s¡¿]+/, "");
+        // BUG-S2 (2026-06-10): "claro" y "justo" abren idiomas legítimos
+        // ("claro está que…", "justo por eso…"). Como sólo se mira el char
+        // inmediato (un espacio, que pasa el check anterior), se decapitaba la
+        // frase: "Claro está que…" → "Está que…". Para estas palabras sueltas
+        // ambiguas SÓLO las tratamos como confirmación-interjección cuando van
+        // delimitadas por puntuación o fin de texto; si les sigue otra palabra
+        // las dejamos intactas. La confirmación real "claro que sí" se captura
+        // antes en el bucle (aparece en confirmPhrases con índice menor), así
+        // que esta guarda no la rompe.
+        if (AMBIGUOUS_SOLO_CONFIRM.indexOf(phraseLower) >= 0) {
+          var restAfterPhrase = lowerResult.slice(phraseLower.length).replace(/^\s+/, "");
+          if (restAfterPhrase.length > 0 && /[a-z0-9ñü¿¡]/i.test(restAfterPhrase.charAt(0))) {
+            continue; // le sigue una palabra → idioma, no decapitar
+          }
+          // BUG-S5b (2026-06-10): a solo "¿Claro?" is its OWN question, not an
+          // opening confirmation. Stripping it would leave a headless "?" (the
+          // strip class below does NOT consume "?"), so we preserve it.
+          // We only guard "?", NOT "!": "!" IS in the strip class, so an opening
+          // "¡Claro! R5 no influye" cleanly strips to "R5 no influye" (a real
+          // opening confirmation we DO want removed), while a standalone
+          // "¡Claro!" survives via the empty-result fallback at the end.
+          if (lowerResult.charAt(phraseLower.length) === "?") {
+            continue;
+          }
+        }
+        // Strip the phrase and any following punctuation/whitespace. BUG-S5
+        // (2026-06-10): the class used to include "¡¿", so it ate the OPENING
+        // mark of the following Spanish question ("Exacto. ¿Qué pasa?" →
+        // "Qué pasa?" — a malformed question). Spanish requires the leading
+        // "¿"/"¡", so we no longer strip them; they belong to the next clause.
+        var afterPhrase = stripped.substring(confirmPhrases[i].length).replace(/^[,;:!.\s]+/, "");
         result = afterPhrase;
         changed = true;
         break;
@@ -437,9 +471,15 @@ function removeOpeningConfirmation(response, lang) {
     }
   }
 
-  // If we stripped something, capitalize the first letter of remaining text
+  // If we stripped something, capitalize the first LETTER of remaining text.
+  // Skip a leading "¿"/"¡" so we capitalize the actual word, not the opener
+  // ("¿qué pasa?" → "¿Qué pasa?", not "¿qué pasa?").
   if (result !== response.trim() && result.length > 0) {
-    result = result.charAt(0).toUpperCase() + result.substring(1);
+    var lead = result.match(/^[¿¡]+/);
+    var at = lead ? lead[0].length : 0;
+    if (at < result.length) {
+      result = result.slice(0, at) + result.charAt(at).toUpperCase() + result.substring(at + 1);
+    }
   }
 
   return result || response;
@@ -575,12 +615,22 @@ function redactStateRevealSentence(response, evaluableElements, pattern, lang, p
   var placeholder = _pickStatePlaceholder(lang || "es", priorHits || 0);
   var suppress = placeholder === "";
 
-  var sentences = response.split(/(?<=[.!?\n])\s*/);
+  // BUG-S1 (2026-06-10): split WITHOUT consuming the inter-sentence whitespace
+  // (lookbehind only). The old `\s*` ate the separators, and join("") below
+  // then glued the untouched tail ("rama.Sigue"). Keeping the space attached to
+  // the next sentence preserves the original spacing through the join.
+  var sentences = response.split(/(?<=[.!?\n])/);
   var redacted = false;
+  // BUG-S1: the guardrail's check() matches state patterns accent-FOLDED, and
+  // returns the accented dictionary form as `pattern`. Locating the sentence
+  // with a plain accent-sensitive includes() missed the (very common)
+  // accent-less LLM output ("esta cortocircuitada") — check() fired but this
+  // redactor found nothing and the leak passed through. Fold both sides.
+  var patternFolded = stripAccents(pattern.toLowerCase());
   for (var i = 0; i < sentences.length; i++) {
     var sent = sentences[i];
     var lowerSent = sent.toLowerCase();
-    if (!lowerSent.includes(pattern.toLowerCase())) continue;
+    if (!stripAccents(lowerSent).includes(patternFolded)) continue;
 
     var mentions = extractElementMentions(sent, evaluableElements);
     if (mentions.length === 0) continue;
@@ -634,6 +684,12 @@ function redactStateRevealSentence(response, evaluableElements, pattern, lang, p
     break;
   }
   var out = sentences.join("");
+  // BUG-S4 (2026-06-10): defensive spacing cleanup so the function is correct
+  // on its own (not only when orchestrator._normaliseWhitespace runs after it).
+  // Re-insert a space when sentence-ending punctuation is glued to the next
+  // sentence's capital/opening mark, and collapse any double spaces introduced
+  // around the redacted placeholder.
+  out = out.replace(/([.!?…])(?=[A-ZÁÉÍÓÚÑ¿¡])/g, "$1 ").replace(/ {2,}/g, " ");
   if (redacted) {
     // NS-34: hardcoded state patterns can fire inside questions (e.g. "¿No es
     // raro que pase corriente por R5?"). When the redacted sentence WAS the
@@ -797,8 +853,41 @@ function redactElementMentions(response, correctAnswer, lang) {
     // elementos" (genérico, plural, gramatical). No tocamos los casos en
     // singular que sí concuerdan ("ese conjunto de elementos contribuye").
     text = fixPlaceholderAgreement(text, lang);
+    // BUG-S3 (2026-06-10): el placeholder masculino "esos elementos" hereda
+    // un predicado femenino de la "resistencia" redactada ("son las correctas")
+    // → choque de género. Reconciliamos el determinante/adjetivo femenino.
+    text = fixPlaceholderGender(text, lang);
   }
   return { text: text, redacted: changed };
+}
+
+// BUG-S3: tras promover el placeholder a "esos elementos" (masc. plural), un
+// predicado femenino heredado de "resistencias" rompe la concordancia:
+// "esos elementos son las correctas". Convertimos el sintagma femenino que
+// sigue a "esos elementos … son" dentro de la MISMA frase. Sólo es necesario en
+// español (val/en usan placeholders sin ese choque de género).
+function fixPlaceholderGender(text, lang) {
+  if (typeof text !== "string" || text.length === 0) return text;
+  if (lang && lang !== "es") return text;
+  if (!/esos\s+elementos/i.test(text)) return text;
+  // Pares femenino plural → masculino plural, frecuentes en feedback de
+  // respuesta correcta. "las que" cubre "son las que contribuyen". Aplicado
+  // globalmente pero gateado por la presencia del placeholder masculino; estas
+  // respuestas son cortas (1-2 frases), así que el riesgo de tocar una
+  // referencia femenina legítima de otra frase es mínimo.
+  var femToMasc = [
+    [/\blas\s+correctas\b/gi, "los correctos"],
+    [/\blas\s+incorrectas\b/gi, "los incorrectos"],
+    [/\blas\s+adecuadas\b/gi, "los adecuados"],
+    [/\blas\s+necesarias\b/gi, "los necesarios"],
+    [/\blas\s+relevantes\b/gi, "los relevantes"],
+    [/\blas\s+importantes\b/gi, "los importantes"],
+    [/\blas\s+que\b/gi, "los que"],
+  ];
+  for (var r = 0; r < femToMasc.length; r++) {
+    text = text.replace(femToMasc[r][0], femToMasc[r][1]);
+  }
+  return text;
 }
 
 // Cuando los pases previos (redactElementMentions + removeOpeningConfirmation)

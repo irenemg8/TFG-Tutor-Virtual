@@ -103,16 +103,23 @@ function analyzeStudentElements(classification, correctAnswer) {
     return "";
   }
 
+  // BUG-LM3 (2026-06-10): membership was case-sensitive. proposed/negated are
+  // always uppercased by the classifier, but correctAnswer was used raw — if a
+  // seed/DB row ever stores a lowercase/padded "Rn", every per-element verdict
+  // INVERTS (it would tell the LLM a correct element is wrong and that wrongly
+  // rejecting a correct element is fine). Normalize both sides (uppercase+trim).
+  function _norm(x) { return typeof x === "string" ? x.toUpperCase().trim() : x; }
+
   var correctSet = {};
   for (var i = 0; i < correctAnswer.length; i++) {
-    correctSet[correctAnswer[i]] = true;
+    correctSet[_norm(correctAnswer[i])] = true;
   }
 
   // Analyze proposed elements
   var correctProposals = [];
   var wrongProposals = [];
   for (var i = 0; i < proposed.length; i++) {
-    if (correctSet[proposed[i]]) {
+    if (correctSet[_norm(proposed[i])]) {
       correctProposals.push(proposed[i]);
     } else {
       wrongProposals.push(proposed[i]);
@@ -123,7 +130,7 @@ function analyzeStudentElements(classification, correctAnswer) {
   var correctNegations = [];  // student rejects something NOT in the answer (correct rejection)
   var wrongNegations = [];    // student rejects something IN the answer (wrong rejection)
   for (var i = 0; i < negated.length; i++) {
-    if (correctSet[negated[i]]) {
+    if (correctSet[_norm(negated[i])]) {
       wrongNegations.push(negated[i]);
     } else {
       correctNegations.push(negated[i]);
@@ -132,11 +139,11 @@ function analyzeStudentElements(classification, correctAnswer) {
 
   // Find missing elements (in correct answer, not proposed, not negated)
   var allMentioned = {};
-  for (var i = 0; i < proposed.length; i++) allMentioned[proposed[i]] = true;
-  for (var i = 0; i < negated.length; i++) allMentioned[negated[i]] = true;
+  for (var i = 0; i < proposed.length; i++) allMentioned[_norm(proposed[i])] = true;
+  for (var i = 0; i < negated.length; i++) allMentioned[_norm(negated[i])] = true;
   var missed = [];
   for (var i = 0; i < correctAnswer.length; i++) {
-    if (!allMentioned[correctAnswer[i]]) {
+    if (!allMentioned[_norm(correctAnswer[i])]) {
       missed.push(correctAnswer[i]);
     }
   }
@@ -559,3 +566,5 @@ function createRagPipeline(deps) {
 }
 
 module.exports = { createRagPipeline };
+// Exposed for unit testing (BUG-LM3 regression): pure per-element analysis.
+module.exports.analyzeStudentElements = analyzeStudentElements;

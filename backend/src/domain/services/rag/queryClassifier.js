@@ -132,19 +132,71 @@ const postNegationPhrases = [
   "is open", "is shorted", "is short-circuited", "in open circuit", "in short circuit",
 ];
 
+// Length-preserving lowercase + accent fold. Students routinely drop accents
+// ("esta abierto" instead of "está abierto"), so negation matching must be
+// accent-insensitive. We CANNOT use the NFD-based stripAccents here because it
+// changes the string length, and detectNegation indexes the message with
+// positions computed (without accent folding) in extractMentionedElements —
+// any length shift would misalign them. This 1:1 map keeps every char index.
+var ACCENT_FOLD = {
+  "á": "a", "à": "a", "ä": "a", "â": "a",
+  "é": "e", "è": "e", "ë": "e", "ê": "e",
+  "í": "i", "ì": "i", "ï": "i", "î": "i",
+  "ó": "o", "ò": "o", "ö": "o", "ô": "o",
+  "ú": "u", "ù": "u", "ü": "u", "û": "u",
+};
+function foldForMatch(str) {
+  var lower = str.toLowerCase();
+  var out = "";
+  for (var i = 0; i < lower.length; i++) {
+    var ch = lower[i];
+    out += ACCENT_FOLD[ch] || ch;
+  }
+  return out;
+}
+
+// Accent-folded copies of the negation dictionaries, computed once. Both sides
+// of the comparison (message + dictionary) must be folded, otherwise an
+// accented dictionary entry like "está abierto" would never match a folded
+// message substring "esta abierto".
+var preNegationWordsF = preNegationWords.map(foldForMatch);
+var preNegationPhrasesF = preNegationPhrases.map(foldForMatch);
+var postNegationPhrasesF = postNegationPhrases.map(foldForMatch);
+
+// Index of the last sentence terminator (.!?) in `s`, treating a RUN of dots
+// (ellipsis "...") as hesitation rather than a sentence break. Returns -1 when
+// there is no real terminator. Ellipses are blanked to spaces (same length) so
+// the returned index still aligns with the original string.
+function _lastSentenceCut(s) {
+  var scan = s.replace(/\.{2,}/g, function (run) {
+    return new Array(run.length + 1).join(" ");
+  });
+  return scan.search(/[.!?][^.!?]*$/);
+}
+
 // Check if there is a negation around a specific position in the message
 // Windows are tight to avoid false positives on distant negations
 function detectNegation(message, position, elementLength) {
-  var lower = message.toLowerCase();
+  var lower = foldForMatch(message);
   var PRE_WINDOW = 15;
   var POST_WINDOW = 25;
 
   // Check pre-negation: look for negation words before the element
   var preStart = Math.max(0, position - PRE_WINDOW);
   var prefix = lower.substring(preStart, position);
+  // H1-bleed guard (2026-06-10): truncate the pre-window at the last sentence
+  // terminator so a "no" that closes the PREVIOUS sentence doesn't bleed into
+  // this element ("R3 no influye. R1 si va" must NOT negate R1). The post-window
+  // already truncates on .!?; this symmetrises the pre-window. Without it, the
+  // H1 sticky-negation rule would lock the element negated permanently.
+  // ADV2 (2026-06-10): a run of dots ("no... R3") is hesitation, NOT a sentence
+  // break, so we blank out ellipses before locating the terminator (same length
+  // so the slice index still aligns with the original prefix).
+  var pSent = _lastSentenceCut(prefix);
+  if (pSent >= 0) prefix = prefix.slice(pSent + 1);
 
-  for (var i = 0; i < preNegationWords.length; i++) {
-    var word = preNegationWords[i];
+  for (var i = 0; i < preNegationWordsF.length; i++) {
+    var word = preNegationWordsF[i];
     var idx = prefix.lastIndexOf(word);
     if (idx >= 0) {
       // Ensure it's a word boundary (preceded by space/start, followed by space)
@@ -152,6 +204,14 @@ function detectNegation(message, position, elementLength) {
       var charAfter = idx + word.length < prefix.length ? prefix[idx + word.length] : " ";
       if (/[\s,;:(]/.test(charBefore) || idx === 0) {
         if (/[\s,;:)]/.test(charAfter) || idx + word.length === prefix.length) {
+          // H5 clause-boundary guard: a comma/semicolon between the negation
+          // word and the element means the negation closes the PREVIOUS clause
+          // and must not bleed into this one. "R1 no, R2 sí" — the "no" rejects
+          // R1; without this guard it would wrongly negate R2. (Conversely
+          // "R1, no R2" has the comma BEFORE "no", so the guard doesn't fire
+          // and R2 is correctly negated.)
+          var between = prefix.substring(idx + word.length);
+          if (/[,;]/.test(between)) continue;
           return true;
         }
       }
@@ -162,8 +222,11 @@ function detectNegation(message, position, elementLength) {
   var PHRASE_PRE_WINDOW = 30;
   var phrasePreStart = Math.max(0, position - PHRASE_PRE_WINDOW);
   var phrasePrefix = lower.substring(phrasePreStart, position);
-  for (var i = 0; i < preNegationPhrases.length; i++) {
-    if (phrasePrefix.includes(preNegationPhrases[i])) {
+  // Same sentence-boundary guard as the single-word window above (ellipsis-safe).
+  var phSent = _lastSentenceCut(phrasePrefix);
+  if (phSent >= 0) phrasePrefix = phrasePrefix.slice(phSent + 1);
+  for (var i = 0; i < preNegationPhrasesF.length; i++) {
+    if (phrasePrefix.includes(preNegationPhrasesF[i])) {
       return true;
     }
   }
@@ -187,8 +250,18 @@ function detectNegation(message, position, elementLength) {
     suffix = suffix.substring(0, nextElem);
   }
 
-  for (var i = 0; i < postNegationPhrases.length; i++) {
-    if (suffix.includes(postNegationPhrases[i])) {
+  // H5: a trailing standalone "no" right after the element ("R1 no", "R3 no.")
+  // is a direct rejection of THIS element. Bare "no" is too risky as a general
+  // post phrase, but immediately after the element it is unambiguous. We only
+  // strip leading WHITESPACE (not commas): "R1, no R2" keeps its comma, so the
+  // "no" there is NOT read as trailing for R1 — it belongs to R2.
+  var immediateAfter = suffix.replace(/^\s+/, "");
+  if (/^no(?:[\s.,;:!?]|$)/.test(immediateAfter)) {
+    return true;
+  }
+
+  for (var i = 0; i < postNegationPhrasesF.length; i++) {
+    if (suffix.includes(postNegationPhrasesF[i])) {
       return true;
     }
   }
@@ -361,8 +434,15 @@ function detectClosedQuestion(lastAssistantText) {
   var matches = lastAssistantText.match(/[^.!?]*\?/g);
   if (!matches || matches.length === 0) return { isClosed: false, isDiagnostic: false };
   var last = matches[matches.length - 1].toLowerCase().trim();
-  // Remove leading ¿
-  last = last.replace(/^¿/, "").trim();
+  // The interrogative clause may carry a preamble before the real question
+  // ("Vale, ¿tienes dudas?"). In Spanish the question starts at "¿", so slice
+  // from the last "¿" to drop the lead-in — otherwise the closed-opener check
+  // (anchored at index 0) misses the opener. For markerless (English)
+  // questions there is no "¿" and this is a no-op.
+  var qOpen = last.lastIndexOf("¿");
+  if (qOpen >= 0) {
+    last = last.slice(qOpen + 1).trim();
+  }
 
   // Closed-form openers across es / val / en. The patterns must match the
   // BEGINNING of the last interrogative — open-ended interrogatives like
@@ -451,6 +531,207 @@ function _extractElementFromQuestion(lastAssistantText, evaluableElements) {
   return candidate;
 }
 
+// =====================
+// Quantifier / set expansion ("todas", "todas menos R3", "ninguna", "el resto")
+// =====================
+
+// Set-quantifier tokens (accent-folded, lowercase). Multi-word entries are the
+// safest; bare plural forms are accepted but guarded against common idioms
+// ("de todos modos", "del todo") via ALL_FALSE_CONTEXTS.
+var ALL_TOKENS = [
+  // es
+  "todas las resistencias", "todas las resistencia", "todas ellas",
+  "todos ellos", "todas", "todos",
+  // val
+  "totes les resistencies", "totes", "tots",
+  // en
+  "all of them", "all the resistances", "all resistances", "all",
+];
+var NONE_TOKENS = [
+  // es
+  "ninguna resistencia", "ninguna", "ninguno", "ningun", "ningunas", "ningunos",
+  // val
+  "cap resistencia", "cap",
+  // en
+  "none of them", "no resistances", "no resistance", "none",
+];
+var REST_TOKENS = [
+  // es
+  "el resto", "los demas", "las demas", "las restantes", "los restantes", "la resta",
+  // en
+  "the rest", "the others", "the remaining",
+];
+// Idiom guards: a bare ALL hit inside one of these is NOT a set quantifier.
+var ALL_FALSE_CONTEXTS = ["de todos modos", "del todo", "todos modos", "todo el"];
+// Idiom guards for NONE: "no tengo ninguna duda" must NOT be read as the set
+// quantifier "ninguna" (which would wrongly negate every element). These are
+// conversational uses of "ninguna/ningún/none" that talk about doubts,
+// questions, ideas or problems — not about the circuit elements.
+var NONE_FALSE_CONTEXTS = [
+  // es
+  "ninguna duda", "ninguna pregunta", "ninguna idea", "ningun problema",
+  "ningun comentario", "ninguna gana", "ninguna otra",
+  // val
+  "cap dubte", "cap pregunta", "cap idea", "cap problema",
+  // en
+  "no doubt", "no question", "no idea", "no problem",
+];
+
+// Post-only negation check for a token (e.g. "el resto"). We deliberately do
+// NOT look before the token: the relevant polarity for "el resto" sits AFTER
+// it ("el resto no influye" vs "el resto sí"), and a preceding "no" almost
+// always belongs to a previous clause about another element
+// ("R3 no influye, el resto sí").
+function tokenHasPostNegation(message, position, length) {
+  var lower = foldForMatch(message);
+  var POST_WINDOW = 25;
+  var start = position + length;
+  var suffix = lower.substring(start, Math.min(lower.length, start + POST_WINDOW));
+  var sb = suffix.search(/[.!?]/);
+  if (sb >= 0) suffix = suffix.substring(0, sb);
+  var ne = suffix.search(/[a-z][\d]+/i);
+  if (ne >= 0) suffix = suffix.substring(0, ne);
+  for (var i = 0; i < postNegationPhrasesF.length; i++) {
+    if (suffix.includes(postNegationPhrasesF[i])) return true;
+  }
+  return false;
+}
+
+// Find any token from `tokens` present in `folded` as a standalone word.
+// Returns { index, length } of the first match, or null.
+function findToken(folded, tokens) {
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    var from = 0;
+    while (from <= folded.length) {
+      var idx = folded.indexOf(t, from);
+      if (idx < 0) break;
+      var before = idx > 0 ? folded[idx - 1] : " ";
+      var after = idx + t.length < folded.length ? folded[idx + t.length] : " ";
+      var okBefore = /[\s,;:(¿¡"'\-]/.test(before) || idx === 0;
+      var okAfter = /[\s,;:).?!"'\-]/.test(after) || idx + t.length === folded.length;
+      if (okBefore && okAfter) return { index: idx, length: t.length };
+      from = idx + 1;
+    }
+  }
+  return null;
+}
+
+// Expand set quantifiers against the full element list. Runs AFTER the explicit
+// proposed/negated split and builds on it:
+//   - "todas [menos/excepto/salvo R3]" → proposed = evaluable \ negated. The
+//     excluded element is already in `negated` because "menos/excepto/salvo"
+//     are pre-negation words detectNegation recognises.
+//   - "ninguna" → every element negated.
+//   - "el resto / las demás" → the elements NOT explicitly mentioned; their
+//     polarity is decided by negation around the token ("el resto no influye"
+//     → negated; "el resto sí" → proposed).
+// Returns { proposed, negated, applied }. When no quantifier is present the
+// input arrays are returned unchanged (applied=false) → zero impact on the
+// normal element-naming path.
+function expandQuantifiers(message, evaluableElements, proposed, negated) {
+  if (!Array.isArray(evaluableElements) || evaluableElements.length === 0) {
+    return { proposed: proposed, negated: negated, applied: false };
+  }
+  var folded = foldForMatch(message);
+  var allUpper = evaluableElements.map(function (e) { return String(e).toUpperCase(); });
+
+  function unionInto(target, items) {
+    for (var i = 0; i < items.length; i++) {
+      if (target.indexOf(items[i]) < 0) target.push(items[i]);
+    }
+  }
+  function removeFrom(arr, items) {
+    return arr.filter(function (x) { return items.indexOf(x) < 0; });
+  }
+
+  var negatedOut = negated.slice();
+  var proposedOut = proposed.slice();
+  var applied = false;
+
+  // Adversarial-pass guard (2026-06-10): BARE all/none tokens ("todas",
+  // "todos", "ninguno"…) leaked into idiomatic chatter ("he probado todas las
+  // opciones", "a todas horas", "ninguno de estos", "todos los caminos") and
+  // expanded to the whole element set even with NO element named — fabricating
+  // or mass-rejecting answers. A real set quantifier is anchored to the
+  // circuit: either an element is already mentioned, or a resistance/element
+  // noun appears. Multi-word tokens ("todas las resistencias", "todas ellas")
+  // are self-anchoring and trusted as-is.
+  // ADV1-tighten (2026-06-10): the circuit anchor/idiom allowlist must match
+  // whole NOUNS, not substrings/prefixes — otherwise adjectives that merely
+  // CONTAIN "resist"/"element" ("elemental", "resistente", "elementales") let a
+  // bare quantifier expand on non-answer chatter ("muy elemental todo, todas").
+  // These forms are excluded because the noun forms below are anchored with \b
+  // and don't prefix-match the adjectives ("elementos?\b" ≠ "elementales").
+  var CIRCUIT_NOUN_RE = /\b(resistenci\w*|resistors?|resistances?|elementos?|elements?|componentes?|components?|dispositivos?)\b/;
+  var anchored = (proposed.length + negated.length) > 0 || CIRCUIT_NOUN_RE.test(folded);
+  function _tokenIsMultiWord(hit) {
+    return folded.substr(hit.index, hit.length).indexOf(" ") >= 0;
+  }
+  function _bareQuantifierOk(hit) {
+    if (!anchored) return false;
+    // "<token> las/los/de <non-circuit-noun>" is an idiom ("todas las opciones",
+    // "todos los caminos", "ninguno de estos"). When the noun IS a circuit noun
+    // ("todos los elementos") it stays a real quantifier.
+    var after = folded.slice(hit.index + hit.length).replace(/^\s+/, "");
+    var m = after.match(/^(las|los|les|the|de|del|d'|of)\s+(\S+)/);
+    if (m && !CIRCUIT_NOUN_RE.test(m[2])) return false;
+    return true;
+  }
+  function _quantifierIsReal(hit) {
+    return _tokenIsMultiWord(hit) || _bareQuantifierOk(hit);
+  }
+
+  // 1. "ninguna" → every element negated. Strongest signal, checked first.
+  //    Guarded against conversational idioms ("no tengo ninguna duda"), which
+  //    are NOT about the circuit elements.
+  var noneHit = findToken(folded, NONE_TOKENS);
+  if (noneHit) {
+    var noneFalseCtx = false;
+    for (var n = 0; n < NONE_FALSE_CONTEXTS.length; n++) {
+      if (folded.indexOf(NONE_FALSE_CONTEXTS[n]) >= 0) { noneFalseCtx = true; break; }
+    }
+    if (!noneFalseCtx && _quantifierIsReal(noneHit)) {
+      return { proposed: [], negated: allUpper.slice(), applied: true };
+    }
+  }
+
+  // 2. "todas [menos X]" → all evaluable proposed, minus whatever is negated.
+  var allHit = findToken(folded, ALL_TOKENS);
+  if (allHit) {
+    var falseCtx = false;
+    for (var f = 0; f < ALL_FALSE_CONTEXTS.length; f++) {
+      if (folded.indexOf(ALL_FALSE_CONTEXTS[f]) >= 0) { falseCtx = true; break; }
+    }
+    if (!falseCtx && _quantifierIsReal(allHit)) {
+      proposedOut = removeFrom(allUpper.slice(), negatedOut);
+      applied = true;
+    }
+  }
+
+  // 3. "el resto / las demás" → elements not explicitly mentioned; polarity by
+  //    negation around the token. Requires a circuit anchor: "the rest" is only
+  //    meaningful relative to already-named elements (or an explicit resistance
+  //    noun) — "no entiendo el resto" must NOT expand to the full set.
+  var restHit = anchored ? findToken(folded, REST_TOKENS) : null;
+  if (restHit) {
+    var mentioned = proposedOut.concat(negatedOut);
+    var rest = allUpper.filter(function (e) { return mentioned.indexOf(e) < 0; });
+    if (rest.length > 0) {
+      if (tokenHasPostNegation(message, restHit.index, restHit.length)) {
+        unionInto(negatedOut, rest);
+      } else {
+        unionInto(proposedOut, rest);
+      }
+      applied = true;
+    }
+  }
+
+  // Negation wins: no element may sit in both lists.
+  proposedOut = removeFrom(proposedOut, negatedOut);
+  return { proposed: proposedOut, negated: negatedOut, applied: applied };
+}
+
 /*------------------------------------------------------
   Classify a student message based on:
     - correctAnswer: array of correct elements ["R1", "R2", "R4"]
@@ -464,19 +745,29 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
   var mentions = extractMentionedElements(userMessage, evaluableElements);
 
   // Separate proposed vs negated elements.
-  // An element can appear several times; evaluate negation at EACH occurrence
-  // and let the LAST mention decide. Students restate or correct themselves,
-  // and the final mention reflects their actual intent — e.g. "...corriente
-  // por R3, por lo que R3 no influye": the first R3 looks neutral, the last is
-  // negated, so the element is negated. (Previously only the first occurrence
-  // was checked, so this whole phrasing was misread as proposed=[R3].)
+  // An element can appear several times; evaluate negation at EACH occurrence.
+  // H1 (2026-06-10): STICKY NEGATION — if ANY occurrence is negated, the
+  // element is negated. This strictly improves on the previous "last mention
+  // wins" rule:
+  //   - "...corriente por R3, por lo que R3 no influye" → 2nd occurrence
+  //     negated → negated (the case last-wins was introduced for; still works).
+  //   - "R3 no influye, pero R3 tiene resistencia alta" → 1st occurrence
+  //     negated, 2nd neutral → last-wins WRONGLY proposed R3; sticky negation
+  //     keeps it negated, which is the student's real intent (they reject R3 and
+  //     then explain WHY — a very common restatement pattern).
+  // Trade-off: a same-message flip-FLOP toward acceptance ("R3 no… mejor sí,
+  // R3") stays negated. That phrasing is far rarer than the restate-to-explain
+  // pattern above, and the harm is symmetric, so net this is the safer rule.
   var proposed = [];
   var negated = [];
   for (var i = 0; i < mentions.length; i++) {
     var positions = mentions[i].positions || [mentions[i].position];
     var negatedHere = false;
     for (var p = 0; p < positions.length; p++) {
-      negatedHere = detectNegation(userMessage, positions[p], mentions[i].element.length);
+      if (detectNegation(userMessage, positions[p], mentions[i].element.length)) {
+        negatedHere = true;
+        break;
+      }
     }
     if (negatedHere) {
       negated.push(mentions[i].element);
@@ -485,8 +776,17 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
     }
   }
 
-  // All mentioned elements (for backward compatibility)
-  var allMentioned = mentions.map(function (m) { return m.element; });
+  // Quantifier / set expansion ("todas", "todas menos R3", "ninguna", "el
+  // resto"). When no quantifier is present this is a no-op.
+  var qexp = expandQuantifiers(userMessage, evaluableElements, proposed, negated);
+  proposed = qexp.proposed;
+  negated = qexp.negated;
+
+  // All mentioned elements (for backward compatibility). Now reflects any
+  // quantifier expansion so the greeting/short-answer length checks below see
+  // the expanded set — otherwise a bare "todas" (< 15 chars, no Rn) would fall
+  // into the short-answer wrong_answer bucket.
+  var allMentioned = proposed.concat(negated);
 
   var reasoning = hasReasoning(userMessage);
   var concepts = findConcepts(userMessage);
@@ -535,9 +835,18 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
   //                        sí + Rn∉correct      → wrong_concept (proposed=[Rn])
   //                        no + Rn∈correct      → wrong_concept (negated=[Rn])
   //                        no + Rn∉correct      → correctNoReasoning
-  if (userMessage.trim().length < 15 && allMentioned.length === 0) {
-    var ctxQ = detectClosedQuestion(lastAssistantText);
-    var yesNo = isYesNoAnswer(userMessage);
+  //    H6 (2026-06-10): el gate length<15 cortaba respuestas sí/no VERBOSAS
+  //    ("sí, lo tengo claro" = 18 chars, "no, ninguna duda" = 16) antes de
+  //    llegar a esta lógica, mandándolas a wrong_answer. Una respuesta yes/no a
+  //    una pregunta CERRADA del tutor es válida aunque sea larga, así que
+  //    ampliamos el gate: además del caso corto-sin-elementos, entramos si el
+  //    mensaje (sin elementos) empieza por un marcador yes/no Y el tutor hizo
+  //    una pregunta cerrada.
+  var ctxQ = detectClosedQuestion(lastAssistantText);
+  var yesNo = isYesNoAnswer(userMessage);
+  var shortNoElements = userMessage.trim().length < 15 && allMentioned.length === 0;
+  var verboseYesNoToClosed = allMentioned.length === 0 && yesNo && ctxQ.isClosed;
+  if (shortNoElements || verboseYesNoToClosed) {
     if (ctxQ.isClosed && yesNo) {
       if (ctxQ.isDiagnostic) {
         return { type: types.closedAnswer, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };

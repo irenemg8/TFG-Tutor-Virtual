@@ -49,10 +49,14 @@ class AdherenceGuardrail extends IGuardrail {
       violations.push({ rule: "contradiction", details: contradictions });
     }
 
-    // Rule 2: multi-pregunta
-    const qmarks = (response.match(/\?/g) || []).length;
-    if (qmarks > 1) {
-      violations.push({ rule: "multi_question", details: { count: qmarks } });
+    // Rule 2: multi-pregunta. BUG-AD (2026-06-10): antes contaba TODOS los "?",
+    // así que una coletilla retórica ("…, ¿verdad?") + la pregunta socrática
+    // real contaban 2 y disparaban la regla; peor, el surgicalFix truncaba en
+    // el PRIMER "?", quedándose con la coletilla y tirando la pregunta buena.
+    // Ahora contamos sólo preguntas SUSTANTIVAS (las coletillas no cuentan).
+    const substantiveQs = _countSubstantiveQuestions(response);
+    if (substantiveQs > 1) {
+      violations.push({ rule: "multi_question", details: { count: substantiveQs } });
     }
 
     // Rule 3: missed affirmation (log-only — no surgical fix in v1)
@@ -113,14 +117,15 @@ class AdherenceGuardrail extends IGuardrail {
       }
     }
 
-    // Rule 2 fix: truncate at the first sentence-final question mark, but
-    // only if there are still multiple "?" after rule 1 redaction.
-    const qmarks = (text.match(/\?/g) || []).length;
-    if (qmarks > 1) {
-      const firstQ = text.indexOf("?");
-      if (firstQ >= 0) {
-        const next = text.slice(0, firstQ + 1).trim();
-        if (next.length > 0) {
+    // Rule 2 fix: keep through the FIRST SUBSTANTIVE question, dropping any
+    // extra questions after it. BUG-AD: we truncate at the first substantive
+    // "?" (skipping rhetorical tag-questions like "¿verdad?") instead of the
+    // first "?" — otherwise we'd keep the tag and discard the real question.
+    if (_countSubstantiveQuestions(text) > 1) {
+      const end = _firstSubstantiveQuestionEnd(text);
+      if (end > 0) {
+        const next = text.slice(0, end).trim();
+        if (next.length > 0 && next !== text) {
           text = next;
           mutated = true;
         }
@@ -152,6 +157,57 @@ function _normSet(arr) {
 
 function _esc(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Rhetorical tag-questions ("…, ¿verdad?", "…, right?") are NOT a second
+// Socratic question — they're confirmation-seeking fillers. We must not count
+// them toward the "ONE question" rule nor keep them when truncating. es/val/en.
+const TAG_QUESTION_WORDS = [
+  // es
+  "verdad", "cierto", "vale", "no", "si", "sí", "de acuerdo", "no crees", "no es asi", "no es así",
+  // val
+  "veritat", "cert", "no et sembla", "oi",
+  // en
+  "right", "correct", "okay", "ok", "isn't it", "isnt it", "is not it", "you see",
+];
+
+// Returns the "core" of an interrogative fragment: the text from the last "¿"
+// to the "?" (Spanish), lowercased and stripped of question punctuation.
+function _questionCore(fragment) {
+  let q = String(fragment);
+  const op = q.lastIndexOf("¿");
+  if (op >= 0) q = q.slice(op + 1);
+  return q.replace(/[?¡!.]/g, "").trim().toLowerCase();
+}
+
+// A fragment is a tag-question if its core is exactly a tag word, or it ends
+// with ", <tag>" (the comma-attached trailing tag, common when there is no "¿").
+function _isTagQuestion(fragment) {
+  const core = _questionCore(fragment);
+  if (TAG_QUESTION_WORDS.indexOf(core) >= 0) return true;
+  const m = core.match(/,\s*([a-záéíóúñ'¿\s]+)$/);
+  if (m && TAG_QUESTION_WORDS.indexOf(m[1].trim()) >= 0) return true;
+  return false;
+}
+
+// Count the interrogative fragments that are NOT rhetorical tag-questions.
+function _countSubstantiveQuestions(text) {
+  const frags = String(text).match(/[^.!?]*\?/g) || [];
+  let n = 0;
+  for (let i = 0; i < frags.length; i++) {
+    if (!_isTagQuestion(frags[i])) n++;
+  }
+  return n;
+}
+
+// Char index just past the "?" of the first SUBSTANTIVE question, or -1.
+function _firstSubstantiveQuestionEnd(text) {
+  const re = /[^.!?]*\?/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (!_isTagQuestion(m[0])) return m.index + m[0].length;
+  }
+  return -1;
 }
 
 // Detects sentences/clauses that explicitly state Rn does/does not

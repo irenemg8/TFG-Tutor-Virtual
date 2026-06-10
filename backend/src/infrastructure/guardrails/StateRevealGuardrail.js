@@ -2,9 +2,19 @@
 
 const IGuardrail = require("../../domain/ports/services/IGuardrail");
 const { splitSentencesKeepEnd } = require("../../domain/services/text/sentenceSplitter");
+const { stripAccents } = require("../../domain/services/text/accentNormalizer");
 const { getAllPatterns, stateRevealPatterns: stateRevealDict, getStateRevealInstruction } = require("../../domain/services/languageManager");
 
 const hardcodedStatePatterns = getAllPatterns(stateRevealDict);
+// BUG-G1 (2026-06-10): the state dictionary is fully accented ("está
+// cortocircuitada", "está abierto"), but check() only lowercased the sentence —
+// so the very common accent-less LLM output ("esta cortocircuitada") slipped
+// through and the state reveal leaked. We fold accents on BOTH sides, exactly
+// like queryClassifier does for the student input. Precompute the stripped
+// dictionary once; KG patterns arrive at runtime so they are stripped in check().
+const hardcodedStatePatternsF = hardcodedStatePatterns.map(function (p) {
+  return stripAccents(String(p).toLowerCase());
+});
 
 /**
  * Detects when the tutor reveals the internal STATE of a specific element
@@ -56,6 +66,7 @@ class StateRevealGuardrail extends IGuardrail {
     for (let s = 0; s < sentences.length; s++) {
       const sentence = sentences[s];
       const lower = sentence.toLowerCase();
+      const folded = stripAccents(lower); // accent-insensitive pattern matching
       const isQuestion = sentence.includes("?");
 
       // Which elements are named in this sentence?
@@ -72,9 +83,9 @@ class StateRevealGuardrail extends IGuardrail {
       }
       if (namedElements.length === 0) continue;
 
-      // Hardcoded state patterns fire even in questions.
-      for (let p = 0; p < hardcodedStatePatterns.length; p++) {
-        if (lower.includes(hardcodedStatePatterns[p])) {
+      // Hardcoded state patterns fire even in questions. Matched accent-folded.
+      for (let p = 0; p < hardcodedStatePatternsF.length; p++) {
+        if (folded.includes(hardcodedStatePatternsF[p])) {
           return {
             violated: true,
             evidence: "element '" + namedElements[0] + "' + state pattern '" + hardcodedStatePatterns[p] + "'",
@@ -100,7 +111,7 @@ class StateRevealGuardrail extends IGuardrail {
         });
         if (!allFairGame) {
           for (let p = 0; p < kgPatterns.length; p++) {
-            if (lower.includes(kgPatterns[p])) {
+            if (folded.includes(stripAccents(String(kgPatterns[p]).toLowerCase()))) {
               return {
                 violated: true,
                 evidence: "element '" + namedElements[0] + "' + KG concept '" + kgPatterns[p] + "'",

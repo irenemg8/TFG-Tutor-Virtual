@@ -197,10 +197,15 @@ class ContextAgent extends AgentInterface {
     for (let i = 0; i < lastAssistantMessages.length; i++) {
       const m = lastAssistantMessages[i];
       const content = (m && m.content) || "";
-      // Extrae el último fragmento interrogativo del mensaje.
+      // BUG-A3 (2026-06-10): antes sólo se miraba el ÚLTIMO fragmento
+      // interrogativo (qs[qs.length-1]). Si un mensaje preguntaba por R1 y luego
+      // por R2, R1 se infracontaba y no llegaba al umbral >=2, así que el banner
+      // [STUCK ON Rn] no saltaba aunque el tutor llevara 2 turnos sobre R1.
+      // Ahora consideramos TODOS los fragmentos interrogativos del mensaje
+      // (seenInThisQ sigue contando como máximo 1 por mensaje).
       const qs = content.match(/[^.!?]*\?/g);
-      const lastQ = qs && qs.length > 0 ? qs[qs.length - 1] : "";
-      const rns = lastQ.match(/\bR\d+\b/gi);
+      const allQ = qs && qs.length > 0 ? qs.join(" ") : "";
+      const rns = allQ.match(/\bR\d+\b/gi);
       if (!rns) continue;
       const seenInThisQ = {};
       for (let k = 0; k < rns.length; k++) {
@@ -369,9 +374,14 @@ class ContextAgent extends AgentInterface {
   _questionSimilarity(qa, qb) {
     const wordsA = qa.split(/\s+/).filter((w) => w.length > 3);
     const wordsB = qb.split(/\s+/).filter((w) => w.length > 3);
-    if (wordsA.length === 0) return 0;
+    if (wordsA.length === 0 || wordsB.length === 0) return 0;
     const overlap = wordsA.filter((w) => wordsB.includes(w)).length;
-    return overlap / wordsA.length;
+    // BUG-A2 (2026-06-10): the denominator was wordsA.length (ASYMMETRIC), so a
+    // short question that is a lexical subset of a longer, unrelated one scored
+    // high and _detectRepetition raised a spurious [ANTI-LOOP] banner. This is
+    // the same asymmetry already fixed in RepeatedQuestionGuardrail (test G4);
+    // it just also lived here. max(len) is symmetric.
+    return overlap / Math.max(wordsA.length, wordsB.length);
   }
 
   _canonicalExerciseNum(exerciseNum) {

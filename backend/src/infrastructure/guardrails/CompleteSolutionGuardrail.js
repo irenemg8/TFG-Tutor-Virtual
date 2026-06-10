@@ -44,11 +44,19 @@ class CompleteSolutionGuardrail extends IGuardrail {
     const proposed = (ctx && Array.isArray(ctx.proposed)) ? ctx.proposed : [];
     const negated = (ctx && Array.isArray(ctx.negated)) ? ctx.negated : [];
 
+    // BUG-G3 (2026-06-10): membership was tested with raw case-sensitive
+    // indexOf, so a correctly-proposed element whose casing differed from
+    // correctAnswer (e.g. proposed "r4" vs correct "R4" — happens if an
+    // exercise stores its answer in lower/mixed case) was mis-read as
+    // "wrongly proposed" and fired a false positive. Normalize both sides
+    // (uppercase + trim) before comparing; keep original casing in the output.
+    const norm = function (x) { return typeof x === "string" ? x.toUpperCase().trim() : x; };
+    const correctSet = correctAnswer.map(norm);
     const wronglyNegated = negated.filter(function (e) {
-      return correctAnswer.indexOf(e) >= 0;
+      return correctSet.indexOf(norm(e)) >= 0;
     });
     const wronglyProposed = proposed.filter(function (e) {
-      return correctAnswer.indexOf(e) < 0;
+      return correctSet.indexOf(norm(e)) < 0;
     });
 
     if (wronglyNegated.length === 0 && wronglyProposed.length === 0) {

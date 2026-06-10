@@ -2,6 +2,7 @@
 
 const IGuardrail = require("../../domain/ports/services/IGuardrail");
 const { stripAccents, includesAsWord } = require("../../domain/services/text/accentNormalizer");
+const { splitSentencesKeepEnd } = require("../../domain/services/text/sentenceSplitter");
 const { isNegatedInContext } = require("../../domain/services/text/negationDetector");
 const { getAllPatterns, confirmPhrases: confirmDict, getFalseConfirmationInstruction, getRandomIntermediatePhrase, startsWithIntermediatePhrase } = require("../../domain/services/languageManager");
 
@@ -43,33 +44,39 @@ class FalseConfirmationGuardrail extends IGuardrail {
     const noElementsMentioned = !Array.isArray(mentionedElements) || mentionedElements.length === 0;
     if (noElementsMentioned) return { violated: false };
 
-    const lower = stripAccents(response.toLowerCase().trim());
-    // Scan the head of the response: up to the first Socratic question mark
-    // (which marks the end of the lead-in / start of the actual question)
-    // OR up to 200 characters, whichever comes first. The legacy 60-char
-    // window missed real cases like "Vamos a pensar paso a paso,
-    // considerando la Ley de Ohm. Exactamente, así es como...". Capping at
-    // the first "?" prevents false positives where a confirmation word
-    // appears INSIDE a Socratic question further down ("¿está claro?").
-    const firstQ = lower.indexOf("?");
-    const cap = firstQ >= 0 ? Math.min(firstQ, 200) : 200;
-    const firstPart = lower.slice(0, cap);
-
-    for (let i = 0; i < confirmPhrases.length; i++) {
-      const phrase = stripAccents(confirmPhrases[i]);
-      // Word-boundary match: prevents English "correct" from matching inside
-      // Spanish "correctas", and similar cross-language false positives.
-      if (includesAsWord(firstPart, phrase)) {
-        // CRITICAL: is the phrase actually negated in context?
-        // "No es exactamente así" contains "exactamente" but is NOT a confirmation.
-        if (isNegatedInContext(firstPart, phrase)) {
-          continue; // skip this match — it's a negation, not a confirmation
+    // Scan the head of the response SENTENCE BY SENTENCE, skipping any sentence
+    // that is a question. The legacy "cut at the first '?'" cap (BUG-G2,
+    // 2026-06-10) silently dropped every confirmation that followed an opening
+    // rhetorical question ("¿Vamos a revisarlo? Exacto, R5 va." → missed). By
+    // skipping question sentences instead of truncating at them we still avoid
+    // the original false positive (a confirmation word INSIDE a Socratic
+    // question like "¿está claro?" is never scanned) while catching confirmations
+    // that come after a lead-in question. We only spend the ~200-char budget on
+    // DECLARATIVE content so a long question can't push real confirmations out
+    // of range.
+    const sentences = splitSentencesKeepEnd(response);
+    let budget = 200;
+    for (let s = 0; s < sentences.length && budget > 0; s++) {
+      if (sentences[s].includes("?")) continue; // questions never confirm
+      const sentLower = stripAccents(sentences[s].toLowerCase().trim());
+      const slice = sentLower.slice(0, budget);
+      budget -= slice.length;
+      for (let i = 0; i < confirmPhrases.length; i++) {
+        const phrase = stripAccents(confirmPhrases[i]);
+        // Word-boundary match: prevents English "correct" from matching inside
+        // Spanish "correctas", and similar cross-language false positives.
+        if (includesAsWord(slice, phrase)) {
+          // CRITICAL: is the phrase actually negated in context?
+          // "No es exactamente así" contains "exactamente" but is NOT a confirmation.
+          if (isNegatedInContext(slice, phrase)) {
+            continue; // skip this match — it's a negation, not a confirmation
+          }
+          return {
+            violated: true,
+            evidence: "opens with confirmation phrase: '" + confirmPhrases[i] + "'",
+            metadata: { phrase: confirmPhrases[i] },
+          };
         }
-        return {
-          violated: true,
-          evidence: "opens with confirmation phrase: '" + confirmPhrases[i] + "'",
-          metadata: { phrase: confirmPhrases[i] },
-        };
       }
     }
     return { violated: false };

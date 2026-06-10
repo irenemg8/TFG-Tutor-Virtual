@@ -40,15 +40,21 @@ const switchPatterns = {
 // Without this, "lo siento, no entiendo nada en english please" matched
 // "english please" and switched to English — the opposite of the student's
 // intent. We scan the ~40 chars immediately before the matched pattern.
+// BUG-LM2 (2026-06-10): standalone apologies ("lo siento", "sorry", "i'm
+// sorry") were treated as negations of switch INTENT, so a polite request
+// ("Sorry, can we continue in English?") was rejected — contradicting the
+// project rule "never refuse a language switch". Removed them: the real case
+// that motivated the negative-context guard ("lo siento, no entiendo nada en
+// english please") is still blocked by "no entiendo"/"don't understand".
 const NEGATIVE_PREFIXES = [
   // Spanish
   "no entiendo", "no me entiendo", "no sé", "no lo entiendo",
-  "no quiero", "no me", "lo siento",
+  "no quiero", "no me",
   // Valencian
   "no entenc", "no ho entenc", "no vull",
   // English
   "don't", "do not", "i don't understand", "i can't",
-  "not in", "no in", "sorry", "i'm sorry",
+  "not in", "no in",
 ];
 
 function _hasNegativeContext(lowerMessage, matchIndex) {
@@ -95,7 +101,10 @@ const HEURISTIC_STOPWORDS = {
     "i", "o", "però", "perquè", "per", "amb", "sense", "de", "del",
     "en", "es", "no", "sí", "crec", "pense", "jo", "tu", "açò", "això",
     "ací", "allí", "com", "quin", "quan", "on", "està", "estan", "té",
-    "hi ha", "moltes", "moltes vegades", "mentre",
+    // BUG-LM4 (2026-06-10): the heuristic tokenizes on whitespace, so multi-word
+    // entries ("hi ha", "moltes vegades") could never match a token — dead
+    // signal. Kept the single-token forms only.
+    "moltes", "mentre",
   ],
   en: [
     "the", "a", "an", "of", "to", "and", "or", "but", "because", "for",
@@ -931,7 +940,16 @@ function normalizeToSpanish(query) {
 
   for (let i = 0; i < keys.length; i++) {
     if (result.includes(keys[i])) {
-      result = result.replace(new RegExp(keys[i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), termToSpanish[keys[i]]);
+      // BUG-LM1 (2026-06-10): the replacement used a plain substring regex with
+      // no word boundaries, so a Valencian key that is a PREFIX of its own
+      // Spanish value (e.g. "tensió" → "tensión") matched INSIDE the already-
+      // Spanish word and appended an extra letter ("tensión" → "tensiónn", and
+      // "divisor de tensió" → "...tensiónnn"). This corrupted the CRAG retrieval
+      // query for the most common term in the domain. We anchor each key with
+      // Unicode-letter boundaries (\p{L} + 'u' flag) so "tensió" no longer
+      // matches when followed by the letter "n" of "tensión".
+      const safe = keys[i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      result = result.replace(new RegExp("(?<![\\p{L}])" + safe + "(?![\\p{L}])", "giu"), termToSpanish[keys[i]]);
     }
   }
   return result;
