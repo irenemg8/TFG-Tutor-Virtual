@@ -97,16 +97,41 @@ class TutorAgent extends AgentInterface {
 
     const sameClsStreak = (context.loopState && context.loopState.sameClassificationStreak) || 0;
 
+    // C (2026-06-10): the student is asking the TUTOR to explain a concept
+    // ("explícame el divisor de tensión"). Production req9 routed this to
+    // dont_know and the tutor RESTARTED the analysis from the source, ignoring
+    // the request. Detect it and answer the concept instead.
+    const { isExplanationRequest } = require("../services/rag/queryClassifier");
+    const turnConcepts = (context.classification && context.classification.concepts) || [];
+    const asksExplanation =
+      isExplanationRequest(context.userMessage || "") && turnConcepts.length > 0;
+
+    let explanationHint = "";
+    if (asksExplanation) {
+      explanationHint =
+        "[STUDENT ASKS YOU TO EXPLAIN A CONCEPT]\n" +
+        "The student is asking YOU to explain: " + turnConcepts.join(", ") + ". " +
+        "Do NOT ignore this and do NOT restart the analysis from the voltage source. " +
+        "In 1-2 short sentences give a concrete, intuitive idea of that concept AS IT APPLIES " +
+        "TO THIS CIRCUIT — without revealing which elements are the answer, any element's state, " +
+        "or the topology — then ask ONE simple question that lets the student apply it to the " +
+        "step you are currently on.\n\n";
+    }
+
     let dontKnowHint = "";
-    if (cls === "dont_know") {
+    if (cls === "dont_know" && !asksExplanation) {
       // Compact form (NS-22). The full pattern + 3 example sentences had
       // ballooned this hint to ~1200 chars per request — paid every turn the
       // student says "no sé". The system prompt already enforces "1-3 short
       // sentences, ONE question, never name elements, never define concepts".
+      // C (2026-06-10): dropped the verbatim "la corriente sale del + de V1…"
+      // example — qwen2.5 7B parroted it literally every turn, restarting the
+      // dialogue from the source (production req9). Instruct to continue from
+      // the CURRENT step instead.
       dontKnowHint =
         "[STUDENT DOESN'T KNOW]\n" +
-        "Take the initiative: pick the next concrete step along the global current path that the student has not covered yet. " +
-        "Reply with ONE short observable fact about that step (e.g. 'la corriente sale del + de V1 y llega al primer nudo') + ONE simple yes/no or 'where does it go next?' question. " +
+        "Take the initiative: pick the next concrete step along the global current path that the student has NOT covered yet — continue from where the conversation already is, do NOT restart from the voltage source if you already advanced past it. " +
+        "Reply with ONE short observable fact about that next step + ONE simple yes/no or 'where does it go next?' question. Vary your wording from previous turns. " +
         "Use 'esa rama' / 'ese nodo'; do not name elements, do not mention internal labels, do not repeat past questions, do not throw the question back open.\n\n";
       if (sameClsStreak >= 2) {
         dontKnowHint +=
@@ -398,6 +423,7 @@ class TutorAgent extends AgentInterface {
     const safeConceptsBanner = acDetectedBanner.length > 0 ? "" : conceptsBanner;
 
     const dynamicContext =
+      explanationHint +
       verdictBanner +
       acDetectedBanner +
       safeConceptsBanner +

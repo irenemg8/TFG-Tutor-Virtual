@@ -460,6 +460,39 @@ assert("ADV3b guard: standalone '¡Claro!' survives",
   gr.removeOpeningConfirmation("¡Claro!", "es") === "¡Claro!",
   "got: " + gr.removeOpeningConfirmation("¡Claro!", "es"));
 
+// Block G — real-server run (2026-06-10). Flow-negation over a LIST of elements.
+// Production failure: "no deja pasar la corriente por r3 r4 ni r5" classified
+// R3/R4 as proposed (only R5 negated), tangling the whole conversation.
+const g1 = classifyQuery("Que no deja pasar la corriente por r3 r4 ni r5", correct, evalEl);
+assert("G(run): 'no deja pasar la corriente por r3 r4 ni r5' → R3,R4,R5 ALL negated",
+  ["R3","R4","R5"].every((x) => g1.negated.indexOf(x) >= 0) && g1.proposed.length === 0,
+  "got P=[" + g1.proposed.join(",") + "] N=[" + g1.negated.join(",") + "]");
+const g2 = classifyQuery("no pasa corriente por R3, R4 y R5", correct, evalEl);
+assert("G(run): flow-negation over a comma list negates the WHOLE list",
+  ["R3","R4","R5"].every((x) => g2.negated.indexOf(x) >= 0),
+  "got N=[" + g2.negated.join(",") + "]");
+// Contrastive connector bounds the flow span: "…por R3 pero R4 sí" → R4 positive.
+const g3 = classifyQuery("no pasa corriente por R3 pero R4 si", correct, evalEl);
+assert("G(run): contrast 'pero R4 sí' keeps R4 proposed, R3 negated",
+  g3.negated.indexOf("R3") >= 0 && g3.proposed.indexOf("R4") >= 0 && g3.negated.indexOf("R4") < 0,
+  "got P=[" + g3.proposed.join(",") + "] N=[" + g3.negated.join(",") + "]");
+// "ningún momento" is a temporal idiom, not the NONE quantifier.
+const g4 = classifyQuery("No he dicho en ningún momento que r4 influya", correct, evalEl);
+assert("G(run): 'en ningún momento' does NOT negate the whole set",
+  g4.negated.length === 0,
+  "got N=[" + g4.negated.join(",") + "]");
+
+// C (run req9): the student asking the tutor to EXPLAIN a concept is detected,
+// so tutorAgent can answer the concept instead of restarting the scaffold.
+const { isExplanationRequest } = require(path.join(ROOT, "src/domain/services/rag/queryClassifier"));
+assert("C(run): 'puedes explicarme el concepto de divisor de tensión?' → explanation request",
+  isExplanationRequest("puedes explicarme el concepto de divisor de tensión?") === true);
+assert("C(run): 'No entiendo el concepto de divisor de tensión' → explanation request",
+  isExplanationRequest("No entiendo el concepto de divisor de tensión") === true);
+assert("C(run) guard: a plain element answer is NOT an explanation request",
+  isExplanationRequest("Sí, de R1 y R2") === false &&
+  isExplanationRequest("ni idea") === false);
+
 // ─── 6. ELEMENT_NAMING retry hint plagiarism ────────────────────────────────
 section("6. ElementNaming retry hint contains a quotable example");
 // C5: the retry hint must NOT always contain the same example phrase the LLM

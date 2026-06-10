@@ -174,6 +174,21 @@ function _lastSentenceCut(s) {
   return scan.search(/[.!?][^.!?]*$/);
 }
 
+// Like _lastSentenceCut but ALSO breaks at a contrastive connector
+// ("pero"/"sino"/"aunque"/"but"). Used for the multi-word pre-negation window so
+// a flow phrase doesn't bleed across a contrast ("no pasa por R3 pero R4 sí" →
+// the "no pasa por" must not negate R4). Returns the index of the LAST boundary
+// char; the caller slices from index+1.
+function _lastClauseCut(s) {
+  var scan = s.replace(/\.{2,}/g, function (run) {
+    return new Array(run.length + 1).join(" ");
+  });
+  var re = /[.!?]|\b(?:pero|sino|aunque|but)\b/g;
+  var m, last = -1;
+  while ((m = re.exec(scan)) !== null) { last = m.index + m[0].length - 1; }
+  return last;
+}
+
 // Check if there is a negation around a specific position in the message
 // Windows are tight to avoid false positives on distant negations
 function detectNegation(message, position, elementLength) {
@@ -222,8 +237,10 @@ function detectNegation(message, position, elementLength) {
   var PHRASE_PRE_WINDOW = 30;
   var phrasePreStart = Math.max(0, position - PHRASE_PRE_WINDOW);
   var phrasePrefix = lower.substring(phrasePreStart, position);
-  // Same sentence-boundary guard as the single-word window above (ellipsis-safe).
-  var phSent = _lastSentenceCut(phrasePrefix);
+  // Clause-boundary guard (ellipsis-safe + contrastive): a flow phrase like
+  // "no pasa corriente por" must not bleed across a "pero"/"sino" into the next,
+  // positively-asserted element.
+  var phSent = _lastClauseCut(phrasePrefix);
   if (phSent >= 0) phrasePrefix = phrasePrefix.slice(phSent + 1);
   for (var i = 0; i < preNegationPhrasesF.length; i++) {
     if (phrasePrefix.includes(preNegationPhrasesF[i])) {
@@ -267,6 +284,53 @@ function detectNegation(message, position, elementLength) {
   }
 
   return false;
+}
+
+// Flow-negation heads that introduce a LIST of excluded elements ("no pasa
+// corriente por R3 R4 R5", "no deja pasar la corriente por r3 r4 ni r5"). The
+// per-element detectNegation only reaches the nearest element in its 30-char
+// window, so on a list the later elements were misread as PROPOSED — exactly
+// the production failure where "no deja pasar la corriente por r3 r4 ni r5"
+// classified R3/R4 as proposed. This detector negates EVERY evaluable element
+// between the head and the next clause boundary (sentence end or a contrastive
+// connector like "pero"/"sino"). Accent-folded.
+var FLOW_NEGATION_HEADS = [
+  // es
+  "no pasa corriente por", "no pasa la corriente por", "no circula corriente por",
+  "no circula la corriente por", "no deja pasar corriente por", "no deja pasar la corriente por",
+  "no fluye corriente por", "no fluye por", "no pasa por", "no circula por",
+  "no hay corriente por", "no hay corriente en", "no llega corriente a", "sin corriente por",
+  // val
+  "no passa corrent per", "no circula corrent per", "no passa per", "no deixa passar corrent per",
+  // en
+  "no current flows through", "no current through", "current doesn't flow through",
+  "doesn't flow through", "no current flows",
+].map(foldForMatch);
+
+var FLOW_STOP_RE = /[.!?]|\bpero\b|\bsino\b|\baunque\b|\bbut\b/;
+
+function detectFlowNegatedElements(message, evaluableElements) {
+  if (!Array.isArray(evaluableElements) || evaluableElements.length === 0) return [];
+  var folded = foldForMatch(message);
+  var out = [];
+  for (var h = 0; h < FLOW_NEGATION_HEADS.length; h++) {
+    var head = FLOW_NEGATION_HEADS[h];
+    var from = 0;
+    var idx;
+    while ((idx = folded.indexOf(head, from)) >= 0) {
+      var rest = folded.slice(idx + head.length);
+      var stop = rest.search(FLOW_STOP_RE);
+      var span = stop >= 0 ? rest.slice(0, stop) : rest;
+      for (var e = 0; e < evaluableElements.length; e++) {
+        var el = String(evaluableElements[e]).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        var re = new RegExp("(^|[^a-z0-9])" + el + "([^a-z0-9]|$)", "i");
+        var up = String(evaluableElements[e]).toUpperCase();
+        if (re.test(span) && out.indexOf(up) < 0) out.push(up);
+      }
+      from = idx + head.length;
+    }
+  }
+  return out;
 }
 
 // =====================
@@ -411,6 +475,29 @@ function isDontKnow(message) {
     if (lower.includes(stripAccents(dontKnowPatterns[i]))) {
       return true;
     }
+  }
+  return false;
+}
+
+// The student is asking the TUTOR to explain a concept ("explícame el divisor
+// de tensión", "¿qué es un cortocircuito?", "no entiendo el concepto de…").
+// These were being routed to dont_know and answered with a generic
+// restart-from-the-source scaffold, ignoring the request (production req9).
+// Accent-insensitive.
+var EXPLAIN_REQUEST_PATTERNS = [
+  // es
+  "explica", "explicame", "explicarme", "explicar", "me explicas", "puedes explicar",
+  "podrias explicar", "que es", "que significa", "no entiendo el concepto",
+  "no se que es", "que quiere decir", "en que consiste", "me explicas",
+  // val
+  "explicam", "no entenc el concepte", "que vol dir", "en que consisteix",
+  // en
+  "explain", "what is", "what does", "can you explain", "i don't understand the concept",
+];
+function isExplanationRequest(message) {
+  var lower = stripAccents(String(message || "").toLowerCase());
+  for (var i = 0; i < EXPLAIN_REQUEST_PATTERNS.length; i++) {
+    if (lower.includes(stripAccents(EXPLAIN_REQUEST_PATTERNS[i]))) return true;
   }
   return false;
 }
@@ -571,8 +658,11 @@ var NONE_FALSE_CONTEXTS = [
   // es
   "ninguna duda", "ninguna pregunta", "ninguna idea", "ningun problema",
   "ningun comentario", "ninguna gana", "ninguna otra",
+  // temporal / manner idioms ("no he dicho en ningún momento…", "de ningún modo")
+  "ningun momento", "ningun caso", "ningun modo", "ningun sentido", "ningun lado",
+  "ningun sitio", "ninguna manera", "ninguna forma", "ninguna parte",
   // val
-  "cap dubte", "cap pregunta", "cap idea", "cap problema",
+  "cap dubte", "cap pregunta", "cap idea", "cap problema", "cap moment",
   // en
   "no doubt", "no question", "no idea", "no problem",
 ];
@@ -774,6 +864,15 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
     } else {
       proposed.push(mentions[i].element);
     }
+  }
+
+  // Flow-negation over a LIST ("no pasa/deja pasar corriente por R3 R4 R5").
+  // Negate every element in the excluded span; pull each out of `proposed`.
+  var flowNeg = detectFlowNegatedElements(userMessage, evaluableElements);
+  for (var fn = 0; fn < flowNeg.length; fn++) {
+    if (negated.indexOf(flowNeg[fn]) < 0) negated.push(flowNeg[fn]);
+    var pidx = proposed.indexOf(flowNeg[fn]);
+    if (pidx >= 0) proposed.splice(pidx, 1);
   }
 
   // Quantifier / set expansion ("todas", "todas menos R3", "ninguna", "el
@@ -1001,4 +1100,4 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
   return { type: types.wrongAnswer, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
 }
 
-module.exports = { classifyQuery, extractResistances, extractMentionedElements, detectClosedQuestion, isYesNoAnswer, types };
+module.exports = { classifyQuery, extractResistances, extractMentionedElements, detectClosedQuestion, isYesNoAnswer, isExplanationRequest, types };
