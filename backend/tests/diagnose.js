@@ -1460,6 +1460,37 @@ function section16() {
   orch16._stripUnauthorizedFinToken(ctxFin);
   assert("16/A10: LLM FIN token on a dont_know turn is stripped even with closureReady",
     !/<END_EXERCISE>/.test(ctxFin.finalResponse));
+
+  // RUN-6 (2026-06-11): a justification WITHOUT a reasoning marker. The student
+  // answered the tutor's why-question with "r3 está en un interruptor abierto y
+  // r5 en corto" — no "porque", so the syntactic hasReasoning was false and the
+  // session stalled at complete+excluded with closureReady=false. The excluding
+  // STATE attached to a negated element IS the reason.
+  const run6 = [
+    { role: "user", content: "r1 r2 r4" },
+    { role: "assistant", content: "Los elementos R1, R2 y R4 están correctamente identificados. ¿Por qué crees que R3 y R5 no influyen en la tensión entre N2 y tierra?" },
+    { role: "user", content: "r3 está en un interruptor abierto y r5 en corto" },
+  ];
+  const run6cum = computeCumulativeAnswer(run6, correct16, eval16);
+  assert("16/RUN6: markerless justification ('r3 está en…, r5 en corto') arms closureReady",
+    run6cum.closureReady === true,
+    "concepts=[" + run6cum.reasoningConcepts + "] closureReady=" + run6cum.closureReady);
+  const run6cls = classifyQuery(run6[2].content, correct16, eval16, run6[1].content);
+  assert("16/RUN6: orchestrator CLOSES at run-6 turn 2",
+    orch16._shouldFinishDeterministically({
+      classification: { type: run6cls.type, concepts: run6cls.concepts },
+      userMessage: run6[2].content, cumulativeAnswer: run6cum, loopState: {},
+    }) === true);
+  // Guard: a bare unjustified negation ("r3 y r5 no") carries no excluding
+  // concept and must still NOT arm closure.
+  const run6g = computeCumulativeAnswer([
+    { role: "user", content: "r1 r2 r4" },
+    { role: "assistant", content: "¿por qué?" },
+    { role: "user", content: "r3 y r5 no" },
+  ], correct16, eval16);
+  assert("16/RUN6 guard: bare negation without a state concept does NOT arm closureReady",
+    run6g.closureReady === false && run6g.complete === true,
+    "closureReady=" + run6g.closureReady);
 }
 
 // ─── Summary ────────────────────────────────────────────────────────────────

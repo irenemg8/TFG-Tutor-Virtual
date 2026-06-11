@@ -104,8 +104,20 @@ function computeCumulativeAnswer(messages, correctAnswer, evaluableElements) {
     // A guess ("será porque r3 está abierta...?") or a dont_know turn ("no sé,
     // igual es porque...") must not arm closureReady — otherwise the session
     // closes congratulating a student who was ASKING, not asserting.
+    //
+    // RUN-6 (2026-06-11): hasReasoning is SYNTACTIC (marker words: porque/ya
+    // que/debido…), but a student answering the tutor's "¿por qué no influyen
+    // R3 y R5?" with "r3 está en un interruptor abierto y r5 en corto" gives
+    // the justification WITHOUT any marker — the excluding STATE attached to a
+    // negated element IS the reason. Production stalled with complete=true,
+    // excluded=[R3,R5] and reasoningConcepts=[] (no close). Credit the
+    // exclusion concepts also when the turn NEGATED something: the concepts
+    // filter below (EXCLUSION_CONCEPT_RE) already guarantees the concept is an
+    // excluding state, and a bare unjustified negation ("R3 y R5 no") carries
+    // no concept, so it still earns nothing.
     const assertive = c.type !== "dont_know" && !/[?¿]\s*$/.test(String(m.content).trim());
-    if (assertive && c.hasReasoning) {
+    const reasoned = c.hasReasoning || negated.length > 0;
+    if (assertive && reasoned) {
       for (const concept of (c.concepts || [])) {
         if (EXCLUSION_CONCEPT_RE.test(concept)) reasoningConcepts.add(concept);
       }
