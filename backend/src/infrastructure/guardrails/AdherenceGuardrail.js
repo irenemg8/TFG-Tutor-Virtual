@@ -71,6 +71,21 @@ class AdherenceGuardrail extends IGuardrail {
       violations.push({ rule: "false_premise", details: falsePremise });
     }
 
+    // Rule 5 (false ACCUSATION, 2026-06-11): the inverse of Rule 4. A question
+    // presupposing the student CLAIMED an element contributes ("¿por qué
+    // pensaste que R3 también influía?") when the student in fact NEGATED it
+    // and never proposed it. Production: the student wrote "porque r3 está en
+    // interruptor abierto y r5 en corto" (a correct, reasoned exclusion) and
+    // the tutor replied "¿Por qué pensaste que R3 también influía?" — the
+    // student answered, furious: "no dije que r3 influía". Deterministic and
+    // high-precision: requires an accusation verb (pensaste/creías/dijiste…)
+    // + a contribute verb + an Rn the student has negated (this turn or
+    // cumulatively) and NEVER proposed in any turn.
+    const falseAccusation = _findFalseAccusations(response, ctx);
+    if (falseAccusation.length > 0) {
+      violations.push({ rule: "false_accusation", details: falseAccusation });
+    }
+
     // Rule 3: missed affirmation (log-only — no surgical fix in v1)
     if (verdict && verdict.hits && verdict.hits.length > 0) {
       const lower = response.toLowerCase();
@@ -89,12 +104,14 @@ class AdherenceGuardrail extends IGuardrail {
     if (violations.length === 0) return { violated: false };
 
     // Surgically-fixable rules (contradiction, multi_question) and retry-only
-    // rules (false_premise — no safe rewrite, so it forces an LLM retry).
-    // missed_affirmation alone stays log-only.
+    // rules (false_premise / false_accusation — no safe rewrite, so they force
+    // an LLM retry). missed_affirmation alone stays log-only.
     const surgicalRules = violations.filter(
       (v) => v.rule === "contradiction" || v.rule === "multi_question"
     );
-    const retryRules = violations.filter((v) => v.rule === "false_premise");
+    const retryRules = violations.filter(
+      (v) => v.rule === "false_premise" || v.rule === "false_accusation"
+    );
     if (surgicalRules.length === 0 && retryRules.length === 0) {
       return { violated: false, metadata: { logOnly: violations } };
     }
@@ -151,15 +168,20 @@ class AdherenceGuardrail extends IGuardrail {
 
   buildRetryHint(_lang) {
     // Contradiction / multi_question are corrected surgically (no retry hint
-    // needed). The ONLY rule that reaches a retry is false_premise — it can't be
-    // safely rewritten — so the hint targets exactly that: stop presupposing a
-    // correct element is irrelevant.
+    // needed). The rules that reach a retry are false_premise and
+    // false_accusation — neither can be safely rewritten — so the hint targets
+    // both: never put words in the student's mouth, in either polarity.
     return (
-      "[CORRIGE TU PREGUNTA] No preguntes '¿por qué [X] no influye / no contribuye?' " +
-      "sobre una resistencia que SÍ forma parte de la respuesta — el alumno NO la ha negado y la " +
-      "premisa es falsa. Reformula invitándole a CONSIDERAR todas las resistencias de la rama " +
-      "(p.ej. '¿has tenido en cuenta todas las resistencias conectadas a ese nodo?'), sin afirmar " +
-      "que ninguna sobra y sin revelar la respuesta.\n\n"
+      "[CORRIGE TU PREGUNTA] Dos prohibiciones sobre premisas falsas:\n" +
+      "1. NO preguntes '¿por qué [X] no influye / no contribuye?' sobre una resistencia que SÍ " +
+      "forma parte de la respuesta — el alumno NO la ha negado y la premisa es falsa. Reformula " +
+      "invitándole a CONSIDERAR todas las resistencias de la rama (p.ej. '¿has tenido en cuenta " +
+      "todas las resistencias conectadas a ese nodo?'), sin afirmar que ninguna sobra.\n" +
+      "2. NO preguntes '¿por qué pensaste/dijiste que [X] influía?' sobre un elemento que el " +
+      "alumno ha EXCLUIDO correctamente y nunca propuso — le estás atribuyendo algo que no dijo. " +
+      "Responde a lo que el alumno realmente dijo: si su exclusión es correcta y razonada, " +
+      "reconócela y avanza al siguiente paso pendiente.\n" +
+      "En ambos casos: sin revelar la respuesta.\n\n"
     );
   }
 }
@@ -273,6 +295,56 @@ function _findFalsePremiseQuestions(text, correctSet) {
       const nextEl = after.search(/\br\d+\b/i);
       if (nextEl >= 0) after = after.slice(0, nextEl);
       if (FALSE_PREMISE_NEG.test(after)) {
+        out.push({ element: rn, evidence: sent.trim().slice(0, 90) });
+      }
+    }
+  }
+  return out;
+}
+
+// Rule 5 (false accusation) regexes, accent-folded. The accusation verb is the
+// load-bearing precision gate: a bare "¿influye R3?" never fires; only the
+// "you said/thought it mattered" shape does. The NEGATED form ("¿por qué
+// pensaste que R3 NO influía?") is a different question (about the exclusion,
+// not an accusation of inclusion) and is explicitly skipped.
+var ACCUSE_VERB_RE = /\b(pensast\w*|pensab\w*|creist\w*|creia(s)?\b|creies|pensav\w*|dijist\w*|deies|you\s+(thought|said)|did\s+you\s+(think|say))/;
+var PAST_INFLUENCE_RE = /\b(influia|influian|influye|influyen|contribuia|contribuian|contribuye|contribuyen|afectaba|afectaban|afecta|afectan|importaba|importaban|importa|influenced|mattered|contributed)\b/;
+var NEGATED_INFLUENCE_RE = /\bno\s+(influia|influian|influye|influyen|contribuia|contribuian|contribuye|contribuyen|afectaba|afectaban|afecta|afectan|importaba|importaban|importa)\b/;
+
+function _findFalseAccusations(text, ctx) {
+  if (!text || !ctx) return [];
+  const cum = ctx.cumulativeAnswer || null;
+  // Everything the student has EVER negated (this turn + across the session)…
+  const everNegated = _normSet(
+    [].concat(ctx.negated || [],
+      (cum && cum.excluded) || [],
+      (cum && cum.wronglyExcluded) || [])
+  );
+  if (everNegated.size === 0) return [];
+  // …minus anything they EVER proposed (any turn): if they once proposed Rn,
+  // "why did you think Rn mattered" refers to that real proposal — legitimate.
+  const everProposed = _normSet(
+    [].concat(ctx.proposed || [],
+      (cum && cum.namedCorrect) || [],
+      (cum && cum.wronglyNamed) || [],
+      (cum && Array.isArray(cum.perTurn))
+        ? cum.perTurn.reduce((acc, t) => acc.concat(t.proposed || []), [])
+        : [])
+  );
+
+  const out = [];
+  const sentences = String(text).split(/(?<=[.!?])\s+/);
+  for (const sent of sentences) {
+    if (sent.indexOf("?") < 0 && sent.indexOf("¿") < 0) continue;
+    const folded = stripAccents(sent.toLowerCase());
+    if (!ACCUSE_VERB_RE.test(folded)) continue;
+    if (NEGATED_INFLUENCE_RE.test(folded)) continue; // "…que R3 NO influía" — not an accusation of inclusion
+    if (!PAST_INFLUENCE_RE.test(folded)) continue;
+    const re = /\br(\d+)\b/gi;
+    let m;
+    while ((m = re.exec(folded)) !== null) {
+      const rn = ("R" + m[1]).toUpperCase();
+      if (everNegated.has(rn) && !everProposed.has(rn)) {
         out.push({ element: rn, evidence: sent.trim().slice(0, 90) });
       }
     }

@@ -1028,6 +1028,141 @@ async function section12() {
     bClosed.slice(0, 60));
 }
 
+// ─── 13. 3rd real-server run (2026-06-11): cumulative fair-game, false
+//        accusation, question-leak, settled flow phrases ────────────────────
+async function section13() {
+  section("13. Run-3: cumulative fair-game (SL), false accusation (AD), question-leak (SL), flow re-asks (SEQ)");
+  const slg = byId.solution_leak;
+  const adg13 = byId.adherence;
+  const seq13 = byId.settled_element_question;
+  const correct13 = ["R1", "R2", "R4"];
+  const cum13 = {
+    namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [],
+    complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [],
+    reasoningConcepts: ["abierto", "corto"],
+    perTurn: [{ proposed: ["R1", "R2", "R4"], negated: [] }, { proposed: [], negated: ["R3", "R5"] }],
+  };
+  const ctx13 = {
+    correctAnswer: correct13, lang: "es", turnVerdict: { verdict: "only_negation" },
+    proposed: [], negated: ["R3", "R5"], cumulativeAnswer: cum13,
+  };
+
+  // (a) BUG-ALGUNOS-2: turn-7 of the run-3 transcript. The student named the
+  // full set in an EARLIER turn; this turn only negates R3/R5 (verdict
+  // only_negation). The per-turn fair-game gate alone missed it and the
+  // "Algunos…" lie came back. The cumulative gate must exempt the echo.
+  const echo13 = "R1, R2 y R4 están en el camino de la corriente. Bien razonado.";
+  assert("13/SL: echo of the set is fair game when CUMULATIVE complete (verdict only_negation)",
+    slg.check(echo13, ctx13).violated === false);
+  const cumPartial13 = Object.assign({}, cum13, { complete: false, namedCorrect: ["R1", "R2"], stillMissing: ["R4"] });
+  assert("13/SL guard: same echo with cumulative INCOMPLETE → still a leak",
+    slg.check(echo13, Object.assign({}, ctx13, { cumulativeAnswer: cumPartial13, turnVerdict: { verdict: "partial_correct" } })).violated === true);
+
+  // (b) FALSE ACCUSATION: "¿Por qué pensaste que R3 también influía?" right
+  // after the student wrote "porque r3 está en interruptor abierto y r5 en
+  // corto" (negated, never proposed). The student replied, furious: "no dije
+  // que r3 influía". Retry-only rule in adherence.
+  const acc13 = "¿Por qué pensaste que R3 también influía en la tensión entre N2 y tierra?";
+  assert("13/AD: accusation about a negated, never-proposed element → violation",
+    adg13.check(acc13, ctx13).violated === true);
+  const cumR3prop = Object.assign({}, cum13, {
+    perTurn: [{ proposed: ["R1", "R2", "R3"], negated: [] }, { proposed: [], negated: ["R3", "R5"] }],
+  });
+  assert("13/AD guard: student DID propose R3 in an earlier turn → legitimate, no violation",
+    adg13.check(acc13, Object.assign({}, ctx13, { cumulativeAnswer: cumR3prop })).violated === false);
+  assert("13/AD guard: '¿por qué pensaste que R3 NO influía?' (about the exclusion) → no violation",
+    adg13.check("¿Por qué pensaste que R3 no influía en la tensión?", ctx13).violated === false);
+  assert("13/AD guard: legacy ctx without negated/cumulative info → no violation (H/T1 compat)",
+    adg13.check(acc13, { lang: "es", correctAnswer: correct13 }).violated === false);
+
+  // (c) QUESTION-LEAK: a question naming the FULL correct set + influence verb
+  // before the student named anything hands over the answer ("me da la
+  // respuesta implícitamente"). Exempt once cumulative complete; never fires
+  // when extra Rn are listed (enumerating everything reveals nothing).
+  const qleak13 = "¿Has considerado cómo las resistencias conectadas a N2, como R1, R2 y R4, podrían afectar la tensión entre N2 y tierra?";
+  assert("13/SL-Q: full-set + 'podrían afectar' question with nothing named yet → leak",
+    slg.check(qleak13, { correctAnswer: correct13, lang: "es" }).violated === true);
+  assert("13/SL-Q guard: same question AFTER cumulative complete (consolidation) → no leak",
+    slg.check(qleak13, ctx13).violated === false);
+  assert("13/SL-Q guard: question listing ALL evaluables R1–R5 → no leak",
+    slg.check("¿Cuáles de R1, R2, R3, R4 y R5 influyen en la tensión?", { correctAnswer: correct13, lang: "es" }).violated === false);
+  assert("13/SL-Q guard: '¿por qué R3 y R5 no influyen?' (names no correct element) → no leak",
+    slg.check("¿Por qué R3 y R5 no influyen en la diferencia de potencial pedida?", ctx13).violated === false);
+
+  // (d) SETTLED flow phrasing: run-3 turns 8–11 re-asked R5/R3 exclusions with
+  // flow wording the original phrase list missed.
+  assert("13/SEQ: 'no puede fluir a través de R3' (R3 settled) → violation",
+    seq13.check("¿Significa el interruptor abierto que la corriente no puede fluir a través de R3?", { cumulativeAnswer: cum13 }).violated === true);
+  assert("13/SEQ: 4th re-ask of R5's both-ends-grounded → violation",
+    seq13.check("¿La resistencia R5, al estar conectada a tierra en ambos extremos, significa que no forma parte del camino de la corriente?", { cumulativeAnswer: cum13 }).violated === true);
+  assert("13/SEQ guard: the same probe BEFORE R5 is settled → legitimate Socratic probe",
+    seq13.check("¿Está R5 conectada a tierra en ambos extremos?", { cumulativeAnswer: { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3"], stillMissing: [], complete: true } }).violated === false);
+
+  // (d2) BUG-NEG-INT — THE ROOT of the run-3 turn-7 disaster. The student's
+  // "porque r3 está en interruptor abierto y r5 en corto" was classified as
+  // R3 PROPOSED (polar opposite): the state phrase needs 28 chars after the
+  // element but POST_WINDOW was 25, and "en interruptor abierto" wasn't in the
+  // dictionary. The misread made AcDetector emit errors=[R3] and the verdict
+  // banner literally instructed the LLM to ask "¿por qué pensaste que también
+  // R3?" → the false accusation came from OUR OWN banner. Fix: dictionary
+  // entries + POST_WINDOW 40 (still sentence- and next-element-bounded).
+  const t7 = classifyQuery("porque r3 está en interruptor abierto y r5 en corto", correct13, ["R1","R2","R3","R4","R5"], "¿Por qué R3 y R5 no influyen?");
+  assert("13/NEG-INT: 'r3 está en interruptor abierto y r5 en corto' → R3,R5 negated, nothing proposed",
+    t7.negated.indexOf("R3") >= 0 && t7.negated.indexOf("R5") >= 0 && t7.proposed.length === 0,
+    "got P=[" + t7.proposed.join(",") + "] N=[" + t7.negated.join(",") + "]");
+  // FP guard for the wider window: a positive claim with an unrelated trailing
+  // clause must NOT pick up a distant negation from the next element's context.
+  const t7g = classifyQuery("R4 influye porque R3 está en interruptor abierto", correct13, ["R1","R2","R3","R4","R5"]);
+  assert("13/NEG-INT guard: 'R4 influye porque R3 está en interruptor abierto' → R4 proposed, R3 negated",
+    t7g.proposed.indexOf("R4") >= 0 && t7g.negated.indexOf("R3") >= 0 && t7g.negated.indexOf("R4") < 0,
+    "got P=[" + t7g.proposed.join(",") + "] N=[" + t7g.negated.join(",") + "]");
+
+  // (d3) FULL run-3 replay → the cumulative state must reach closureReady at
+  // turn 7 and the orchestrator must CLOSE instead of letting the tutor loop
+  // (turns 8-11 of the production transcript would never happen).
+  const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
+  const run3 = [
+    ["¿qué identificas en el enunciado?", "las resistencias por las que pasa la corriente"],
+    ["¿Hacia qué nudo va la corriente desde N2?", "a tierra"],
+    ["¿Has considerado cómo las resistencias R2 y R4 podrían influir en la tensión entre N2 y tierra?", "sí, influyen"],
+    ["¿Has considerado cómo la resistencia R1 podría influir en la tensión?", "sí, influye"],
+    ["¿Has considerado cómo la resistencia R2 podría influir en la tensión?", "sí, influyen r1 r2 r4"],
+    ["R1, R2 y R4 son las resistencias que influyen. ¿Por qué R3 y R5 no influyen en la diferencia de potencial pedida?", "porque r3 está en interruptor abierto y r5 en corto"],
+  ];
+  const run3msgs = [];
+  for (const [q, a] of run3) { run3msgs.push({ role: "assistant", content: q }); run3msgs.push({ role: "user", content: a }); }
+  const run3cum = computeCumulativeAnswer(run3msgs, correct13, ["R1", "R2", "R3", "R4", "R5"]);
+  assert("13/REPLAY: run-3 turn 7 → closureReady (set named + R3,R5 excluded + reasoned)",
+    run3cum.closureReady === true && run3cum.wronglyNamed.length === 0,
+    "excluded=[" + run3cum.excluded + "] wronglyNamed=[" + run3cum.wronglyNamed + "] closureReady=" + run3cum.closureReady);
+  const Orch13 = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const orch13 = Object.create(Orch13.prototype);
+  assert("13/REPLAY: orchestrator CLOSES at run-3 turn 7 (the 8-11 loop never happens)",
+    orch13._shouldFinishDeterministically({
+      classification: { type: t7.type, concepts: t7.concepts },
+      userMessage: "porque r3 está en interruptor abierto y r5 en corto",
+      cumulativeAnswer: run3cum, loopState: {},
+    }) === true);
+
+  // (e) PIPELINE e2e of the run-3 turn-7 disaster: LLM emits the honest echo
+  // PLUS the false accusation. Expected: solution_leak does NOT rewrite the
+  // echo (cumulative fair game), adherence false_accusation forces ONE retry,
+  // and the student receives the clean pivot — not "Algunos…" nor the accusation.
+  const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
+  let calls13 = 0;
+  const pivot13 = "Exacto: esa exclusión es correcta. ¿Qué ley te permite calcular ahora la tensión entre N2 y tierra?";
+  const llm13 = { chatCompletion: async function () { calls13++; return pivot13; } };
+  const pl13 = new GuardrailPipeline({ guardrails: createDefaultGuardrails(), llmService: llm13, budgetMs: 45000 });
+  const r13 = await pl13.validate(
+    "R1, R2 y R4 están en el camino de la corriente. ¿Por qué pensaste que R3 también influía en la tensión entre N2 y tierra?",
+    Object.assign({}, ctx13, { evaluableElements: ["R1", "R2", "R3", "R4", "R5"], kgConceptPatterns: [], messages: [] }),
+    { messages: [{ role: "system", content: "s" }] });
+  assert("13/E2E: turn-7 — no 'Algunos…' lie and no false accusation reaches the student",
+    !/algunos de los elementos/i.test(r13.response) && !/pensaste que r3/i.test(r13.response) &&
+    r13.llmRetryCount === 1 && calls13 === 1,
+    "path=" + r13.path + " retries=" + r13.llmRetryCount + " sent=" + JSON.stringify(r13.response).slice(0, 80));
+}
+
 // ─── Summary ────────────────────────────────────────────────────────────────
 (async function main() {
   await section8();
@@ -1035,6 +1170,7 @@ async function section12() {
   section10();
   await section11();
   await section12();
+  await section13();
 
   const passed = results.filter(r => r.ok).length;
   const failed = results.length - passed;

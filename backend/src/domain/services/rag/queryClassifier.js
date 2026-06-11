@@ -123,6 +123,18 @@ const postNegationPhrases = [
   // es - state description (implies element is excluded: "R3 está abierto" = R3 doesn't contribute)
   "está en abierto", "en abierto", "en circuito abierto",
   "está abierto", "está abierta", "están abiertos", "están abiertas",
+  // BUG-NEG-INT (2026-06-11): production run-3 — the student justified the
+  // exclusion as "porque r3 está EN INTERRUPTOR abierto y r5 en corto" and the
+  // dictionary missed it ("en abierto" is not a substring once "interruptor"
+  // intervenes). R3 was then read as PROPOSED — the polar opposite — the
+  // AcDetector emitted errors=[R3], and the verdict banner instructed the LLM
+  // to ask "¿por qué pensaste que también R3?" → the false-accusation reply
+  // that enraged the student. Narrow forms only (a bare "interruptor abierto"
+  // would misfire on "R3 influye aunque tiene el interruptor abierto"-style
+  // claims where the student PROPOSES the element):
+  "en interruptor abierto", "tiene el interruptor abierto", "tiene un interruptor abierto",
+  "en interruptor obert", "té l'interruptor obert",
+  "behind an open switch", "has an open switch",
   "está cortocircuitada", "está cortocircuitado", "cortocircuitada", "cortocircuitado",
   "en cortocircuito", "en corto", "está en corto", "está en cortocircuito",
   // val - state description
@@ -194,7 +206,14 @@ function _lastClauseCut(s) {
 function detectNegation(message, position, elementLength) {
   var lower = foldForMatch(message);
   var PRE_WINDOW = 15;
-  var POST_WINDOW = 25;
+  // BUG-NEG-INT (2026-06-11): 25 was too short for the state phrases with an
+  // intervening noun — "r3 está en interruptor abierto" needs 28 chars after
+  // the element, so the phrase NEVER fit and R3 was read as PROPOSED (run-3
+  // false-accusation chain). The window is already truncated at the sentence
+  // boundary and at the next element mention below — those are the real
+  // false-positive barriers — so widening the raw cap to 40 only extends reach
+  // within the element's own clause.
+  var POST_WINDOW = 40;
 
   // Check pre-negation: look for negation words before the element
   var preStart = Math.max(0, position - PRE_WINDOW);
@@ -674,7 +693,10 @@ var NONE_FALSE_CONTEXTS = [
 // ("R3 no influye, el resto sí").
 function tokenHasPostNegation(message, position, length) {
   var lower = foldForMatch(message);
-  var POST_WINDOW = 25;
+  // 40 to match detectNegation's post window (BUG-NEG-INT) — same phrase
+  // dictionary, same intervening-noun problem ("el resto está en interruptor
+  // abierto"); bounded by sentence + next-element truncation below.
+  var POST_WINDOW = 40;
   var start = position + length;
   var suffix = lower.substring(start, Math.min(lower.length, start + POST_WINDOW));
   var sb = suffix.search(/[.!?]/);

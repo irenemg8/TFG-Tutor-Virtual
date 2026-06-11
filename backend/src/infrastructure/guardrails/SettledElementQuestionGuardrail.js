@@ -42,6 +42,11 @@ const TOPOLOGY_PHRASES = [
   "conectad", "conecta", "hacia tierra", "a tierra",
   "forma parte del camino", "pasa corriente por", "pasa la corriente por",
   "terminal", "entre n", "directamente",
+  // Flow re-asks observed in the 2026-06-11 production loop ("¿…la corriente
+  // no puede fluir a través de R3?", "¿…cualquier corriente que pase por
+  // ella…?") — same settled-element re-interrogation, flow phrasing.
+  "a traves de", "pase por", "pasa por", "fluir", "fluya",
+  "passe per", "flow through", "passes through", "pass through",
 ].map(function (p) { return stripAccents(p.toLowerCase()); });
 
 // Conceptual/justification question shapes — these are GOOD (asking the student

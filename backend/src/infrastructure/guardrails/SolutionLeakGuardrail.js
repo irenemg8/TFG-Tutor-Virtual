@@ -137,7 +137,18 @@ class SolutionLeakGuardrail extends IGuardrail {
     // the false/premature-confirmation guardrails, not by faking a partial leak.
     const verdictStr = ctx && ctx.turnVerdict &&
       (typeof ctx.turnVerdict === "string" ? ctx.turnVerdict : ctx.turnVerdict.verdict);
-    const studentNamedFullAnswer = verdictStr === "correct";
+    // BUG-ALGUNOS-2 (2026-06-11): the per-turn gate alone is NOT enough. In the
+    // production transcript the student named the full set in turn N ("sí,
+    // influyen r1 r2 r4") and in turn N+1 only negated R3/R5 ("porque r3 está
+    // en interruptor abierto y r5 en corto") → THAT turn's verdict is
+    // only_negation, the exception didn't apply, and the tutor's legitimate
+    // echo of the ALREADY-ESTABLISHED set got rewritten to the false
+    // "Algunos…" again. The session-level truth lives in cumulativeAnswer
+    // (contextAgent): once cum.complete the student has named the whole set in
+    // SOME turn, so echoing it reveals nothing — regardless of what THIS turn's
+    // verdict says.
+    const cum = ctx && ctx.cumulativeAnswer;
+    const studentNamedFullAnswer = verdictStr === "correct" || !!(cum && cum.complete);
     if (!studentNamedFullAnswer && correctAnswer.length >= 2) {
       const sentences = splitSentencesKeepEnd(response);
       for (let i = 0; i < sentences.length; i++) {
@@ -155,6 +166,40 @@ class SolutionLeakGuardrail extends IGuardrail {
           return {
             violated: true,
             evidence: "affirmative sentence lists all correct elements (any order): '" + sent.trim() + "'",
+          };
+        }
+      }
+
+      // (b2) QUESTION-LEAK (2026-06-11). Rule (b) skips questions, but a
+      // QUESTION that names the COMPLETE correct set together with an
+      // influence verb hands the student the answer wrapped in "¿has
+      // considerado…?" — production: "¿has considerado cómo las resistencias
+      // conectadas a N2, como R1, R2 y R4, podrían afectar la tensión…?" when
+      // the student had named NOTHING yet. That was the "me da la respuesta
+      // implícitamente" complaint. Guards against false positives:
+      //   - only when the student has NOT named the full set (outer gate);
+      //   - the question must name ALL correct elements AND NO other Rn —
+      //     a question listing the whole evaluable set ("¿cuáles de R1…R5
+      //     influyen?") reveals nothing and stays legal;
+      //   - an influence/affect verb must be present — a neutral enumeration
+      //     without the "these are the ones that matter" framing is not a leak.
+      const INFLUENCE_RE = /\b(influy|influir|afect|contribu|relevant|important|depend)/;
+      const correctSetB2 = new Set(correctAnswer.map((c) => String(c).toUpperCase()));
+      for (let i = 0; i < sentences.length; i++) {
+        const sent = sentences[i];
+        if (!sent.includes("?") && !sent.includes("¿")) continue;
+        const found = (sent.match(/R\d+/gi) || []).map((x) => x.toUpperCase());
+        if (found.length === 0) continue;
+        let allCorrectIn = true;
+        for (const c of correctSetB2) {
+          if (found.indexOf(c) < 0) { allCorrectIn = false; break; }
+        }
+        if (!allCorrectIn) continue;
+        if (found.some((f) => !correctSetB2.has(f))) continue; // names extra Rn → not a leak
+        if (INFLUENCE_RE.test(stripAccents(sent.toLowerCase()))) {
+          return {
+            violated: true,
+            evidence: "question names the full correct set + influence verb: '" + sent.trim().slice(0, 90) + "'",
           };
         }
       }
