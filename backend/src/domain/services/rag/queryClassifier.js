@@ -316,7 +316,13 @@ function detectNegation(message, position, elementLength) {
   // strip leading WHITESPACE (not commas): "R1, no R2" keeps its comma, so the
   // "no" there is NOT read as trailing for R1 — it belongs to R2.
   var immediateAfter = suffix.replace(/^\s+/, "");
-  if (/^no(?:[\s.,;:!?]|$)/.test(immediateAfter)) {
+  // Finding A9 (2026-06-11): a trailing "no?" is a TAG QUESTION ("r1 r2 r4
+  // no?" = "right?"), not a rejection of the element. Check the RAW text
+  // (before the sentence-boundary truncation ate the "?").
+  var rawAfter = lower.substring(postStart, postStart + 8);
+  if (/^\s*no\s*[?¿]/.test(rawAfter)) {
+    // fall through to the phrase loop (no bare-no negation)
+  } else if (/^no(?:[\s.,;:!?]|$)/.test(immediateAfter)) {
     return true;
   }
 
@@ -699,7 +705,16 @@ var REST_TOKENS = [
   "the rest", "the others", "the remaining",
 ];
 // Idiom guards: a bare ALL hit inside one of these is NOT a set quantifier.
-var ALL_FALSE_CONTEXTS = ["de todos modos", "del todo", "todos modos", "todo el"];
+// Finding A8 (2026-06-11): cognitive-verb phrasings ("vale, ya entiendo todas
+// las resistencias") are META-talk about understanding, not an answer — they
+// were expanding to the full set and poisoning the cumulative state with
+// wronglyNamed=[R3,R5], blocking closure.
+var ALL_FALSE_CONTEXTS = [
+  "de todos modos", "del todo", "todos modos", "todo el",
+  "entiendo todas", "entiendo todos", "entendido todas", "entendido todos",
+  "comprendo todas", "comprendo todos", "veo todas", "veo todos",
+  "entenc totes", "entenc tots", "understand all", "i see all",
+];
 // Idiom guards for NONE: "no tengo ninguna duda" must NOT be read as the set
 // quantifier "ninguna" (which would wrongly negate every element). These are
 // conversational uses of "ninguna/ningún/none" that talk about doubts,
@@ -921,6 +936,63 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
     }
   }
 
+  // COORDINATION PROPAGATION (review 2026-06-11, findings A1/A2). Negation did
+  // not distribute over coordinated lists: "r3 y r5 no influyen" negated only
+  // R5 (the post-window of R3 truncates at the next element), so R3 came out
+  // PROPOSED — the polar opposite — feeding the false-accusation chain. And
+  // "todas menos la r3 y la r5" lost R5 (the article pushed "menos" out of
+  // R5's pre-window). We group maximal chains of element occurrences joined
+  // ONLY by coordination tokens (commas/conjunctions/articles) and share the
+  // governing negation across the chain in two safe cases:
+  //   BACKWARD: the text right after the LAST chain member starts with "no"
+  //     ("r3 y r5 no [influyen]") — a trailing negation governs the list. A
+  //     trailing tag-question "no?" is NOT a negation (finding A9).
+  //   FORWARD: an EXCEPT-style word (menos/excepto/salvo/quitando/sin/ni…)
+  //     governs the FIRST member and that member is negated ("menos la r3 y
+  //     la r5") — the exception extends to the whole list.
+  // State descriptions ("r5 en corto") deliberately do NOT propagate: in
+  // "r1 r2 r4 y r5 en corto" the state belongs to R5 alone.
+  (function _propagateCoordinatedNegation() {
+    var folded = foldForMatch(userMessage);
+    var occ = [];
+    for (var m = 0; m < mentions.length; m++) {
+      var ps = mentions[m].positions || [mentions[m].position];
+      for (var q = 0; q < ps.length; q++) {
+        occ.push({ el: mentions[m].element, pos: ps[q], end: ps[q] + mentions[m].element.length });
+      }
+    }
+    if (occ.length < 2) return;
+    occ.sort(function (a, b) { return a.pos - b.pos; });
+    var PURE_SEP = /^[\s,]*(?:(?:y|e|i|o|and|ni|la|el|las|los|les)\b[\s,]*)*$/;
+    var EXCEPT_BEFORE = /\b(menos|excepto|salvo|quitando|descartando|sin|ni|menys|excepte|llevat|except|excluding|without)\b[\s,]*(?:la|el|las|los|les)?[\s,]*$/;
+    // Split occurrences into chains of pure-coordination-joined members.
+    var chains = [[occ[0]]];
+    for (var k = 1; k < occ.length; k++) {
+      var sep = folded.substring(occ[k - 1].end, occ[k].pos);
+      if (PURE_SEP.test(sep)) chains[chains.length - 1].push(occ[k]);
+      else chains.push([occ[k]]);
+    }
+    for (var c = 0; c < chains.length; c++) {
+      var chain = chains[c];
+      if (chain.length < 2) continue;
+      var last = chain[chain.length - 1];
+      var first = chain[0];
+      var after = folded.substring(last.end, Math.min(folded.length, last.end + 10));
+      // Trailing "no" governs the list — unless it is a tag-question "no?".
+      var trailingNo = /^\s*no(?!\s*[?¿])(?:[\s.,;:!]|$)/.test(after) ||
+        /^\s*tampoco\b/.test(after);
+      var exceptGoverned = EXCEPT_BEFORE.test(folded.substring(Math.max(0, first.pos - 24), first.pos)) &&
+        chain.some(function (o) { return negated.indexOf(o.el) >= 0; });
+      if (!trailingNo && !exceptGoverned) continue;
+      for (var j = 0; j < chain.length; j++) {
+        var el = chain[j].el;
+        if (negated.indexOf(el) < 0) negated.push(el);
+        var pi = proposed.indexOf(el);
+        if (pi >= 0) proposed.splice(pi, 1);
+      }
+    }
+  })();
+
   // Flow-negation over a LIST ("no pasa/deja pasar corriente por R3 R4 R5").
   // Negate every element in the excluded span; pull each out of `proposed`.
   var flowNeg = detectFlowNegatedElements(userMessage, evaluableElements);
@@ -952,8 +1024,13 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
     return { type: types.greeting, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
   }
 
-  // 2. Don't know
-  if (isDontKnow(userMessage)) {
+  // 2. Don't know. Finding A4 (2026-06-11): isDontKnow matches the SUBSTRING
+  // "no se", which also appears as the reflexive "no se va la corriente" — a
+  // PERFECT answer like "r1 r2 y r4 porque por r3 y r5 no se va la corriente"
+  // was classified dont_know (scaffold banner + closure blocked). When the
+  // message names elements, the element analysis is the signal — same gate the
+  // greeting check above already applies.
+  if (allMentioned.length === 0 && isDontKnow(userMessage)) {
     return { type: types.dontKnow, resistances: allMentioned, proposed: proposed, negated: negated, hasReasoning: reasoning, concepts: concepts };
   }
 
@@ -1023,7 +1100,16 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
         // contribute-claim polarity INVERTS: sí → excludes, no → contributes.
         var EXCLUDING_STATE_RE =
           /(en corto|cortocircuit|curtcircuit|en ambos extremos|ambdos extrems|both ends|circuito abierto|circuit obert|open circuit|interruptor abiert|interruptor obert|open switch|shorted|short-?circuited)/;
-        var excludingStateQ = EXCLUDING_STATE_RE.test(foldForMatch(String(lastAssistantText || "")));
+        // Finding A5 (2026-06-11): invert ONLY when the state is the question's
+        // PREDICATE. "¿Crees que R3 contribuye, con el interruptor abierto
+        // entre N2 y N3?" merely MENTIONS the state — the predicate is
+        // "contribuye", so "no" there is a (correct) exclusion, not a denial
+        // of the state. If a contribution verb is present, normal polarity.
+        var qFoldedA5 = foldForMatch(String(lastAssistantText || ""));
+        var contributionQ =
+          /(influye|influyen|contribuye|contribuyen|afecta|afectan|cuenta|cuentan|importa|importan|interviene|forma parte|esta en el camino|contributes?|matters?|affects?)/
+            .test(qFoldedA5);
+        var excludingStateQ = !contributionQ && EXCLUDING_STATE_RE.test(qFoldedA5);
         var claimsContributes;
         if (EXCLUDING_STATE_RE.test(foldForMatch(userMessage))) {
           // The ANSWER itself states an excluding state ("No porque está en

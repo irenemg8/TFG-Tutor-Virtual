@@ -105,8 +105,17 @@ class CompleteSolutionGuardrail extends IGuardrail {
   }
 
   buildRetryHint(lang, ctx) {
-    const wronglyNegated = (ctx && ctx.wronglyNegated) || [];
-    const wronglyProposed = (ctx && ctx.wronglyProposed) || [];
+    // Review C9 (2026-06-11): ctx.wronglyNegated/wronglyProposed were never
+    // populated by guardrailAgent, so the retry hint always degraded to the
+    // generic wording. Derive them here from what the ctx DOES carry — the
+    // same cross check() performs.
+    const correct = ((ctx && ctx.correctAnswer) || []).map(function (x) { return String(x).toUpperCase(); });
+    const proposed = ((ctx && ctx.proposed) || []).map(function (x) { return String(x).toUpperCase(); });
+    const negated = ((ctx && ctx.negated) || []).map(function (x) { return String(x).toUpperCase(); });
+    const wronglyNegated = (ctx && ctx.wronglyNegated) ||
+      negated.filter(function (n) { return correct.indexOf(n) >= 0; });
+    const wronglyProposed = (ctx && ctx.wronglyProposed) ||
+      proposed.filter(function (p) { return correct.indexOf(p) < 0; });
     return getCompleteSolutionInstruction(lang || "es", wronglyNegated, wronglyProposed);
   }
 }

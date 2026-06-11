@@ -137,15 +137,26 @@ function analyzeStudentElements(classification, correctAnswer) {
     }
   }
 
-  // Find missing elements (in correct answer, not proposed, not negated)
+  // Find missing elements (in correct answer, not proposed, not negated).
+  // BUG-LOOP-PEA (2026-06-11, run-5): this analysis only saw the CURRENT turn,
+  // so one turn after the student named R1,R2,R4 it told the LLM "MISSING: The
+  // student has not mentioned R1, R2, R4" — the LLM then kept demanding the
+  // already-given answer ("a pesar de habérselo dicho antes me hace
+  // repetirlo"). The orchestrator stamps the session-level union on
+  // classification.cumulativeNamedCorrect; anything named in ANY turn is not
+  // missing.
+  var alreadyNamed = {};
+  var cumNamed = classification.cumulativeNamedCorrect || [];
+  for (var i = 0; i < cumNamed.length; i++) alreadyNamed[_norm(cumNamed[i])] = true;
   var allMentioned = {};
   for (var i = 0; i < proposed.length; i++) allMentioned[_norm(proposed[i])] = true;
   for (var i = 0; i < negated.length; i++) allMentioned[_norm(negated[i])] = true;
   var missed = [];
+  var established = [];
   for (var i = 0; i < correctAnswer.length; i++) {
-    if (!allMentioned[_norm(correctAnswer[i])]) {
-      missed.push(correctAnswer[i]);
-    }
+    if (allMentioned[_norm(correctAnswer[i])]) continue;
+    if (alreadyNamed[_norm(correctAnswer[i])]) established.push(correctAnswer[i]);
+    else missed.push(correctAnswer[i]);
   }
 
   var text = "[PER-ELEMENT ANALYSIS] (internal, NEVER reveal to student)\n";
@@ -169,6 +180,10 @@ function analyzeStudentElements(classification, correctAnswer) {
   }
   if (correctNegations.length > 0) {
     text += "- CORRECT REJECTION: The student correctly rejects " + correctNegations.join(", ") + " (not in the correct answer).\n";
+  }
+  if (established.length > 0) {
+    text += "- ALREADY ESTABLISHED in earlier turns: " + established.join(", ") +
+      " — the student named these before. Do NOT treat them as missing and do NOT re-ask for them.\n";
   }
   if (missed.length > 0) {
     text += "- MISSING: The student has not mentioned " + missed.join(", ") + " which ARE in the correct answer.\n";

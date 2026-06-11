@@ -273,7 +273,10 @@ function _firstSubstantiveQuestionEnd(text) {
 // element so a neighbour's negation doesn't bleed) — there is a negated
 // contribute-verb. Only CORRECT elements count: "¿por qué R3 no influye?" with
 // R3 irrelevant is a legitimate Socratic move.
-var FALSE_PREMISE_NEG = /\bno\s+(?:influye|influyen|contribuye|contribuyen|afecta|afectan|participa|participan|cuenta|cuentan|interviene|intervienen|importa|importan|forma\s+parte|forman\s+parte|es\s+relevante|son\s+relevantes)\b/;
+// Review C5 (2026-06-11): added the path/membership predicates ("no está en el
+// camino") that PAST_INFLUENCE_RE (rule 5) already had — the asymmetry let
+// "¿por qué crees que R4 no está en el camino?" (R4 correct) pass clean.
+var FALSE_PREMISE_NEG = /\bno\s+(?:influye|influyen|contribuye|contribuyen|afecta|afectan|participa|participan|cuenta|cuentan|interviene|intervienen|importa|importan|forma\s+parte|forman\s+parte|es\s+relevante|son\s+relevantes|esta(?:n)?\s+en\s+el\s+(?:mismo\s+)?camino|esta(?:n)?\s+en\s+la\s+rama)\b/;
 
 function _findFalsePremiseQuestions(text, correctSet) {
   if (!text || !correctSet || correctSet.size === 0) return [];

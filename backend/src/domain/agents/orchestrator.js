@@ -123,6 +123,16 @@ class TutoringOrchestrator {
         classification: ctx.classification?.type,
       });
 
+      // BUG-LOOP-PEA (2026-06-11): stamp the session-level named-correct union
+      // onto the classification so ragPipeline.analyzeStudentElements (the
+      // [PER-ELEMENT ANALYSIS] block) stops reporting elements the student
+      // named in EARLIER turns as "MISSING" — run-5 showed the LLM demanding
+      // R1,R2,R4 again one turn after the student gave them, driven by that
+      // stale per-turn line.
+      if (ctx.classification && ctx.cumulativeAnswer) {
+        ctx.classification.cumulativeNamedCorrect = ctx.cumulativeAnswer.namedCorrect;
+      }
+
       // Stage 3.5: AC detection (per-turn, structural). Cruza la propuesta
       // del alumno contra los acPatterns del ejercicio actual y deja
       // ctx.detectedACs ordenados por confianza para que tutorAgent inyecte
@@ -287,6 +297,12 @@ class TutoringOrchestrator {
     // a previous one). The old check used prevCorrectTurns which counted
     // partial_correct / correct_no_reasoning too — leading to premature
     // closures the very first time the student finally gave a good answer.
+    // De-sticky FIRST (finding A6, 2026-06-11): this guard must precede BOTH
+    // closing branches. It used to sit only before the cumulative branch, so a
+    // reasoned follow-up after a close ("vale, entonces son r1 r2 r4 porque…")
+    // hit the legacy correct_good_reasoning gate below and re-emitted the
+    // canned congratulation instead of answering.
+    if (ctx && ctx.exerciseAlreadyClosed) return false;
     const prevGoodReasoning = (ctx && ctx.loopState && ctx.loopState.prevGoodReasoningTurns) || 0;
     if (cls === "correct_good_reasoning" && prevGoodReasoning >= 1) return true;
 
@@ -301,11 +317,6 @@ class TutoringOrchestrator {
     // Honest limit: "exclusión razonada" is heuristic (the classifier doesn't
     // bind concept→element), so this is gated to NOT fire while the current
     // turn is a fresh unknown/off-topic/greeting/explanation signal.
-    // De-sticky (2026-06-11): closureReady stays true once reached, so without
-    // this guard every follow-up turn would re-close. If the exercise was
-    // already closed in a previous turn, never close again — let the tutor
-    // answer the student's follow-up.
-    if (ctx && ctx.exerciseAlreadyClosed) return false;
     const cum = ctx && ctx.cumulativeAnswer;
     if (cum && cum.closureReady &&
         cum.wronglyNamed.length === 0 && cum.wronglyExcluded.length === 0) {
@@ -374,16 +385,13 @@ class TutoringOrchestrator {
     const final = ctx && ctx.finalResponse;
     if (typeof final !== "string" || final.indexOf(FIN) === -1) return;
     if (ctx.deterministicFinish) return;
-    const cls = ctx.classification && ctx.classification.type;
-    const prevGoodReasoning = (ctx.loopState && ctx.loopState.prevGoodReasoningTurns) || 0;
-    const cum = ctx.cumulativeAnswer;
-    const cumulativeAuthorized = !!(cum && cum.closureReady &&
-      cum.wronglyNamed.length === 0 && cum.wronglyExcluded.length === 0);
-    const authorized =
-      (cls === "correct_good_reasoning" && prevGoodReasoning >= 1) || cumulativeAuthorized;
-    // De-sticky: if the exercise was already closed earlier, a fresh FIN token
-    // in a follow-up turn is NOT authorised — strip it so we don't re-close.
-    if (authorized && !ctx.exerciseAlreadyClosed) return;
+    // Finding A10 (2026-06-11): this used to re-implement the closure criterion
+    // WITHOUT the blocked-turn gates (dont_know/greeting/explanation) and
+    // without de-sticky on the legacy branch — so a spontaneous LLM
+    // <END_EXERCISE> could close on a turn where the deterministic close had
+    // correctly refused. Single source of truth: a FIN token is authorised
+    // exactly when the deterministic criterion holds.
+    if (this._shouldFinishDeterministically(ctx)) return;
     ctx.finalResponse = final.split(FIN).join("").trimEnd();
     ctx.finStripped = true;
   }

@@ -249,8 +249,17 @@ class TutorAgent extends AgentInterface {
     //    the reasoning — directly addressing "no para de preguntar por cosas
     //    que ya hemos tratado".
     const cum = context.cumulativeAnswer;
+    // Review C10 (2026-06-11): when THIS turn introduces a fresh error (e.g.
+    // the student adds "y también R3" after having completed the set), the
+    // verdict banner orders "question the Error" while the complete-set line
+    // of the cumulative banner orders "stop interrogating, consolidate" — two
+    // opposing 'single task' directives. The verdict wins this turn: suppress
+    // the consolidation/closure line (the established-facts lines stay).
+    const turnHasNewErrors = !!(verdict &&
+      ((verdict.errors && verdict.errors.length > 0) ||
+       (verdict.wronglyNegated && verdict.wronglyNegated.length > 0)));
     const cumulativeBanner = this._buildCumulativeBanner(
-      cum, context.lang, context.exerciseAlreadyClosed
+      cum, context.lang, context.exerciseAlreadyClosed, turnHasNewErrors
     );
 
     // 1d. AC DETECTADA banner — el AcDetectorAgent cruzó la propuesta del
@@ -660,7 +669,7 @@ class TutorAgent extends AgentInterface {
    * follows the conversation language like the rest of the student-facing
    * scaffolding, instead of injecting Spanish into a Valencian/English session.
    */
-  _buildCumulativeBanner(cum, lang, alreadyClosed) {
+  _buildCumulativeBanner(cum, lang, alreadyClosed, turnHasNewErrors) {
     if (!cum || (cum.namedCorrect.length === 0 && cum.excluded.length === 0)) return "";
     const L = (lang === "val" || lang === "en") ? lang : "es";
     const T = {
@@ -706,7 +715,13 @@ class TutorAgent extends AgentInterface {
       // answer-the-follow-up directive.
       banner += CLOSED[L];
     } else if (cum.complete && cum.stillMissing.length === 0) {
-      banner += cum.closureReady ? T.closure : T.complete;
+      // C10: a fresh error THIS turn takes priority — the verdict banner
+      // already orders the Socratic challenge; emitting "consolidate/close"
+      // here at the same time gives qwen2.5 two opposing 'only task'
+      // directives. Keep only the established-facts lines above.
+      if (!turnHasNewErrors) {
+        banner += cum.closureReady ? T.closure : T.complete;
+      }
     } else if (cum.stillMissing.length > 0 && cum.namedCorrect.length > 0) {
       banner += T.partial;
     }

@@ -40,7 +40,14 @@ function _sentenceHasPlaceholder(s) {
 function _sentenceHasAffirm(s) {
   const folded = stripAccents(s);
   for (let q = 0; q < SEMANTIC_AFFIRM_PATTERNS_F.length; q++) {
-    if (SEMANTIC_AFFIRM_PATTERNS_F[q].test(folded)) return true;
+    const m = SEMANTIC_AFFIRM_PATTERNS_F[q].exec(folded);
+    if (!m) continue;
+    // Review C1 (2026-06-11): a NEGATED affirmation is a refutation, not a
+    // confirmation — "No es correcto." was matching /correcto/ and flagging a
+    // legitimate correction as a semantic leak (then forcing a useless retry).
+    const before = folded.slice(Math.max(0, m.index - 16), m.index);
+    if (/\b(no|tampoco|ni)\b[\s,]*(es|era|son|eran|esta|estas|fue|seria)?\s*$/i.test(before)) continue;
+    return true;
   }
   return false;
 }
@@ -91,9 +98,19 @@ class SolutionLeakGuardrail extends IGuardrail {
       return { violated: false };
     }
 
+    // Fair-game gate, computed FIRST because it scopes rules (b), (b2) AND (c)
+    // — review C2 (2026-06-11): rule (c) used to ignore it, so a legitimate
+    // post-completion confirmation ("Correcto, esas resistencias son las que
+    // influyen.") still fired semantic_leak. See the BUG-ALGUNOS comments at
+    // rule (b) for the full rationale of each disjunct.
+    const verdictStr = ctx && ctx.turnVerdict &&
+      (typeof ctx.turnVerdict === "string" ? ctx.turnVerdict : ctx.turnVerdict.verdict);
+    const cum = ctx && ctx.cumulativeAnswer;
+    const studentNamedFullAnswer = verdictStr === "correct" || !!(cum && cum.complete);
+
     // (c) Post-redaction semantic leak — fires even when no R\d+ remains
     //     because the redaction already swapped them out.
-    if (looksLikeSemanticAffirmation(response)) {
+    if (!studentNamedFullAnswer && looksLikeSemanticAffirmation(response)) {
       return {
         violated: true,
         evidence: "semantic_leak: placeholder + affirmative connector",
@@ -135,20 +152,9 @@ class SolutionLeakGuardrail extends IGuardrail {
     // answer like "R1 R2 R3 R4" still has its correct subset protected. The
     // "don't confirm without reasoning" policy is a SEPARATE concern handled by
     // the false/premature-confirmation guardrails, not by faking a partial leak.
-    const verdictStr = ctx && ctx.turnVerdict &&
-      (typeof ctx.turnVerdict === "string" ? ctx.turnVerdict : ctx.turnVerdict.verdict);
-    // BUG-ALGUNOS-2 (2026-06-11): the per-turn gate alone is NOT enough. In the
-    // production transcript the student named the full set in turn N ("sí,
-    // influyen r1 r2 r4") and in turn N+1 only negated R3/R5 ("porque r3 está
-    // en interruptor abierto y r5 en corto") → THAT turn's verdict is
-    // only_negation, the exception didn't apply, and the tutor's legitimate
-    // echo of the ALREADY-ESTABLISHED set got rewritten to the false
-    // "Algunos…" again. The session-level truth lives in cumulativeAnswer
-    // (contextAgent): once cum.complete the student has named the whole set in
-    // SOME turn, so echoing it reveals nothing — regardless of what THIS turn's
-    // verdict says.
-    const cum = ctx && ctx.cumulativeAnswer;
-    const studentNamedFullAnswer = verdictStr === "correct" || !!(cum && cum.complete);
+    // (BUG-ALGUNOS-2 note: studentNamedFullAnswer is computed at the top of
+    // check() — per-turn verdict OR cumulative complete — because it also
+    // scopes rule (c). See comment there.)
     if (!studentNamedFullAnswer && correctAnswer.length >= 2) {
       const sentences = splitSentencesKeepEnd(response);
       for (let i = 0; i < sentences.length; i++) {
@@ -178,13 +184,20 @@ class SolutionLeakGuardrail extends IGuardrail {
       // the student had named NOTHING yet. That was the "me da la respuesta
       // implícitamente" complaint. Guards against false positives:
       //   - only when the student has NOT named the full set (outer gate);
-      //   - the question must name ALL correct elements AND NO other Rn —
-      //     a question listing the whole evaluable set ("¿cuáles de R1…R5
-      //     influyen?") reveals nothing and stays legal;
-      //   - an influence/affect verb must be present — a neutral enumeration
-      //     without the "these are the ones that matter" framing is not a leak.
-      const INFLUENCE_RE = /\b(influy|influir|afect|contribu|relevant|important|depend)/;
+      //   - the question must name ALL correct elements; extra Rn only exempt
+      //     it when they cover the WHOLE remaining evaluable set (review C7,
+      //     2026-06-11: "¿cómo R1, R2 y R4, a diferencia de R3, afectan…?"
+      //     still hands over the answer — one token extra is not a neutral
+      //     enumeration; "¿cuáles de R1…R5 influyen?" lists everything and
+      //     reveals nothing);
+      //   - an influence/affect/FLOW verb must be present (review C4: "¿te das
+      //     cuenta de que la corriente pasa por R1, R2 y R4?" is the same leak
+      //     with flow phrasing — StateReveal exempts flow questions by design,
+      //     so this rule is the net for the full-set variant).
+      const INFLUENCE_RE = /\b(influy|influir|afect|contribu|relevant|important|depend|pasa|circula|fluye|passa|flueix|flows?|passes?)/;
       const correctSetB2 = new Set(correctAnswer.map((c) => String(c).toUpperCase()));
+      const evalSetB2 = ((ctx && ctx.evaluableElements) || []).map((e) => String(e).toUpperCase());
+      const nonCorrectEval = evalSetB2.filter((e) => !correctSetB2.has(e));
       for (let i = 0; i < sentences.length; i++) {
         const sent = sentences[i];
         if (!sent.includes("?") && !sent.includes("¿")) continue;
@@ -195,7 +208,15 @@ class SolutionLeakGuardrail extends IGuardrail {
           if (found.indexOf(c) < 0) { allCorrectIn = false; break; }
         }
         if (!allCorrectIn) continue;
-        if (found.some((f) => !correctSetB2.has(f))) continue; // names extra Rn → not a leak
+        const extras = found.filter((f) => !correctSetB2.has(f));
+        if (extras.length > 0) {
+          // Exempt only a full enumeration: the extras must cover EVERY
+          // non-correct evaluable element. Without evaluableElements in ctx we
+          // can't judge coverage, so any extra exempts (legacy behaviour).
+          const coversAll = nonCorrectEval.length === 0 ||
+            nonCorrectEval.every((e) => found.indexOf(e) >= 0);
+          if (coversAll) continue;
+        }
         if (INFLUENCE_RE.test(stripAccents(sent.toLowerCase()))) {
           return {
             violated: true,

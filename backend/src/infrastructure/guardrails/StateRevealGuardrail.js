@@ -38,7 +38,28 @@ const FLOW_REVEAL_PATTERNS = [
 ].map(_fold);
 // A NEGATED flow ("la corriente no pasa por R3") is the student's correct
 // exclusion, not an answer-path reveal — don't treat it as a leak.
+// Review C3 (2026-06-11): the negation must be checked PER OCCURRENCE, not
+// per sentence — "La corriente no pasa por R3, pero sí fluye por R2 y R4."
+// contains a negated flow AND an affirmed one; the sentence-wide regex
+// shielded the affirmed leak. _flowNegatedAt looks only at the short span
+// before the specific flow verb (allowing 0-2 intervening words: "no llega ni
+// pasa por").
 const NEGATED_FLOW_RE = /\bno\s+(?:pasa|circula|fluye|llega|passa|flueix)\b/;
+function _flowNegatedAt(folded, idx) {
+  const before = folded.slice(Math.max(0, idx - 24), idx);
+  return /\b(?:no|tampoco|ni)\b(?:\s+\w+){0,2}\s*$/.test(before);
+}
+function _hasAffirmedFlow(folded, patterns) {
+  for (let p = 0; p < patterns.length; p++) {
+    let from = 0;
+    let idx;
+    while ((idx = folded.indexOf(patterns[p], from)) >= 0) {
+      if (!_flowNegatedAt(folded, idx)) return patterns[p];
+      from = idx + patterns[p].length;
+    }
+  }
+  return null;
+}
 
 /**
  * Detects when the tutor reveals the internal STATE of a specific element
@@ -107,9 +128,27 @@ class StateRevealGuardrail extends IGuardrail {
       }
       if (namedElements.length === 0) continue;
 
-      // Hardcoded state patterns fire even in questions. Matched accent-folded.
+      // Hardcoded state patterns fire even in questions ("¿sabías que R5 está
+      // cortocircuitada?" is still a reveal). EXCEPTION (run-5 FP, 2026-06-11):
+      // the dictionary also contains FLOW phrasings ("pasa corriente por") that
+      // must follow the FLOW_REVEAL rules instead — a probing QUESTION
+      // ("¿Pasa corriente por R3 hacia tierra?") is the tutor's legitimate
+      // Socratic lead toward discovering the exclusion, not a reveal, and a
+      // NEGATED flow is the correct exclusion being acknowledged. In production
+      // this FP forced a useless retry and the identical question was sent
+      // anyway (retry_failed_final_surgical). Matched accent-folded.
       for (let p = 0; p < hardcodedStatePatternsF.length; p++) {
         if (folded.includes(hardcodedStatePatternsF[p])) {
+          const isFlowPattern = /(pasa|circula|fluye|passa|flueix|flows?|passes?)/.test(hardcodedStatePatternsF[p]);
+          if (isFlowPattern) {
+            if (isQuestion) continue;
+            // A SELF-NEGATED flow pattern ("no pasa corriente por") IS the
+            // correct-exclusion phrasing — same policy as NEGATED_FLOW: skip.
+            if (/^(?:no|tampoco)\s/.test(hardcodedStatePatternsF[p])) continue;
+            // Per-occurrence negation check (C3): only skip if EVERY occurrence
+            // of this flow pattern in the sentence is negated.
+            if (_hasAffirmedFlow(folded, [hardcodedStatePatternsF[p]]) === null) continue;
+          }
           return {
             violated: true,
             evidence: "element '" + namedElements[0] + "' + state pattern '" + hardcodedStatePatterns[p] + "'",
@@ -132,15 +171,17 @@ class StateRevealGuardrail extends IGuardrail {
       // FLOW reveals ("la corriente pasa por R2 y R4") give away the answer path.
       // Affirmations only, and they fire even for fair-game elements (naming the
       // current path is a leak regardless of who mentioned the element first).
-      if (!isQuestion && !NEGATED_FLOW_RE.test(folded)) {
-        for (let p = 0; p < FLOW_REVEAL_PATTERNS.length; p++) {
-          if (folded.includes(FLOW_REVEAL_PATTERNS[p])) {
-            return {
-              violated: true,
-              evidence: "element '" + namedElements[0] + "' + current-path reveal '" + FLOW_REVEAL_PATTERNS[p] + "'",
-              metadata: { element: namedElements[0], pattern: FLOW_REVEAL_PATTERNS[p], fromKG: false },
-            };
-          }
+      if (!isQuestion) {
+        // Per-occurrence negation (C3): a sentence mixing a negated flow and an
+        // AFFIRMED one ("no pasa por R3, pero sí fluye por R2 y R4") must still
+        // fire on the affirmed occurrence.
+        const affirmed = _hasAffirmedFlow(folded, FLOW_REVEAL_PATTERNS);
+        if (affirmed !== null) {
+          return {
+            violated: true,
+            evidence: "element '" + namedElements[0] + "' + current-path reveal '" + affirmed + "'",
+            metadata: { element: namedElements[0], pattern: affirmed, fromKG: false },
+          };
         }
       }
 
@@ -220,7 +261,13 @@ function _collectStudentMentions(messages) {
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (!m || m.role !== "user" || typeof m.content !== "string") continue;
-    const hits = m.content.match(/\b[RVI]\d+\b/gi);
+    // Review C8 (2026-06-11): tutorAgent prefixes the live user message with
+    // the [TURN CONTEXT] banner block, which NAMES elements (verdict Missing,
+    // cumulative progress…). Scanning it here credited those elements as
+    // "student-mentioned", silently disabling the KG-pattern check for exactly
+    // the elements that most need protection. Strip the injected block first.
+    const studentText = m.content.replace(/\[TURN CONTEXT[\s\S]*?\[\/TURN CONTEXT\]/g, "");
+    const hits = studentText.match(/\b[RVI]\d+\b/gi);
     if (!hits) continue;
     for (let h = 0; h < hits.length; h++) {
       set.add(hits[h].toUpperCase());

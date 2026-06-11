@@ -166,6 +166,37 @@ const container = {
       " (" + guardrailList.length + " guardrails: " +
       guardrailList.map(function (g) { return g.id; }).join(", ") + ")"
     );
+    // Deploy-verification stamp (2026-06-11). Runs 3-5 were debugged blind
+    // because the server was running a MIX of old and new files (boot showed
+    // the new guardrails while the classifier/orchestrator were stale). This
+    // line inspects the LOADED code at runtime — if any flag prints OFF, that
+    // file on disk is outdated and the loop fixes will not work.
+    try {
+      const _orch = require("./domain/agents/orchestrator");
+      const _tutor = require("./domain/agents/tutorAgent");
+      const _qc = require("./domain/services/rag/queryClassifier");
+      const _cumOk = (function () {
+        try { return typeof require("./domain/services/rag/cumulativeAnswer").computeCumulativeAnswer === "function"; }
+        catch (_) { return false; }
+      })();
+      const _closureOk = /closureReady/.test(String(_orch.prototype._shouldFinishDeterministically));
+      const _bannerOk = typeof _tutor.prototype._buildCumulativeBanner === "function";
+      const _classifierOk = (function () {
+        try {
+          const c = _qc.classifyQuery("no pasa la corriente por r5", ["R1"], ["R1", "R5"]);
+          return c.negated.indexOf("R5") >= 0;
+        } catch (_) { return false; }
+      })();
+      console.log(
+        "[Container] Loop-fix deploy check: cumulativeAnswer=" + (_cumOk ? "ON" : "OFF") +
+        " closure=" + (_closureOk ? "ON" : "OFF") +
+        " progressBanner=" + (_bannerOk ? "ON" : "OFF") +
+        " classifierFlowNeg=" + (_classifierOk ? "ON" : "OFF") +
+        ((_cumOk && _closureOk && _bannerOk && _classifierOk) ? "" : "  ⚠ STALE FILES — sync backend/src and restart")
+      );
+    } catch (e) {
+      console.log("[Container] Loop-fix deploy check FAILED: " + e.message);
+    }
     this.guardrailPipeline = new GuardrailPipeline({
       guardrails: guardrailList,
       llmService: this.llmService,

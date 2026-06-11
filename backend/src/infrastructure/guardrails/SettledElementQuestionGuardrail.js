@@ -54,6 +54,13 @@ const TOPOLOGY_PHRASES = [
 const CONCEPTUAL_MARKERS = [
   "por que", "porque", "explica", "justifica", "razona", "como afecta",
   "como crees", "como se relaciona", "que concepto", "por motivo",
+  // Review C6 (2026-06-11): consolidation shapes — "¿Qué impide que la
+  // corriente fluya a través de R3?" is EXACTLY the question this guardrail's
+  // own retry hint requests (consolidate WHY the exclusion holds); without
+  // these markers it was killed in a retry loop.
+  "que impide", "que impediria", "que evita", "que pasaria", "que ocurriria",
+  "que ocurre si", "que sucede si", "que condicion", "que ley",
+  "que impedeix", "que passaria", "what prevents", "what would happen",
 ].map(function (p) { return stripAccents(p.toLowerCase()); });
 
 function _settledSet(ctx) {

@@ -92,14 +92,20 @@ function computeCumulativeAnswer(messages, correctAnswer, evaluableElements) {
       if (correctSet.has(n)) wronglyExcluded.add(n);
       else if (evalEls.indexOf(n) >= 0) excluded.add(n);
     }
-    // Self-correction is symmetric: naming an element later clears a prior wrong
-    // exclusion, and excluding an element later clears a prior wrong proposal
-    // (e.g. "todas" → R3 proposed, then "R3 no influye" → corrected). The most
-    // recent intent for an element wins.
-    for (const p of proposed) wronglyExcluded.delete(p);
-    for (const n of negated) wronglyNamed.delete(n);
+    // Self-correction is symmetric and FULL (finding A7, 2026-06-11): the most
+    // recent intent for an element wins on BOTH ledgers. Previously a
+    // retraction ("r4 no, me equivoqué") added R4 to wronglyExcluded but left
+    // it in namedCorrect, so `complete` stayed true and the banner kept telling
+    // the LLM the element was already named.
+    for (const p of proposed) { wronglyExcluded.delete(p); excluded.delete(p); }
+    for (const n of negated) { wronglyNamed.delete(n); namedCorrect.delete(n); }
 
-    if (c.hasReasoning) {
+    // Finding A3 (2026-06-11): only ASSERTIVE turns credit exclusion reasoning.
+    // A guess ("será porque r3 está abierta...?") or a dont_know turn ("no sé,
+    // igual es porque...") must not arm closureReady — otherwise the session
+    // closes congratulating a student who was ASKING, not asserting.
+    const assertive = c.type !== "dont_know" && !/[?¿]\s*$/.test(String(m.content).trim());
+    if (assertive && c.hasReasoning) {
       for (const concept of (c.concepts || [])) {
         if (EXCLUSION_CONCEPT_RE.test(concept)) reasoningConcepts.add(concept);
       }
