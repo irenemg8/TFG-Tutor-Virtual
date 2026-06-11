@@ -1163,6 +1163,91 @@ async function section13() {
     "path=" + r13.path + " retries=" + r13.llmRetryCount + " sent=" + JSON.stringify(r13.response).slice(0, 80));
 }
 
+// ─── 14. 4th real-server run (2026-06-11): article variants, quantifier
+//        'todo', excluding-state yes/no inversion, path-accusation verbs ─────
+function section14() {
+  section("14. Run-4: 'en UN interruptor' (NEG), 'todo menos' (QUANT), state-question polarity (STATEQ), path accusation (AD)");
+  const correct14 = ["R1", "R2", "R4"];
+  const eval14 = ["R1", "R2", "R3", "R4", "R5"];
+
+  // (a) BUG-TODO: the student OPENED with the complete answer via the SINGULAR
+  // quantifier "todo menos r3 r5" — only plural forms were listed, so the
+  // first message was read as bare negations and 'complete' was delayed.
+  const q14a = classifyQuery("todo menos r3 r5", correct14, eval14);
+  assert("14/QUANT: 'todo menos r3 r5' expands → R1,R2,R4 proposed, R3,R5 negated",
+    ["R1", "R2", "R4"].every((r) => q14a.proposed.indexOf(r) >= 0) &&
+    ["R3", "R5"].every((r) => q14a.negated.indexOf(r) >= 0),
+    "got P=[" + q14a.proposed + "] N=[" + q14a.negated + "]");
+  assert("14/QUANT guard: idiom 'todo el rato pensando' does NOT expand",
+    classifyQuery("todo el rato pensando en eso", correct14, eval14).proposed.length === 0);
+
+  // (b) BUG-NEG-INT-2: "en UN interruptor abierto" — the ARTICLE variant broke
+  // the substring match and R3 flipped to PROPOSED again (run-4 turn 3), which
+  // re-triggered the whole errors=[R3] → banner-driven accusation chain.
+  const q14b = classifyQuery("porque r3 esta en un interruptor abierto y r5 en corto", correct14, eval14, "¿Por qué crees que R3 y R5 no influyen?");
+  assert("14/NEG: 'r3 esta en UN interruptor abierto y r5 en corto' → both negated, none proposed",
+    q14b.negated.indexOf("R3") >= 0 && q14b.negated.indexOf("R5") >= 0 && q14b.proposed.length === 0,
+    "got P=[" + q14b.proposed + "] N=[" + q14b.negated + "]");
+  assert("14/NEG guard: global 'r1 r2 r4 porque el interruptor esta abierto' does NOT negate R4",
+    classifyQuery("r1 r2 r4 porque el interruptor esta abierto", correct14, eval14).negated.indexOf("R4") < 0,
+    "N=[" + classifyQuery("r1 r2 r4 porque el interruptor esta abierto", correct14, eval14).negated + "]");
+
+  // (c) BUG-STATEQ: "sí" confirming an EXCLUDING-STATE question ("¿está R5
+  // conectada a tierra en ambos extremos?") is the student agreeing R5 is
+  // shorted — an EXCLUSION, not a proposal. The old polarity read it as
+  // proposed=[R5] → errors=[R5] → "¿por qué pensaste que R5 también estaba en
+  // el camino?" (run-4 turn 5 false accusation).
+  const q14c = classifyQuery("sí", correct14, eval14, "¿Puedes confirmar si la resistencia R5 está conectada a tierra en ambos extremos?");
+  assert("14/STATEQ: 'sí' to an excluding-state question → R5 NEGATED, correct_no_reasoning",
+    q14c.negated.indexOf("R5") >= 0 && q14c.proposed.length === 0 && q14c.type === "correct_no_reasoning",
+    "got P=[" + q14c.proposed + "] N=[" + q14c.negated + "] type=" + q14c.type);
+  assert("14/STATEQ guard: 'sí' to a normal path question still PROPOSES the element",
+    classifyQuery("sí", correct14, eval14, "¿Está R2 en el camino de la corriente hacia tierra?").proposed.indexOf("R2") >= 0);
+  assert("14/STATEQ guard: 'No porque está en corto' (answer carries the state) still negates R5",
+    classifyQuery("No porque está en corto", correct14, eval14, "¿Está R5 conectada a tierra en ambos extremos?").negated.indexOf("R5") >= 0);
+
+  // (d) Accusation with a PATH predicate ("¿por qué pensaste que R5 también
+  // ESTABA EN EL CAMINO?") — the influence-verb list missed it (run-4 turn 5).
+  const adg14 = byId.adherence;
+  const cum14 = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [], perTurn: [{ proposed: ["R1", "R2", "R4"], negated: ["R3", "R5"] }] };
+  assert("14/AD: '¿por qué pensaste que R5 también estaba en el camino?' → false accusation",
+    adg14.check("¿Por qué pensaste que R5 también estaba en el camino, considerando sus conexiones?",
+      { lang: "es", correctAnswer: correct14, proposed: [], negated: [], cumulativeAnswer: cum14 }).violated === true);
+  assert("14/AD guard: '¿por qué pensaste que R5 NO estaba en el camino?' → no violation",
+    adg14.check("¿Por qué pensaste que R5 no estaba en el camino?",
+      { lang: "es", correctAnswer: correct14, proposed: [], negated: [], cumulativeAnswer: cum14 }).violated === false);
+
+  // (e) FULL run-4 replay: with the fixes, the session reaches closureReady at
+  // turn 3 ("porque r3 esta en un interruptor abierto y r5 en corto") and the
+  // orchestrator CLOSES — turns 4-5 of the production transcript never happen.
+  const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
+  const run4 = [
+    { role: "user", content: "todo menos r3 r5" },
+    { role: "assistant", content: "Entiendo. ¿hacia qué nudo crees que va la corriente desde N2, y qué resistencias podrían estar en su camino?" },
+    { role: "user", content: "r1 r2 r4" },
+    { role: "assistant", content: "R1, R2 y R4 son los elementos que influyen. ¿Por qué crees que R3 y R5 no influyen en esta tensión, considerando su conexión en el circuito?" },
+    { role: "user", content: "porque r3 esta en un interruptor abierto y r5 en corto" },
+  ];
+  const run4cum = computeCumulativeAnswer(run4, correct14, eval14);
+  assert("14/REPLAY: run-4 reaches closureReady at turn 3",
+    run4cum.closureReady === true && run4cum.wronglyNamed.length === 0,
+    "excluded=[" + run4cum.excluded + "] wronglyNamed=[" + run4cum.wronglyNamed + "] closureReady=" + run4cum.closureReady);
+  // Turn-1 alone must NOT close (complete set but no reasoning yet — the tutor
+  // must still demand the justification).
+  const run4t1 = computeCumulativeAnswer(run4.slice(0, 1), correct14, eval14);
+  assert("14/REPLAY guard: turn 1 ('todo menos r3 r5', no reasoning) → complete but NOT closureReady",
+    run4t1.complete === true && run4t1.closureReady === false,
+    "complete=" + run4t1.complete + " closureReady=" + run4t1.closureReady);
+  const Orch14 = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const orch14 = Object.create(Orch14.prototype);
+  const t3cls = classifyQuery(run4[4].content, correct14, eval14, run4[3].content);
+  assert("14/REPLAY: orchestrator CLOSES at run-4 turn 3 (turns 4-5 never happen)",
+    orch14._shouldFinishDeterministically({
+      classification: { type: t3cls.type, concepts: t3cls.concepts },
+      userMessage: run4[4].content, cumulativeAnswer: run4cum, loopState: {},
+    }) === true);
+}
+
 // ─── Summary ────────────────────────────────────────────────────────────────
 (async function main() {
   await section8();
@@ -1171,6 +1256,7 @@ async function section13() {
   await section11();
   await section12();
   await section13();
+  section14();
 
   const passed = results.filter(r => r.ok).length;
   const failed = results.length - passed;

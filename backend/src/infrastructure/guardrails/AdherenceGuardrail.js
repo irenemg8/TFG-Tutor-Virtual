@@ -308,8 +308,12 @@ function _findFalsePremiseQuestions(text, correctSet) {
 // pensaste que R3 NO influía?") is a different question (about the exclusion,
 // not an accusation of inclusion) and is explicitly skipped.
 var ACCUSE_VERB_RE = /\b(pensast\w*|pensab\w*|creist\w*|creia(s)?\b|creies|pensav\w*|dijist\w*|deies|you\s+(thought|said)|did\s+you\s+(think|say))/;
-var PAST_INFLUENCE_RE = /\b(influia|influian|influye|influyen|contribuia|contribuian|contribuye|contribuyen|afectaba|afectaban|afecta|afectan|importaba|importaban|importa|influenced|mattered|contributed)\b/;
-var NEGATED_INFLUENCE_RE = /\bno\s+(influia|influian|influye|influyen|contribuia|contribuian|contribuye|contribuyen|afectaba|afectaban|afecta|afectan|importaba|importaban|importa)\b/;
+// Run-4 (2026-06-11): the LLM phrased the accusation as "¿por qué pensaste que
+// R5 también ESTABA EN EL CAMINO?" — a path/membership predicate, not an
+// influence verb — and the rule missed it. Both regexes carry the same
+// additions so the negated-form skip stays symmetric.
+var PAST_INFLUENCE_RE = /\b(influia|influian|influye|influyen|contribuia|contribuian|contribuye|contribuyen|afectaba|afectaban|afecta|afectan|importaba|importaban|importa|estaba\s+en\s+el\s+(mismo\s+)?camino|estaban\s+en\s+el\s+(mismo\s+)?camino|formaba\s+parte|formaban\s+parte|era\s+relevante|eran\s+relevantes|influenced|mattered|contributed|was\s+in\s+the\s+path|was\s+part)\b/;
+var NEGATED_INFLUENCE_RE = /\bno\s+(influia|influian|influye|influyen|contribuia|contribuian|contribuye|contribuyen|afectaba|afectaban|afecta|afectan|importaba|importaban|importa|estaba\s+en\s+el\s+(mismo\s+)?camino|formaba\s+parte|era\s+relevante)\b/;
 
 function _findFalseAccusations(text, ctx) {
   if (!text || !ctx) return [];

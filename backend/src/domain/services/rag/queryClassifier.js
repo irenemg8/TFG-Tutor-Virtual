@@ -132,8 +132,19 @@ const postNegationPhrases = [
   // that enraged the student. Narrow forms only (a bare "interruptor abierto"
   // would misfire on "R3 influye aunque tiene el interruptor abierto"-style
   // claims where the student PROPOSES the element):
-  "en interruptor abierto", "tiene el interruptor abierto", "tiene un interruptor abierto",
-  "en interruptor obert", "té l'interruptor obert",
+  // Run-4 (2026-06-11, same day): the student wrote "en UN interruptor
+  // abierto" — the article broke the substring match and R3 flipped to
+  // PROPOSED again. Enumerate the article variants explicitly. All forms stay
+  // PREPOSITION-anchored ("en/con/tras/detrás de" + article) so the global-
+  // reasoning phrasing "r1 r2 r4 porque el interruptor está abierto" (no
+  // preposition before the article, "está" between noun and adjective) still
+  // does NOT negate the listed elements.
+  "en interruptor abierto", "en un interruptor abierto", "en el interruptor abierto",
+  "con un interruptor abierto", "con el interruptor abierto",
+  "tras un interruptor abierto", "tras el interruptor abierto",
+  "detras de un interruptor", "detras del interruptor",
+  "tiene el interruptor abierto", "tiene un interruptor abierto",
+  "en interruptor obert", "en un interruptor obert", "té l'interruptor obert",
   "behind an open switch", "has an open switch",
   "está cortocircuitada", "está cortocircuitado", "cortocircuitada", "cortocircuitado",
   "en cortocircuito", "en corto", "está en corto", "está en cortocircuito",
@@ -174,6 +185,16 @@ function foldForMatch(str) {
 var preNegationWordsF = preNegationWords.map(foldForMatch);
 var preNegationPhrasesF = preNegationPhrases.map(foldForMatch);
 var postNegationPhrasesF = postNegationPhrases.map(foldForMatch);
+// Two-tier post window (BUG-NEG-INT + its own FP, 2026-06-11): the
+// preposition-anchored switch phrases ("en un interruptor abierto") need ~30
+// chars after the element, but giving EVERY phrase that reach made the short
+// generic ones ("está abierto") match another subject's state at distance —
+// "r1 r2 r4 porque el interruptor esta abierto" wrongly negated R4 (the state
+// belongs to "el interruptor", not R4). Only the long, self-disambiguating
+// switch phrases get the wide window; the rest keep the tight one.
+var postNegationPhraseWideF = postNegationPhrasesF.map(function (p) {
+  return p.indexOf("interruptor") >= 0 || p.indexOf("switch") >= 0;
+});
 
 // Index of the last sentence terminator (.!?) in `s`, treating a RUN of dots
 // (ellipsis "...") as hesitation rather than a sentence break. Returns -1 when
@@ -206,14 +227,15 @@ function _lastClauseCut(s) {
 function detectNegation(message, position, elementLength) {
   var lower = foldForMatch(message);
   var PRE_WINDOW = 15;
-  // BUG-NEG-INT (2026-06-11): 25 was too short for the state phrases with an
-  // intervening noun — "r3 está en interruptor abierto" needs 28 chars after
-  // the element, so the phrase NEVER fit and R3 was read as PROPOSED (run-3
-  // false-accusation chain). The window is already truncated at the sentence
-  // boundary and at the next element mention below — those are the real
-  // false-positive barriers — so widening the raw cap to 40 only extends reach
-  // within the element's own clause.
-  var POST_WINDOW = 40;
+  // BUG-NEG-INT (2026-06-11): 25 was too short for the switch-state phrases —
+  // "r3 está en un interruptor abierto" needs ~31 chars after the element, so
+  // the phrase NEVER fit and R3 was read as PROPOSED (runs 3-4 false-accusation
+  // chain). The wide cap applies ONLY to those long phrases (see
+  // postNegationPhraseWideF); generic short ones keep the tight window so
+  // "r1 r2 r4 porque el interruptor esta abierto" does not negate R4 with
+  // another subject's state.
+  var POST_WINDOW = 25;
+  var POST_WINDOW_WIDE = 40;
 
   // Check pre-negation: look for negation words before the element
   var preStart = Math.max(0, position - PRE_WINDOW);
@@ -271,20 +293,22 @@ function detectNegation(message, position, elementLength) {
   // Truncate at sentence boundary to avoid cross-sentence false positives
   // e.g. "R2 y R4. No pasa por R3" — the "no pasa" is about R3, not R2/R4
   var postStart = position + elementLength;
-  var postEnd = Math.min(lower.length, postStart + POST_WINDOW);
-  var suffix = lower.substring(postStart, postEnd);
-  var sentBoundary = suffix.search(/[.!?]/);
+  var postEnd = Math.min(lower.length, postStart + POST_WINDOW_WIDE);
+  var suffixWide = lower.substring(postStart, postEnd);
+  var sentBoundary = suffixWide.search(/[.!?]/);
   if (sentBoundary >= 0) {
-    suffix = suffix.substring(0, sentBoundary);
+    suffixWide = suffixWide.substring(0, sentBoundary);
   }
   // Truncate at the next element mention so that "R4 porque R3 está
   // abierto" does NOT mark R4 as negated — the "está abierto" belongs
   // to R3's own context, not R4's. Element pattern is generic
   // letter+digits (R3, C2, L1, ...).
-  var nextElem = suffix.search(/[a-z][\d]+/i);
+  var nextElem = suffixWide.search(/[a-z][\d]+/i);
   if (nextElem >= 0) {
-    suffix = suffix.substring(0, nextElem);
+    suffixWide = suffixWide.substring(0, nextElem);
   }
+  // Tight view = the same truncated span capped at the short window.
+  var suffix = suffixWide.substring(0, POST_WINDOW);
 
   // H5: a trailing standalone "no" right after the element ("R1 no", "R3 no.")
   // is a direct rejection of THIS element. Bare "no" is too risky as a general
@@ -297,7 +321,8 @@ function detectNegation(message, position, elementLength) {
   }
 
   for (var i = 0; i < postNegationPhrasesF.length; i++) {
-    if (suffix.includes(postNegationPhrasesF[i])) {
+    var span = postNegationPhraseWideF[i] ? suffixWide : suffix;
+    if (span.includes(postNegationPhrasesF[i])) {
       return true;
     }
   }
@@ -648,10 +673,16 @@ var ALL_TOKENS = [
   // es
   "todas las resistencias", "todas las resistencia", "todas ellas",
   "todos ellos", "todas", "todos",
+  // BUG-TODO (2026-06-11, run-4): the student opened with "todo menos r3 r5" —
+  // singular "todo". Only the plural forms were listed, so the quantifier never
+  // expanded and the complete first-message answer was read as bare negations.
+  // The existing ALL_FALSE_CONTEXTS idiom guards ("todo el", "del todo") keep
+  // covering the singular's idiomatic uses.
+  "todo", "toda",
   // val
-  "totes les resistencies", "totes", "tots",
+  "totes les resistencies", "totes", "tots", "tot",
   // en
-  "all of them", "all the resistances", "all resistances", "all",
+  "all of them", "all the resistances", "all resistances", "all", "everything",
 ];
 var NONE_TOKENS = [
   // es
@@ -693,18 +724,20 @@ var NONE_FALSE_CONTEXTS = [
 // ("R3 no influye, el resto sí").
 function tokenHasPostNegation(message, position, length) {
   var lower = foldForMatch(message);
-  // 40 to match detectNegation's post window (BUG-NEG-INT) — same phrase
-  // dictionary, same intervening-noun problem ("el resto está en interruptor
-  // abierto"); bounded by sentence + next-element truncation below.
-  var POST_WINDOW = 40;
+  // Same two-tier window as detectNegation (BUG-NEG-INT): wide reach only for
+  // the long switch phrases, tight for the generic ones.
+  var POST_WINDOW = 25;
+  var POST_WINDOW_WIDE = 40;
   var start = position + length;
-  var suffix = lower.substring(start, Math.min(lower.length, start + POST_WINDOW));
-  var sb = suffix.search(/[.!?]/);
-  if (sb >= 0) suffix = suffix.substring(0, sb);
-  var ne = suffix.search(/[a-z][\d]+/i);
-  if (ne >= 0) suffix = suffix.substring(0, ne);
+  var suffixWide = lower.substring(start, Math.min(lower.length, start + POST_WINDOW_WIDE));
+  var sb = suffixWide.search(/[.!?]/);
+  if (sb >= 0) suffixWide = suffixWide.substring(0, sb);
+  var ne = suffixWide.search(/[a-z][\d]+/i);
+  if (ne >= 0) suffixWide = suffixWide.substring(0, ne);
+  var suffix = suffixWide.substring(0, POST_WINDOW);
   for (var i = 0; i < postNegationPhrasesF.length; i++) {
-    if (suffix.includes(postNegationPhrasesF[i])) return true;
+    var span = postNegationPhraseWideF[i] ? suffixWide : suffix;
+    if (span.includes(postNegationPhrasesF[i])) return true;
   }
   return false;
 }
@@ -978,28 +1011,50 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
       if (lastQRn && (isYes || isNo)) {
         var rnIsCorrect = Array.isArray(correctAnswer) &&
           correctAnswer.indexOf(lastQRn) >= 0;
-        // sí + correcto, no + incorrecto → la afirmación implícita coincide
-        // con la verdad → correctNoReasoning. El resto → wrong_concept.
-        var implicitTrue = (isYes && rnIsCorrect) || (isNo && !rnIsCorrect);
+        // BUG-STATEQ (2026-06-11, run-4): the yes/no cross assumed the tutor's
+        // question was "does Rn contribute?". But the tutor also asks about
+        // EXCLUDING STATES — "¿está R5 conectada a tierra en ambos extremos?",
+        // "¿está R5 en corto?" — where "sí" CONFIRMS the state that EXCLUDES
+        // the element. Reading that "sí" as proposed=[R5] flipped the student's
+        // correct topology confirmation into a wrong proposal, and the verdict
+        // banner then ordered the LLM to challenge it ("¿por qué pensaste que
+        // R5 también estaba en el camino?" — the run-4 false accusation). When
+        // the question carries an excluding-state predicate, the implicit
+        // contribute-claim polarity INVERTS: sí → excludes, no → contributes.
+        var EXCLUDING_STATE_RE =
+          /(en corto|cortocircuit|curtcircuit|en ambos extremos|ambdos extrems|both ends|circuito abierto|circuit obert|open circuit|interruptor abiert|interruptor obert|open switch|shorted|short-?circuited)/;
+        var excludingStateQ = EXCLUDING_STATE_RE.test(foldForMatch(String(lastAssistantText || "")));
+        var claimsContributes;
+        if (EXCLUDING_STATE_RE.test(foldForMatch(userMessage))) {
+          // The ANSWER itself states an excluding state ("No porque está en
+          // corto", "sí, está cortocircuitada") — that justification wins over
+          // the yes/no polarity: the student is EXCLUDING the element.
+          claimsContributes = false;
+        } else {
+          claimsContributes = excludingStateQ ? isNo : isYes;
+        }
+        var implicitTrue = (claimsContributes && rnIsCorrect) || (!claimsContributes && !rnIsCorrect);
+        var proposedOut = claimsContributes ? [lastQRn] : [];
+        var negatedOut = claimsContributes ? [] : [lastQRn];
         if (implicitTrue) {
           return {
             type: types.correctNoReasoning,
             resistances: [lastQRn],
-            proposed: isYes ? [lastQRn] : [],
-            negated: isNo ? [lastQRn] : [],
+            proposed: proposedOut,
+            negated: negatedOut,
             hasReasoning: reasoning,
             concepts: concepts,
           };
         }
-        // Wrong implícito: el tutor preguntó por Rn, alumno dijo "sí" pero
-        // Rn NO está en correct (o "no" pero Rn SÍ está). La clasificación
-        // wrong_concept con proposed/negated rellenado dispara
-        // FalseConfirmationGuardrail si el LLM responde con "¡Correcto!".
+        // Wrong implícito: la afirmación implícita del alumno contradice la
+        // verdad del ejercicio. La clasificación wrong_concept con
+        // proposed/negated rellenado dispara FalseConfirmationGuardrail si el
+        // LLM responde con "¡Correcto!".
         return {
           type: types.wrongConcept,
           resistances: [lastQRn],
-          proposed: isYes ? [lastQRn] : [],
-          negated: isNo ? [lastQRn] : [],
+          proposed: proposedOut,
+          negated: negatedOut,
           hasReasoning: reasoning,
           concepts: concepts,
         };
