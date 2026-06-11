@@ -288,7 +288,43 @@ class TutoringOrchestrator {
     // partial_correct / correct_no_reasoning too — leading to premature
     // closures the very first time the student finally gave a good answer.
     const prevGoodReasoning = (ctx && ctx.loopState && ctx.loopState.prevGoodReasoningTurns) || 0;
-    return cls === "correct_good_reasoning" && prevGoodReasoning >= 1;
+    if (cls === "correct_good_reasoning" && prevGoodReasoning >= 1) return true;
+
+    // BUG-LOOP closure (2026-06-11). The trigger above needs the full set AND
+    // its justification in ONE turn, twice — but students spread naming and
+    // reasoning across turns, so it almost never fires even after they've fully
+    // solved the exercise, and the tutor loops indefinitely (the 2026-06-11
+    // transcript ran 7+ turns past a complete, reasoned answer). Close on the
+    // CUMULATIVE criterion chosen with Irene: the complete correct set named
+    // AND every non-answer element excluded WITH at least one exclusion-
+    // justifying concept, and no outstanding wrong proposals/rejections.
+    // Honest limit: "exclusión razonada" is heuristic (the classifier doesn't
+    // bind concept→element), so this is gated to NOT fire while the current
+    // turn is a fresh unknown/off-topic/greeting/explanation signal.
+    // De-sticky (2026-06-11): closureReady stays true once reached, so without
+    // this guard every follow-up turn would re-close. If the exercise was
+    // already closed in a previous turn, never close again — let the tutor
+    // answer the student's follow-up.
+    if (ctx && ctx.exerciseAlreadyClosed) return false;
+    const cum = ctx && ctx.cumulativeAnswer;
+    if (cum && cum.closureReady &&
+        cum.wronglyNamed.length === 0 && cum.wronglyExcluded.length === 0) {
+      // Don't close if the student is asking the tutor to EXPLAIN a concept this
+      // turn — answer them first. NOTE: asksExplanation is a local inside
+      // tutorAgent.execute (which runs AFTER this check), so it is NOT on ctx
+      // here; compute it inline from the current message, exactly as tutorAgent
+      // does. (Earlier this referenced a non-existent ctx.asksExplanation and
+      // never blocked — a student who solved it then asked for an explanation
+      // would have been closed instead of answered.)
+      const { isExplanationRequest } = require("../services/rag/queryClassifier");
+      const turnConcepts = (ctx.classification && ctx.classification.concepts) || [];
+      const asksExplanation =
+        isExplanationRequest(ctx.userMessage || "") && turnConcepts.length > 0;
+      const blocked = cls === "dont_know" || cls === "off_topic" ||
+        cls === "greeting" || asksExplanation;
+      if (!blocked) return true;
+    }
+    return false;
   }
 
   /**
@@ -340,8 +376,14 @@ class TutoringOrchestrator {
     if (ctx.deterministicFinish) return;
     const cls = ctx.classification && ctx.classification.type;
     const prevGoodReasoning = (ctx.loopState && ctx.loopState.prevGoodReasoningTurns) || 0;
-    const authorized = cls === "correct_good_reasoning" && prevGoodReasoning >= 1;
-    if (authorized) return;
+    const cum = ctx.cumulativeAnswer;
+    const cumulativeAuthorized = !!(cum && cum.closureReady &&
+      cum.wronglyNamed.length === 0 && cum.wronglyExcluded.length === 0);
+    const authorized =
+      (cls === "correct_good_reasoning" && prevGoodReasoning >= 1) || cumulativeAuthorized;
+    // De-sticky: if the exercise was already closed earlier, a fresh FIN token
+    // in a follow-up turn is NOT authorised — strip it so we don't re-close.
+    if (authorized && !ctx.exerciseAlreadyClosed) return;
     ctx.finalResponse = final.split(FIN).join("").trimEnd();
     ctx.finStripped = true;
   }

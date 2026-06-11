@@ -88,6 +88,37 @@ class ContextAgent extends AgentInterface {
     }
     context.history = recentMessages.map((m) => m.toOllamaFormat());
 
+    // 3b. Cumulative answer state (BUG-LOOP, 2026-06-11). The per-turn verdict
+    //     (AcDetectorAgent) only sees the CURRENT message, so once the student
+    //     names the full correct set it "forgets" it the next turn and the tutor
+    //     re-interrogates the same elements (the loop Irene flagged in the
+    //     2026-06-11 transcript). We reconstruct the session-level union of what
+    //     has been named / excluded by replaying the deterministic classifier
+    //     over ALL messages (full list, not the truncated live window) PLUS the
+    //     current user turn (not yet persisted). Pure + sub-ms per classify.
+    {
+      const { computeCumulativeAnswer } = require("../services/rag/cumulativeAnswer");
+      const allForReplay = allMessages.map((m) => m.toOllamaFormat());
+      if (context.userMessage) {
+        allForReplay.push({ role: "user", content: context.userMessage });
+      }
+      context.cumulativeAnswer = computeCumulativeAnswer(
+        allForReplay, context.correctAnswer, context.evaluableElements
+      );
+    }
+
+    // 3c. Was this exercise ALREADY closed in a previous turn? (de-sticky
+    //     closure, 2026-06-11). Once the cumulative criterion is met it stays
+    //     met, so without this flag EVERY subsequent turn would re-emit the
+    //     "¡Excelente trabajo! <END_EXERCISE>" message and ignore the student's
+    //     follow-up. If a prior assistant turn already carried the FIN token,
+    //     the orchestrator must NOT close again and the tutor must field the
+    //     follow-up normally instead of being told to close.
+    context.exerciseAlreadyClosed = allMessages.some(function (m) {
+      return m && m.isAssistant && m.isAssistant() &&
+        typeof m.content === "string" && m.content.indexOf("<END_EXERCISE>") >= 0;
+    });
+
     // 4. Resolve language BEFORE summarising so the summary is generated in
     //    the language of the conversation (not a default).
     const historyWithCurrent = context.userMessage

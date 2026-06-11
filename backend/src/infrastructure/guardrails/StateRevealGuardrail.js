@@ -16,6 +16,30 @@ const hardcodedStatePatternsF = hardcodedStatePatterns.map(function (p) {
   return stripAccents(String(p).toLowerCase());
 });
 
+function _fold(p) { return stripAccents(String(p).toLowerCase()); }
+
+// BUG-topo (2026-06-10): production showed the tutor leaking the answer via
+// TOPOLOGY and CURRENT-PATH statements the state dictionary didn't cover
+// ("R4 está conectada en paralelo con R2", "la corriente pasa por R2 y R4").
+// Topology ASSERTIONS ("en paralelo con X") reveal a specific connection even
+// when phrased as a question ("¿te das cuenta de que R4 está en paralelo con
+// R2?"), so they fire like the hardcoded state patterns. FLOW reveals fire only
+// in affirmations (a probing "¿pasa la corriente por R2?" is legitimate).
+const TOPOLOGY_ASSERT_PATTERNS = [
+  "en paralelo con", "en serie con",
+  "conectada en paralelo", "conectado en paralelo",
+  "conectada en serie", "conectado en serie",
+  "en paral·lel amb", "en serie amb",
+  "in parallel with", "in series with",
+].map(_fold);
+const FLOW_REVEAL_PATTERNS = [
+  "pasa por", "circula por", "fluye por", "passa per", "circula per",
+  "flows through", "passes through",
+].map(_fold);
+// A NEGATED flow ("la corriente no pasa por R3") is the student's correct
+// exclusion, not an answer-path reveal — don't treat it as a leak.
+const NEGATED_FLOW_RE = /\bno\s+(?:pasa|circula|fluye|llega|passa|flueix)\b/;
+
 /**
  * Detects when the tutor reveals the internal STATE of a specific element
  * (e.g. "R5 está cortocircuitada", "circula corriente por R2").
@@ -91,6 +115,32 @@ class StateRevealGuardrail extends IGuardrail {
             evidence: "element '" + namedElements[0] + "' + state pattern '" + hardcodedStatePatterns[p] + "'",
             metadata: { element: namedElements[0], pattern: hardcodedStatePatterns[p], fromKG: false },
           };
+        }
+      }
+
+      // Topology ASSERTIONS reveal a specific connection even inside a question.
+      for (let p = 0; p < TOPOLOGY_ASSERT_PATTERNS.length; p++) {
+        if (folded.includes(TOPOLOGY_ASSERT_PATTERNS[p])) {
+          return {
+            violated: true,
+            evidence: "element '" + namedElements[0] + "' + topology reveal '" + TOPOLOGY_ASSERT_PATTERNS[p] + "'",
+            metadata: { element: namedElements[0], pattern: TOPOLOGY_ASSERT_PATTERNS[p], fromKG: false },
+          };
+        }
+      }
+
+      // FLOW reveals ("la corriente pasa por R2 y R4") give away the answer path.
+      // Affirmations only, and they fire even for fair-game elements (naming the
+      // current path is a leak regardless of who mentioned the element first).
+      if (!isQuestion && !NEGATED_FLOW_RE.test(folded)) {
+        for (let p = 0; p < FLOW_REVEAL_PATTERNS.length; p++) {
+          if (folded.includes(FLOW_REVEAL_PATTERNS[p])) {
+            return {
+              violated: true,
+              evidence: "element '" + namedElements[0] + "' + current-path reveal '" + FLOW_REVEAL_PATTERNS[p] + "'",
+              metadata: { element: namedElements[0], pattern: FLOW_REVEAL_PATTERNS[p], fromKG: false },
+            };
+          }
         }
       }
 

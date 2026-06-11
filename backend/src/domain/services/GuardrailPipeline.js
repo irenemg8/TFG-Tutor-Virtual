@@ -157,10 +157,22 @@ class GuardrailPipeline {
     //     without LLM knowledge of the AC; without retry, the repeated
     //     question reached the student and they wrote "ya me lo has
     //     preguntado antes" in production logs).
-    // For the rest (language_drift, adherence, didactic_explanation,
-    // dataset_style, element_naming), the surgical fix already rewrote the
-    // offending sentence in place; an LLM retry wastes a round-trip without
-    // measurable quality gain.
+    //   - adherence: BUG-CRIT (2026-06-11). The adherence guardrail has TWO
+    //     surgically-fixable rules (contradiction, multi_question — repaired in
+    //     Phase B and gone before this point) AND ONE retry-only rule:
+    //     false_premise ("¿por qué R4 no influye?" about a CORRECT element).
+    //     false_premise has NO surgicalFix on purpose (there is no safe rewrite
+    //     of a question built on a false presupposition), so its only repair
+    //     path is the consolidated retry. Before this fix, adherence was absent
+    //     from this set, so a residual false_premise hit `non_critical_only`
+    //     and the false-premise question reached the student VERBATIM — exactly
+    //     the "¿Por qué crees que R4 no influye?" leak observed in production.
+    //     The detection was dead. Adding adherence here wires its retry hint in.
+    //     (contradiction/multi_question never reach here unless their surgical
+    //     fix failed, in which case a retry is the correct fallback anyway.)
+    // For the rest (language_drift, didactic_explanation, dataset_style,
+    // element_naming), the surgical fix already rewrote the offending sentence
+    // in place; an LLM retry wastes a round-trip without measurable quality gain.
     const CRITICAL_GUARDRAILS = new Set([
       "solution_leak",
       "false_confirmation",
@@ -168,6 +180,11 @@ class GuardrailPipeline {
       "state_reveal",
       "complete_solution",
       "repeated_question",
+      "adherence",
+      // BUG-LOOP (2026-06-11): retry-only (no safe rewrite of the question),
+      // so it MUST be here or its detection is dead — same class of bug as
+      // BUG-CRIT above. Forces a pivot when the tutor re-asks a settled element.
+      "settled_element_question",
     ]);
     const criticalViolations = violations.filter(function (v) {
       return CRITICAL_GUARDRAILS.has(v.id);

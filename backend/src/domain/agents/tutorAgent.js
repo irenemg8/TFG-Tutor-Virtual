@@ -198,10 +198,22 @@ class TutorAgent extends AgentInterface {
           "Errors (lo que propuso y NO contribuye — CUESTIÓNALO con UNA pregunta socrática del tipo " +
           "\"¿por qué pensaste que también ___?\", usando su nombre): " + verdict.errors.join(", ") + "\n";
       }
-      if (verdict.missing.length > 0) {
+      // BUG-LOOP (2026-06-11): the per-turn verdict marks as "missing" anything
+      // the student didn't name THIS turn — even elements they already named in
+      // EARLIER turns. Feeding that stale "missing" to the LLM is what made it
+      // re-interrogate R1/R2/R4 again and again. Subtract the cumulative
+      // namedCorrect so only genuinely-unmentioned elements remain "missing".
+      const cumNamed = (context.cumulativeAnswer && context.cumulativeAnswer.namedCorrect) || [];
+      const effectiveMissing = verdict.missing.filter(function (m) {
+        return cumNamed.indexOf(String(m).toUpperCase()) < 0;
+      });
+      if (effectiveMissing.length > 0) {
         verdictBanner +=
-          "Missing (correcto que el alumno no ha tocado — NO lo reveles; si das pista, hazla " +
-          "conceptual y sin nombrarlo): " + verdict.missing.join(", ") + "\n";
+          "Missing (correcto que el alumno aún NO ha mencionado — NO lo reveles ni lo nombres). " +
+          "PROHIBIDO preguntar '¿por qué [X] no influye / no contribuye?': eso afirma una FALSEDAD " +
+          "sobre un elemento que SÍ importa, y el alumno NO lo ha negado. Para guiarle, invítale a " +
+          "CONSIDERAR la rama entera, p.ej. '¿has tenido en cuenta TODAS las resistencias conectadas " +
+          "a ese nodo?': " + effectiveMissing.join(", ") + "\n";
       }
       if (verdict.wronglyNegated && verdict.wronglyNegated.length > 0) {
         verdictBanner +=
@@ -227,6 +239,19 @@ class TutorAgent extends AgentInterface {
         "3) Si no hay Errors pero sí Missing, da UNA sola pista conceptual sobre un Missing sin nombrarlo.\n" +
         "Total: 1-3 frases cortas, exactamente UN signo de interrogación.\n\n";
     }
+
+    // 1c-ter. PROGRESO ACUMULADO (BUG-LOOP, 2026-06-11). The session-level
+    //    truth that the per-turn verdict forgets. ContextAgent reconstructs
+    //    which correct elements the student has ALREADY named and which
+    //    non-answer elements they have ALREADY excluded across the whole
+    //    conversation. When the set is complete this banner STOPS the tutor
+    //    from re-interrogating element topology and pivots it to consolidating
+    //    the reasoning — directly addressing "no para de preguntar por cosas
+    //    que ya hemos tratado".
+    const cum = context.cumulativeAnswer;
+    const cumulativeBanner = this._buildCumulativeBanner(
+      cum, context.lang, context.exerciseAlreadyClosed
+    );
 
     // 1d. AC DETECTADA banner — el AcDetectorAgent cruzó la propuesta del
     //    alumno con los acPatterns del ejercicio y devolvió matches por
@@ -415,8 +440,13 @@ class TutorAgent extends AgentInterface {
     // instructions. qwen2.5 7B kept the first directive it saw and ignored
     // the structured verdict, reverting to repetitive generic questions.
     // Suppressing the generic banners when Tier-1 is on restores focus.
+    // A COMPLETE cumulative set is a Tier-1 signal: it tells the LLM exactly
+    // what to do (stop interrogating, consolidate), so the generic re-ask hints
+    // must be suppressed or they'd push it back into the loop. A partial
+    // cumulative banner is additive context and does NOT suppress the hints.
+    const cumulativeIsTier1 = !!(cum && cum.complete && cum.stillMissing.length === 0);
     const hasTier1Banner =
-      verdictBanner.length > 0 || acDetectedBanner.length > 0;
+      verdictBanner.length > 0 || acDetectedBanner.length > 0 || cumulativeIsTier1;
     const safeProgressHint = hasTier1Banner ? "" : progressHint;
     const safeRepetitionHint = hasTier1Banner ? "" : repetitionHint;
     const safeStrategyHint = hasTier1Banner ? "" : strategyHint;
@@ -424,6 +454,7 @@ class TutorAgent extends AgentInterface {
 
     const dynamicContext =
       explanationHint +
+      cumulativeBanner +
       verdictBanner +
       acDetectedBanner +
       safeConceptsBanner +
@@ -620,6 +651,66 @@ class TutorAgent extends AgentInterface {
     return "[RESUMEN DE TURNOS PREVIOS NO MOSTRADOS]\n" + text
       + "\n\nUsa este resumen para recordar qué ha confirmado ya el alumno "
       + "y no volver a preguntarle lo mismo. No lo repitas literalmente en tu respuesta.";
+  }
+
+  /**
+   * PROGRESO ACUMULADO banner (BUG-LOOP, 2026-06-11), localised es/val/en.
+   * Pure + side-effect-free so it is unit-testable. Returns "" when there is no
+   * cumulative signal worth surfacing. Extracted from execute() so the wording
+   * follows the conversation language like the rest of the student-facing
+   * scaffolding, instead of injecting Spanish into a Valencian/English session.
+   */
+  _buildCumulativeBanner(cum, lang, alreadyClosed) {
+    if (!cum || (cum.namedCorrect.length === 0 && cum.excluded.length === 0)) return "";
+    const L = (lang === "val" || lang === "en") ? lang : "es";
+    const T = {
+      es: {
+        head: "[PROGRESO ACUMULADO — memoria de toda la sesión, OBLIGATORIO respetarlo]\n",
+        named: function (x) { return "El alumno YA ha identificado correctamente, en turnos anteriores: " + x + ". Da esto por ESTABLECIDO. NO vuelvas a preguntar si están en el camino ni por su topología — ya está resuelto.\n"; },
+        excl: function (x) { return "El alumno YA ha excluido correctamente: " + x + ". No re-preguntes por su exclusión.\n"; },
+        closure: "El alumno ha nombrado el conjunto correcto COMPLETO y ha razonado las exclusiones. Cierra con un reconocimiento breve y comprueba si le queda alguna duda. NO abras nuevas preguntas de topología.\n",
+        complete: "El conjunto correcto está COMPLETO. NO sigas interrogando elemento por elemento. Tu única tarea ahora: pedir UNA consolidación del razonamiento que aún falte (por qué se excluyen los elementos restantes), con UNA sola pregunta conceptual.\n",
+        partial: "Aún falta por identificar algún elemento correcto (no lo reveles). Avanza hacia él sin volver sobre los ya establecidos.\n",
+      },
+      val: {
+        head: "[PROGRÉS ACUMULAT — memòria de tota la sessió, OBLIGATORI respectar-lo]\n",
+        named: function (x) { return "L'alumne JA ha identificat correctament, en torns anteriors: " + x + ". Dóna-ho per ESTABLERT. NO tornes a preguntar si estan en el camí ni per la seua topologia — ja està resolt.\n"; },
+        excl: function (x) { return "L'alumne JA ha exclòs correctament: " + x + ". No tornes a preguntar per la seua exclusió.\n"; },
+        closure: "L'alumne ha anomenat el conjunt correcte COMPLET i ha raonat les exclusions. Tanca amb un reconeixement breu i comprova si li queda algun dubte. NO òbrigues noves preguntes de topologia.\n",
+        complete: "El conjunt correcte està COMPLET. NO continues interrogant element per element. La teua única tasca ara: demanar UNA consolidació del raonament que encara falte (per què s'exclouen els elements restants), amb UNA sola pregunta conceptual.\n",
+        partial: "Encara falta per identificar algun element correcte (no el reveles). Avança cap a ell sense tornar sobre els ja establerts.\n",
+      },
+      en: {
+        head: "[CUMULATIVE PROGRESS — memory of the whole session, MUST be respected]\n",
+        named: function (x) { return "The student has ALREADY correctly identified, in earlier turns: " + x + ". Treat this as ESTABLISHED. Do NOT ask again whether they are in the path or about their topology — it is resolved.\n"; },
+        excl: function (x) { return "The student has ALREADY correctly excluded: " + x + ". Do not re-ask about their exclusion.\n"; },
+        closure: "The student has named the COMPLETE correct set and reasoned the exclusions. Close with a brief acknowledgement and check for remaining doubts. Do NOT open new topology questions.\n",
+        complete: "The correct set is COMPLETE. Do NOT keep interrogating element by element. Your only task now: ask for ONE consolidation of the reasoning that is still missing (why the remaining elements are excluded), with a SINGLE conceptual question.\n",
+        partial: "There is still a correct element left to identify (do not reveal it). Advance toward it without revisiting what is already established.\n",
+        closed: "The exercise was ALREADY closed in a previous turn — do NOT congratulate or close again. Simply answer the student's current follow-up briefly and clearly, without re-interrogating the settled elements.\n",
+      },
+    }[L];
+    // Valencian/Spanish "already closed" follow-up lines (en lives in T above).
+    const CLOSED = {
+      es: "El ejercicio YA se cerró en un turno anterior — NO felicites ni cierres otra vez. Responde brevemente a la consulta actual del alumno, sin re-interrogar los elementos ya resueltos.\n",
+      val: "L'exercici JA es va tancar en un torn anterior — NO felicites ni tanques una altra vegada. Respon breument a la consulta actual de l'alumne, sense tornar a interrogar els elements ja resolts.\n",
+      en: T.closed,
+    };
+
+    let banner = T.head;
+    if (cum.namedCorrect.length > 0) banner += T.named(cum.namedCorrect.join(", "));
+    if (cum.excluded.length > 0) banner += T.excl(cum.excluded.join(", "));
+    if (alreadyClosed) {
+      // Follow-up after a close: keep the established-facts context (so the tutor
+      // doesn't re-interrogate) but replace the "cierra" instruction with an
+      // answer-the-follow-up directive.
+      banner += CLOSED[L];
+    } else if (cum.complete && cum.stillMissing.length === 0) {
+      banner += cum.closureReady ? T.closure : T.complete;
+    } else if (cum.stillMissing.length > 0 && cum.namedCorrect.length > 0) {
+      banner += T.partial;
+    }
+    return banner + "\n";
   }
 
   _buildProgressHint(history) {

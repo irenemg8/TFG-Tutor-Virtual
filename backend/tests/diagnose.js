@@ -493,6 +493,37 @@ assert("C(run) guard: a plain element answer is NOT an explanation request",
   isExplanationRequest("Sí, de R1 y R2") === false &&
   isExplanationRequest("ni idea") === false);
 
+// ─── Block H — 2nd real-server run (2026-06-10) ──────────────────────────────
+section("H. Run-2: false-premise question guardrail (T1) + topology/flow leaks");
+const adh = byId.adherence;
+const tctx = { lang: "es", correctAnswer: ["R1","R2","R4"] };
+// T1: a question presupposing a CORRECT element is irrelevant must be caught
+// deterministically (the system-prompt rule alone did not stop qwen2.5).
+assert("H/T1: '¿por qué R4 no influye?' (R4 correct) → adherence violation",
+  adh.check("R1 y R2 son resistencias. ¿Por qué crees que R4 no influye en la tensión?", tctx).violated === true);
+assert("H/T1: false premise survives an intervening relative clause (R2)",
+  adh.check("¿Por qué R2, que está conectada entre N2 y tierra, no influye en la tensión?", tctx).violated === true);
+assert("H/T1 guard: '¿por qué R3 no influye?' (R3 NOT correct) → no violation",
+  adh.check("¿Por qué pensaste que R3 también influía en la tensión?", tctx).violated === false);
+assert("H/T1 guard: 'R4 importa pero R3 no influye' does not false-fire on R4",
+  adh.check("¿Por qué R4 importa pero R3 no influye?", tctx).violated === false);
+
+const srg = byId.state_reveal;
+const sctx = { evaluableElements: ["R1","R2","R3","R4","R5"], kgConceptPatterns: [], lang: "es", messages: [] };
+// Topology assertion leaks (fire even inside a question).
+assert("H/topo: 'R4 conectada en paralelo con R2' → state_reveal",
+  srg.check("R4 está conectada en paralelo con R2 entre N2 y tierra.", sctx).violated === true);
+assert("H/topo: topology assertion inside a question still leaks",
+  srg.check("¿Te das cuenta de que R4 está conectada en paralelo con R2?", sctx).violated === true);
+// Current-path reveal (affirmation), even with intervening text.
+assert("H/flow: 'la corriente … pasa por R2 y R4' → state_reveal",
+  srg.check("La corriente desde N2 hacia tierra pasa por R2 y R4.", sctx).violated === true);
+// Guards: a probing flow QUESTION and a NEGATED flow are not leaks.
+assert("H/flow guard: '¿pasa la corriente por R2?' is a legitimate question",
+  srg.check("¿Pasa la corriente por R2 hacia tierra?", sctx).violated === false);
+assert("H/flow guard: 'la corriente no pasa por R3' (correct exclusion) is not a leak",
+  srg.check("La corriente no pasa por R3, está bien excluida.", sctx).violated === false);
+
 // ─── 6. ELEMENT_NAMING retry hint plagiarism ────────────────────────────────
 section("6. ElementNaming retry hint contains a quotable example");
 // C5: the retry hint must NOT always contain the same example phrase the LLM
@@ -631,9 +662,379 @@ async function section8() {
     tStub._shouldRenderVerdictBanner(null) === false);
 }
 
+// ─── 9. FULL GUARDRAIL PIPELINE (end-to-end, the layer that actually ships) ──
+//
+// BUG-CRIT (2026-06-11): every section above checks guardrails in ISOLATION
+// (g.check / g.surgicalFix). But what reaches the student is whatever
+// GuardrailPipeline.validate() RETURNS after composing check → surgical →
+// retry. A guardrail can fire perfectly in isolation and STILL leak if the
+// pipeline never acts on it. That is exactly what happened with adherence's
+// false_premise rule: check() returned violated=true (section H/T1 passes),
+// but the rule has no surgicalFix AND "adherence" was missing from the
+// pipeline's CRITICAL_GUARDRAILS set, so the consolidated retry was skipped
+// and the "¿Por qué crees que R4 no influye?" question was sent VERBATIM —
+// the precise failure seen in the production transcript. These tests drive the
+// REAL pipeline with a stub LLM and assert on the user-visible output, so a
+// dead detection (fires-but-never-acts) FAILS here even when its unit test passes.
+async function section9() {
+  section("9. GuardrailPipeline end-to-end: detections must ACT, not just fire");
+  const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
+
+  // Stub LLM whose retry returns a clean, false-premise-free Socratic question.
+  // We count calls so we can distinguish "retried" from "passed through".
+  function makePipeline(retryText) {
+    let calls = 0;
+    const llm = { chatCompletion: async function () { calls++; return retryText; } };
+    const pipeline = new GuardrailPipeline({
+      guardrails: createDefaultGuardrails(), llmService: llm, budgetMs: 45000,
+    });
+    return { pipeline, calls: () => calls };
+  }
+  const e2eCtx = {
+    correctAnswer: ["R1", "R2", "R4"], evaluableElements: ["R1", "R2", "R3", "R4", "R5"],
+    kgConceptPatterns: [], lang: "es", messages: [],
+  };
+  const sysMsgs = [{ role: "system", content: "tutor prompt" }, { role: "user", content: "r1 y r2" }];
+
+  // (a) THE REGRESSION: a false-premise question about a CORRECT element must
+  // NOT reach the student. Pre-fix this returned path=non_critical_only with the
+  // false premise intact and llmRetryCount=0 (LLM never called).
+  const cleanQ = "¿Has tenido en cuenta todas las resistencias conectadas a ese nodo?";
+  const h1 = makePipeline(cleanQ);
+  const r1 = await h1.pipeline.validate(
+    "R1 y R2 son resistencias en el camino. ¿Por qué crees que R4 no influye en la tensión entre N2 y tierra?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/CRIT: false_premise (R4 correct) is REPAIRED, not sent verbatim",
+    !/por qu[eé][^?]*r4[^?]*no influye/i.test(r1.response),
+    "path=" + r1.path + " sent=" + JSON.stringify(r1.response).slice(0, 90));
+  assert("9/CRIT: pipeline actually triggered the consolidated retry (LLM called once)",
+    r1.llmRetryCount === 1 && h1.calls() === 1,
+    "retries=" + r1.llmRetryCount + " llmCalls=" + h1.calls() + " path=" + r1.path);
+
+  // (b) GUARD: a clean Socratic turn must pass through untouched with NO retry
+  // (no spurious LLM round-trip / latency from the adherence-critical change).
+  const h2 = makePipeline(cleanQ);
+  const r2 = await h2.pipeline.validate(
+    "R1 y R2 están en el camino de la corriente. ¿Qué otra resistencia conecta el nodo N2 con tierra?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/GUARD: a clean Socratic turn passes primary_ok with no retry",
+    r2.path === "primary_ok" && r2.llmRetryCount === 0 && h2.calls() === 0,
+    "path=" + r2.path + " retries=" + r2.llmRetryCount + " llmCalls=" + h2.calls());
+
+  // (c) GUARD: a guard against the *opposite* regression — '¿por qué R3 no
+  // influye?' (R3 genuinely irrelevant) is a legitimate Socratic move and must
+  // NOT be rewritten away.
+  const h3 = makePipeline(cleanQ);
+  const r3 = await h3.pipeline.validate(
+    "¿Por qué pensaste que R3 también influía en la tensión entre N2 y tierra?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/GUARD: legitimate '¿por qué R3 (irrelevant) influía?' is NOT rewritten",
+    r3.path === "primary_ok" && /R3/.test(r3.response) && h3.calls() === 0,
+    "path=" + r3.path + " sent=" + JSON.stringify(r3.response).slice(0, 80));
+
+  // (d) THE OTHER PRODUCTION LEAK: a topology reveal inside a question
+  // ("R4 está conectada en paralelo con R2") must be REDACTED before sending —
+  // the user-visible text must not contain the "en paralelo con" connection.
+  const h4 = makePipeline(cleanQ);
+  const r4 = await h4.pipeline.validate(
+    "¿Te das cuenta de que R4 está conectada en paralelo con R2 entre N2 y tierra?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/LEAK: topology reveal 'en paralelo con' never reaches the student",
+    !/en paralelo con|en serie con/i.test(r4.response),
+    "path=" + r4.path + " sent=" + JSON.stringify(r4.response).slice(0, 90));
+
+  // (e) THE FLOW LEAK: current-path reveal ("la corriente pasa por R2 y R4")
+  // must be redacted; the final text must still ask the student something.
+  const h5 = makePipeline(cleanQ);
+  const r5 = await h5.pipeline.validate(
+    "La corriente desde N2 hacia tierra pasa por R2 y R4. ¿Hay algún interruptor en el circuito?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/LEAK: current-path 'pasa por R2 y R4' is redacted yet a question remains",
+    !/pasa por r2 y r4/i.test(r5.response) && /\?/.test(r5.response),
+    "path=" + r5.path + " sent=" + JSON.stringify(r5.response).slice(0, 90));
+
+  // (f) BUG-ALGUNOS (2026-06-11, req11 of the real transcript): the student
+  // ANSWERED the full correct set ("pasa por r1 r2 r4", verdict=correct). The
+  // tutor's honest acknowledgment "R1, R2 y R4 están en el camino" must NOT be
+  // rewritten into the FALSE "Algunos de los elementos que has propuesto están
+  // en el camino" ("some" when it was ALL). Pre-fix this fired solution_leak
+  // and the surgical fix produced exactly that misleading "Algunos…" string.
+  const correctCtx = Object.assign({}, e2eCtx, {
+    proposed: ["R1", "R2", "R4"],
+    turnVerdict: { verdict: "correct", hits: ["R1", "R2", "R4"], missing: [], errors: [] },
+    messages: [{ role: "user", content: "pasa por r1 r2 r4" }],
+  });
+  const h6 = makePipeline(cleanQ);
+  const r6 = await h6.pipeline.validate(
+    "R1, R2 y R4 están en el camino. ¿Está R5 conectada a tierra en ambos extremos?",
+    correctCtx, { messages: sysMsgs });
+  assert("9/ALGUNOS: complete-correct answer is NOT rewritten into the false 'Algunos…'",
+    !/algunos de los elementos/i.test(r6.response) && r6.path === "primary_ok",
+    "path=" + r6.path + " sent=" + JSON.stringify(r6.response).slice(0, 90));
+  assert("9/ALGUNOS: the honest acknowledgment of the student's own answer survives",
+    /r1[,\s].*r2.*r4/i.test(r6.response),
+    "sent=" + JSON.stringify(r6.response).slice(0, 90));
+
+  // (g) GUARD against re-opening a leak: a WRONG superset answer (student
+  // proposed R1 R2 R3 R4, verdict != correct) must STILL have its correct
+  // subset protected — the verdict-correct exception must not bleed into it.
+  const supersetCtx = Object.assign({}, e2eCtx, {
+    proposed: ["R1", "R2", "R3", "R4"],
+    turnVerdict: { verdict: "wrong_concept", hits: ["R1", "R2", "R4"], errors: ["R3"], missing: [] },
+    messages: [{ role: "user", content: "r1 r2 r3 r4" }],
+  });
+  const h7 = makePipeline(cleanQ);
+  const r7 = await h7.pipeline.validate(
+    "R1, R2 y R4 están en el camino. ¿Está R5 conectada a tierra en ambos extremos?",
+    supersetCtx, { messages: sysMsgs });
+  assert("9/ALGUNOS guard: wrong superset answer still has its correct subset redacted",
+    !/r1[,\s]+r2\s*y\s*r4\s+est[aá]n en el camino/i.test(r7.response),
+    "path=" + r7.path + " sent=" + JSON.stringify(r7.response).slice(0, 90));
+}
+
+// ─── 10. CUMULATIVE ANSWER STATE (BUG-LOOP root cause) ───────────────────────
+//
+// The per-turn verdict forgets what the student already established, so the
+// tutor re-interrogates R1/R2/R4 turn after turn (the loop Irene flagged in the
+// 2026-06-11 transcript). computeCumulativeAnswer replays the classifier over
+// the whole conversation (each user turn with its preceding tutor question as
+// context) to reconstruct the union of what's named/excluded. These tests
+// replay the REAL transcript turns and assert the state the per-turn verdict
+// loses.
+function section10() {
+  section("10. cumulativeAnswer: the conversation-level state the per-turn verdict forgets");
+  const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
+  const correctA = ["R1", "R2", "R4"];
+  const evalA = ["R1", "R2", "R3", "R4", "R5"];
+  function pairsToMessages(pairs) {
+    const out = [];
+    for (const [q, a] of pairs) { out.push({ role: "assistant", content: q }); out.push({ role: "user", content: a }); }
+    return out;
+  }
+
+  // (a) THE ANTI-FORGETTING CORE: the student names the full set in ONE turn,
+  // then a LATER turn only negates R5. Per-turn verdict would report
+  // missing=[R1,R2,R4] again; the cumulative state must still know it's complete.
+  const loopMsgs = pairsToMessages([
+    ["¿cómo se distribuye la corriente?", "pasa por r1 r2 r4"],
+    ["¿Está R5 conectada a tierra en ambos extremos?", "No porque está en corto"],
+  ]);
+  const cum = computeCumulativeAnswer(loopMsgs, correctA, evalA);
+  assert("10/CORE: full set stays 'named' after a later bare-negation turn (no forgetting)",
+    cum.complete === true && cum.stillMissing.length === 0 &&
+    ["R1", "R2", "R4"].every((r) => cum.namedCorrect.indexOf(r) >= 0),
+    "namedCorrect=[" + cum.namedCorrect + "] stillMissing=[" + cum.stillMissing + "]");
+  assert("10/CORE: R5 (context-resolved 'No porque está en corto') is in excluded",
+    cum.excluded.indexOf("R5") >= 0, "excluded=[" + cum.excluded + "]");
+
+  // (b) FULL TRANSCRIPT → closureReady (criterion: full set named AND exclusions
+  // reasoned). R3 excluded (req9 "No"), R5 excluded (req12 corto), R1/R2/R4 named.
+  const fullMsgs = pairsToMessages([
+    ["¿Está R3 en el camino de la corriente que va de N2 a tierra?", "No"],
+    ["¿cómo se distribuye la corriente?", "pasa por r1 r2 r4"],
+    ["¿Está R5 conectada a tierra en ambos extremos?", "No porque está en corto"],
+    ["¿por qué R1, R2 y R4 son relevantes pero R3 no?", "Porque el interruptor está abierto"],
+  ]);
+  const full = computeCumulativeAnswer(fullMsgs, correctA, evalA);
+  assert("10/CLOSURE: complete set + R3,R5 excluded + reasoned → closureReady=true",
+    full.closureReady === true &&
+    ["R3", "R5"].every((r) => full.excluded.indexOf(r) >= 0) &&
+    full.reasoningConcepts.length > 0,
+    "excluded=[" + full.excluded + "] concepts=[" + full.reasoningConcepts + "] closureReady=" + full.closureReady);
+
+  // (c) GUARD: an INCOMPLETE session (R4 never named, never excluded) must NOT
+  // be complete and must NOT be closureReady.
+  const partialMsgs = pairsToMessages([
+    ["¿Está R3 en el camino?", "No"],
+    ["¿qué resistencias?", "r1 y r2"],
+    ["¿Está R5?", "No porque está en corto"],
+  ]);
+  const partial = computeCumulativeAnswer(partialMsgs, correctA, evalA);
+  assert("10/GUARD: missing R4 → not complete, not closureReady",
+    partial.complete === false && partial.closureReady === false &&
+    partial.stillMissing.indexOf("R4") >= 0,
+    "stillMissing=[" + partial.stillMissing + "] complete=" + partial.complete);
+
+  // (d) GUARD: a wrongly-excluded CORRECT element surfaces, but is CLEARED if the
+  // student later names it (self-correction; naming wins).
+  const wrongExclMsgs = pairsToMessages([
+    ["¿Está R4 en el camino?", "no, R4 no influye"],
+  ]);
+  const wrongExcl = computeCumulativeAnswer(wrongExclMsgs, correctA, evalA);
+  assert("10/GUARD: wrongly excluding correct R4 is flagged in wronglyExcluded",
+    wrongExcl.wronglyExcluded.indexOf("R4") >= 0,
+    "wronglyExcluded=[" + wrongExcl.wronglyExcluded + "]");
+  const correctedMsgs = pairsToMessages([
+    ["¿Está R4 en el camino?", "no, R4 no influye"],
+    ["¿seguro?", "perdona, sí: r1 r2 r4"],
+  ]);
+  const corrected = computeCumulativeAnswer(correctedMsgs, correctA, evalA);
+  assert("10/GUARD: naming R4 later clears it from wronglyExcluded (self-correction)",
+    corrected.wronglyExcluded.indexOf("R4") < 0 && corrected.namedCorrect.indexOf("R4") >= 0,
+    "wronglyExcluded=[" + corrected.wronglyExcluded + "] namedCorrect=[" + corrected.namedCorrect + "]");
+}
+
+// ─── 11. LOOP FIX WIRING: settled-element guardrail + cumulative closure ─────
+async function section11() {
+  section("11. Loop fix: settled-element guardrail (pipeline) + cumulative closure");
+  const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
+
+  // (a) The req18 loop string, with the cumulative state that existed at that
+  // point (R1,R2,R4 named; R3,R5 excluded). The pipeline must DETECT the
+  // settled-element re-ask and RETRY (settled_element_question is retry-only and
+  // must be in CRITICAL_GUARDRAILS, or the detection would be dead — BUG-CRIT class).
+  let calls = 0;
+  const pivot = "Has identificado las resistencias correctas. ¿Qué condición hace que una rama no transporte corriente?";
+  const llm = { chatCompletion: async function () { calls++; return pivot; } };
+  const pipeline = new GuardrailPipeline({ guardrails: createDefaultGuardrails(), llmService: llm, budgetMs: 45000 });
+  const loopCtx = {
+    correctAnswer: ["R1", "R2", "R4"], evaluableElements: ["R1", "R2", "R3", "R4", "R5"],
+    kgConceptPatterns: [], lang: "es", messages: [],
+    cumulativeAnswer: { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [] },
+  };
+  const rLoop = await pipeline.validate(
+    "R2 está confirmada. ¿Está R1 en el camino de la corriente que va desde la fuente hasta N2?",
+    loopCtx, { messages: [{ role: "system", content: "s" }] });
+  assert("11/SETTLED: a topology re-ask of a settled element triggers a retry/pivot",
+    rLoop.llmRetryCount === 1 && calls === 1 &&
+    !/¿est[aá]\s+r1\s+en el camino/i.test(rLoop.response),
+    "path=" + rLoop.path + " retries=" + rLoop.llmRetryCount + " sent=" + JSON.stringify(rLoop.response).slice(0, 70));
+
+  // (b) GUARD: a CONCEPTUAL consolidation question about settled elements is
+  // GOOD (demanding reasoning) — it must pass through with NO retry.
+  let calls2 = 0;
+  const llm2 = { chatCompletion: async function () { calls2++; return pivot; } };
+  const pipeline2 = new GuardrailPipeline({ guardrails: createDefaultGuardrails(), llmService: llm2, budgetMs: 45000 });
+  const rConcept = await pipeline2.validate(
+    "Has nombrado las correctas. ¿Por qué R2 forma parte del camino pero R3 no?",
+    loopCtx, { messages: [{ role: "system", content: "s" }] });
+  assert("11/SETTLED guard: conceptual '¿por qué…?' about settled elements is NOT retried",
+    rConcept.path === "primary_ok" && calls2 === 0,
+    "path=" + rConcept.path + " retries=" + rConcept.llmRetryCount);
+
+  // (c) Orchestrator closure on the cumulative criterion (chosen with Irene:
+  // full set named + exclusions reasoned). Drive the real methods on a bare
+  // prototype instance (same technique as section 2d's _normaliseWhitespace).
+  const Orchestrator = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const orch = Object.create(Orchestrator.prototype);
+  const readyCum = { closureReady: true, wronglyNamed: [], wronglyExcluded: [] };
+  assert("11/CLOSE: closureReady + non-blocked turn → deterministic finish",
+    orch._shouldFinishDeterministically({ classification: { type: "wrong_concept" }, cumulativeAnswer: readyCum }) === true);
+  assert("11/CLOSE guard: closureReady but current turn is dont_know → NO finish",
+    orch._shouldFinishDeterministically({ classification: { type: "dont_know" }, cumulativeAnswer: readyCum }) === false);
+  assert("11/CLOSE guard: closureReady but an outstanding wrong proposal → NO finish",
+    orch._shouldFinishDeterministically({ classification: { type: "partial_correct" }, cumulativeAnswer: { closureReady: true, wronglyNamed: ["R3"], wronglyExcluded: [] } }) === false);
+  assert("11/CLOSE guard: NOT closureReady → NO finish",
+    orch._shouldFinishDeterministically({ classification: { type: "partial_correct" }, cumulativeAnswer: { closureReady: false, wronglyNamed: [], wronglyExcluded: [] } }) === false);
+  assert("11/CLOSE: legacy correct_good_reasoning ×2 path still finishes",
+    orch._shouldFinishDeterministically({ classification: { type: "correct_good_reasoning" }, loopState: { prevGoodReasoningTurns: 1 } }) === true);
+  // GAP fix (2026-06-11): the explanation gate referenced a non-existent
+  // ctx.asksExplanation (a tutorAgent local) so it never blocked. A solved
+  // student who NOW asks the tutor to explain a concept must be ANSWERED, not
+  // closed. Computed inline from the current message in _shouldFinishDeterministically.
+  assert("11/CLOSE guard: closureReady but student asks to EXPLAIN a concept → NO finish",
+    orch._shouldFinishDeterministically({
+      classification: { type: "wrong_concept", concepts: ["divisor de tensión"] },
+      userMessage: "¿puedes explicarme el concepto de divisor de tensión?",
+      cumulativeAnswer: readyCum,
+    }) === false);
+
+  // (c-bis) DE-STICKY (gap 3 fix): closureReady stays true forever once reached,
+  // so a follow-up turn after a close must NOT re-close. exerciseAlreadyClosed
+  // short-circuits the deterministic finish.
+  assert("11/DESTICKY: closureReady but exercise already closed → NO re-finish",
+    orch._shouldFinishDeterministically({ classification: { type: "closed_answer" }, cumulativeAnswer: readyCum, exerciseAlreadyClosed: true }) === false);
+
+  // (d) The <END_EXERCISE> token is AUTHORISED (kept) when closureReady, stripped otherwise.
+  const ctxKeep = { finalResponse: "¡Bien! <END_EXERCISE>", classification: { type: "wrong_concept" }, cumulativeAnswer: readyCum };
+  orch._stripUnauthorizedFinToken(ctxKeep);
+  assert("11/CLOSE: FIN token kept when closureReady",
+    /<END_EXERCISE>/.test(ctxKeep.finalResponse), "got: " + ctxKeep.finalResponse);
+  const ctxStrip = { finalResponse: "¿Está R1 en el camino? <END_EXERCISE>", classification: { type: "wrong_answer" }, cumulativeAnswer: { closureReady: false, wronglyNamed: [], wronglyExcluded: [] }, loopState: {} };
+  orch._stripUnauthorizedFinToken(ctxStrip);
+  assert("11/CLOSE guard: unauthorised FIN token is stripped",
+    !/<END_EXERCISE>/.test(ctxStrip.finalResponse), "got: " + ctxStrip.finalResponse);
+  // De-sticky: a fresh FIN token in a follow-up after a prior close is stripped
+  // (not re-authorised) even though closureReady is still true.
+  const ctxReClose = { finalResponse: "¡Excelente! <END_EXERCISE>", classification: { type: "closed_answer" }, cumulativeAnswer: readyCum, exerciseAlreadyClosed: true, loopState: {} };
+  orch._stripUnauthorizedFinToken(ctxReClose);
+  assert("11/DESTICKY: FIN token in a post-close follow-up is stripped (no double close)",
+    !/<END_EXERCISE>/.test(ctxReClose.finalResponse), "got: " + ctxReClose.finalResponse);
+}
+
+// ─── 12. TutorAgent cumulative banner (Block 2 wiring) ───────────────────────
+async function section12() {
+  section("12. TutorAgent [PROGRESO ACUMULADO] banner + stale-'Missing' suppression");
+  const TutorAgent = require(path.join(ROOT, "src/domain/agents/tutorAgent"));
+  let captured = null;
+  const agent = new (class extends TutorAgent { constructor() {
+    super({
+      llmService: { chatCompletion: async function (msgs) { captured = msgs; return "ok"; } },
+      buildSystemPrompt: function () { return "SYS"; },
+      config: {},
+      debugLogger: { logPrompt: function () {}, traceLlmCall: function () {}, logLlmOut: function () {} },
+    });
+  }})();
+  // The exact failure shape: the student already named R1,R2,R4 in earlier turns
+  // (cumulative), and THIS turn only negates R5 — so the per-turn verdict says
+  // missing=[R1,R2,R4] (stale). The banner must reflect the cumulative truth and
+  // the stale Missing line must be suppressed.
+  const ctx = {
+    exercise: {}, lang: "es", userMessage: "No porque está en corto", reqId: "t", config: {},
+    classification: { type: "correct_no_reasoning", concepts: ["corto"], proposed: [], negated: ["R5"] },
+    turnVerdict: { verdict: "only_negation", hits: [], errors: [], missing: ["R1", "R2", "R4"], wronglyNegated: [], proposed: [], negated: ["R5"] },
+    detectedACs: [],
+    cumulativeAnswer: { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: false, wronglyNamed: [], wronglyExcluded: [] },
+    correctAnswer: ["R1", "R2", "R4"], evaluableElements: ["R1", "R2", "R3", "R4", "R5"],
+    history: [{ role: "assistant", content: "¿Está R5 conectada a tierra en ambos extremos?" }, { role: "user", content: "No porque está en corto" }],
+    ragResult: { augmentation: "" }, historySummary: null,
+    loopState: { prevCorrectTurns: 1, sameClassificationStreak: 1, tutorRepeating: false, lastAssistantQuestion: "¿Está R5 conectada a tierra en ambos extremos?", establishedFacts: [], tutorStuckOnElement: null, studentFrustrated: false, consecutiveWrongTurns: 0, totalAssistantTurns: 11, lastClassification: "correct_no_reasoning" },
+    timing: { pipelineStartMs: Date.now() },
+  };
+  await agent.execute(ctx);
+  const userMsg = captured[captured.length - 1].content;
+  assert("12/BANNER: [PROGRESO ACUMULADO] names R1,R2,R4 as already identified",
+    /PROGRESO ACUMULADO/.test(userMsg) && /YA ha identificado correctamente[^\n]*R1, R2, R4/.test(userMsg),
+    "banner missing or incomplete");
+  assert("12/BANNER: R3,R5 listed as already excluded",
+    /YA ha excluido correctamente: R3, R5/.test(userMsg));
+  assert("12/BANNER: the STALE 'Missing: R1,R2,R4' line is suppressed (no re-interrogation)",
+    !/Missing \(correcto que el alumno a[uú]n NO/.test(userMsg),
+    "stale Missing line leaked into the prompt");
+  assert("12/BANNER: complete-but-not-closure → asks for ONE consolidation",
+    /consolidaci[oó]n del razonamiento/.test(userMsg));
+
+  // Localised banner (gap 1 fix, 2026-06-11): the banner must follow the
+  // conversation language, not inject Spanish into a val/en session.
+  const cumComplete = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: false };
+  const bEn = agent._buildCumulativeBanner(cumComplete, "en", false);
+  assert("12/I18N: English session → English banner ('CUMULATIVE PROGRESS')",
+    /CUMULATIVE PROGRESS/.test(bEn) && !/PROGRESO ACUMULADO/.test(bEn), bEn.slice(0, 40));
+  const bVal = agent._buildCumulativeBanner(cumComplete, "val", false);
+  assert("12/I18N: Valencian session → Valencian banner ('PROGRÉS ACUMULAT')",
+    /PROGR[ÉE]S ACUMULAT/.test(bVal) && /L'alumne JA ha identificat/.test(bVal), bVal.slice(0, 40));
+
+  // De-sticky banner (gap 3 fix): once the exercise was already closed, the
+  // banner must drop the "cierra/close" instruction and tell the tutor to
+  // answer the follow-up instead — while still keeping the settled facts.
+  const cumClosure = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true };
+  const bOpen = agent._buildCumulativeBanner(cumClosure, "es", false);
+  const bClosed = agent._buildCumulativeBanner(cumClosure, "es", true);
+  assert("12/DESTICKY: not-yet-closed → 'Cierra' instruction present",
+    /Cierra con un reconocimiento/.test(bOpen));
+  assert("12/DESTICKY: already-closed → drops 'Cierra', answers the follow-up, keeps settled facts",
+    !/Cierra con un reconocimiento/.test(bClosed) &&
+    /YA se cerró/.test(bClosed) && /R1, R2, R4/.test(bClosed),
+    bClosed.slice(0, 60));
+}
+
 // ─── Summary ────────────────────────────────────────────────────────────────
 (async function main() {
   await section8();
+  await section9();
+  section10();
+  await section11();
+  await section12();
 
   const passed = results.filter(r => r.ok).length;
   const failed = results.length - passed;

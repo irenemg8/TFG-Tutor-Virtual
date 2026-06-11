@@ -19,6 +19,7 @@ const DidacticExplanationGuardrail = require("./DidacticExplanationGuardrail");
 const DatasetStyleGuardrail = require("./DatasetStyleGuardrail");
 const LanguageDriftGuardrail = require("./LanguageDriftGuardrail");
 const RepeatedQuestionGuardrail = require("./RepeatedQuestionGuardrail");
+const SettledElementQuestionGuardrail = require("./SettledElementQuestionGuardrail");
 
 /**
  * Build the DEFAULT guardrail list — only hard safety checks. The
@@ -40,6 +41,7 @@ function createDefaultGuardrails() {
     new StateRevealGuardrail(),        // high — exposes internal state
     new AdherenceGuardrail(),          // med  — NS-33: contradicción Rn + multi-pregunta
     new RepeatedQuestionGuardrail(),   // med  — BUG-010-C: pregunta socrática repetida literal
+    new SettledElementQuestionGuardrail(), // med — BUG-LOOP: re-pregunta de elementos ya resueltos
   ];
 }
 
@@ -59,6 +61,7 @@ function createLegacyGuardrails() {
     new StateRevealGuardrail(),
     new AdherenceGuardrail(),
     new RepeatedQuestionGuardrail(),
+    new SettledElementQuestionGuardrail(),
     new DidacticExplanationGuardrail(),
     new DatasetStyleGuardrail(),
   ];

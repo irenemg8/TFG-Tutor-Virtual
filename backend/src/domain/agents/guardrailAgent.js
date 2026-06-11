@@ -51,6 +51,10 @@ class GuardrailAgent extends AgentInterface {
       // NS-33: AdherenceGuardrail uses turnVerdict.hits to detect
       // missed_affirmation (LLM ignored the hits the banner declared).
       turnVerdict: context.turnVerdict || null,
+      // BUG-LOOP (2026-06-11): session-level answer state, consumed by
+      // SettledElementQuestionGuardrail to detect a topology re-ask about an
+      // element the student already settled (named or excluded) in prior turns.
+      cumulativeAnswer: context.cumulativeAnswer || null,
       // BUG-009-B (2026-05-03): StateRevealGuardrail rotates the redaction
       // placeholder based on how many times it has already fired in this
       // conversation, so the student doesn't see the same generic phrase 3
@@ -106,6 +110,7 @@ class GuardrailAgent extends AgentInterface {
       // (migration 008) so the export reflects when these fired.
       languageDrift: anyFor("language_drift"),
       repeatedQuestion: anyFor("repeated_question"),
+      settledElementQuestion: anyFor("settled_element_question"),
     };
 
     this.debugLogger.logGuardrail && this.debugLogger.logGuardrail(context.guardrailsTriggered, context.finalResponse);

@@ -1,6 +1,7 @@
 "use strict";
 
 const IGuardrail = require("../../domain/ports/services/IGuardrail");
+const { stripAccents } = require("../../domain/services/text/accentNormalizer");
 const {
   ADHERENCE_NEGATIVE_VERBS: NEGATIVE_VERBS,
   ADHERENCE_POSITIVE_VERBS: POSITIVE_VERBS,
@@ -59,6 +60,17 @@ class AdherenceGuardrail extends IGuardrail {
       violations.push({ rule: "multi_question", details: { count: substantiveQs } });
     }
 
+    // Rule 4 (false-premise question): a QUESTION that presupposes a CORRECT
+    // element does not contribute ("¿por qué R4 no influye?") plants a falsehood
+    // — production showed qwen2.5 doing this repeatedly despite the system-prompt
+    // rule. The contradiction rule (Rule 1) deliberately skips questions, so this
+    // is a separate, question-targeted check restricted to CORRECT elements (it
+    // must NOT fire on "¿por qué R3 no influye?" when R3 is genuinely irrelevant).
+    const falsePremise = _findFalsePremiseQuestions(response, correctAnswer);
+    if (falsePremise.length > 0) {
+      violations.push({ rule: "false_premise", details: falsePremise });
+    }
+
     // Rule 3: missed affirmation (log-only — no surgical fix in v1)
     if (verdict && verdict.hits && verdict.hits.length > 0) {
       const lower = response.toLowerCase();
@@ -76,19 +88,20 @@ class AdherenceGuardrail extends IGuardrail {
 
     if (violations.length === 0) return { violated: false };
 
-    // missed_affirmation alone does NOT trigger surgicalFix (v1 policy):
-    // mark the guardrail as not violated for the pipeline retry path,
-    // but still surface the metadata in evidence so debug logs see it.
+    // Surgically-fixable rules (contradiction, multi_question) and retry-only
+    // rules (false_premise — no safe rewrite, so it forces an LLM retry).
+    // missed_affirmation alone stays log-only.
     const surgicalRules = violations.filter(
       (v) => v.rule === "contradiction" || v.rule === "multi_question"
     );
-    if (surgicalRules.length === 0) {
+    const retryRules = violations.filter((v) => v.rule === "false_premise");
+    if (surgicalRules.length === 0 && retryRules.length === 0) {
       return { violated: false, metadata: { logOnly: violations } };
     }
 
     return {
       violated: true,
-      evidence: surgicalRules.map((v) => v.rule).join(", "),
+      evidence: surgicalRules.concat(retryRules).map((v) => v.rule).join(", "),
       metadata: { violations },
     };
   }
@@ -137,11 +150,17 @@ class AdherenceGuardrail extends IGuardrail {
   }
 
   buildRetryHint(_lang) {
-    // Adherence violations are corrected surgically, not by LLM retry —
-    // re-prompting qwen2.5 7B with the same prompt gives the same
-    // violation rate. The retry hint is a no-op so the pipeline goes
-    // straight to surgicalFix.
-    return "";
+    // Contradiction / multi_question are corrected surgically (no retry hint
+    // needed). The ONLY rule that reaches a retry is false_premise — it can't be
+    // safely rewritten — so the hint targets exactly that: stop presupposing a
+    // correct element is irrelevant.
+    return (
+      "[CORRIGE TU PREGUNTA] No preguntes '¿por qué [X] no influye / no contribuye?' " +
+      "sobre una resistencia que SÍ forma parte de la respuesta — el alumno NO la ha negado y la " +
+      "premisa es falsa. Reformula invitándole a CONSIDERAR todas las resistencias de la rama " +
+      "(p.ej. '¿has tenido en cuenta todas las resistencias conectadas a ese nodo?'), sin afirmar " +
+      "que ninguna sobra y sin revelar la respuesta.\n\n"
+    );
   }
 }
 
@@ -225,6 +244,41 @@ function _firstSubstantiveQuestionEnd(text) {
 // Same principle StateRevealGuardrail applies. Without this gate the
 // guardrail destroys the Socratic question and the student receives a
 // truncated affirmation with no question
+
+// Detects QUESTION sentences that presuppose a CORRECT element does not
+// contribute ("¿por qué R4 no influye?"). We scan only interrogatives, find each
+// Rn, and check whether — within the span AFTER that Rn (truncated at the next
+// element so a neighbour's negation doesn't bleed) — there is a negated
+// contribute-verb. Only CORRECT elements count: "¿por qué R3 no influye?" with
+// R3 irrelevant is a legitimate Socratic move.
+var FALSE_PREMISE_NEG = /\bno\s+(?:influye|influyen|contribuye|contribuyen|afecta|afectan|participa|participan|cuenta|cuentan|interviene|intervienen|importa|importan|forma\s+parte|forman\s+parte|es\s+relevante|son\s+relevantes)\b/;
+
+function _findFalsePremiseQuestions(text, correctSet) {
+  if (!text || !correctSet || correctSet.size === 0) return [];
+  const out = [];
+  const sentences = String(text).split(/(?<=[.!?])\s+/);
+  for (const sent of sentences) {
+    if (sent.indexOf("?") < 0 && sent.indexOf("¿") < 0) continue; // questions only
+    const folded = stripAccents(sent.toLowerCase());
+    const re = /\br(\d+)\b/gi;
+    let m;
+    while ((m = re.exec(folded)) !== null) {
+      const rn = ("R" + m[1]).toUpperCase();
+      if (!correctSet.has(rn)) continue;
+      // span AFTER this Rn, truncated at the next element mention. The window is
+      // generous (80 chars) so an intervening relative clause ("R2, que está
+      // conectada entre N2 y tierra, no influye…") doesn't hide the verb; the
+      // next-element truncation still prevents a neighbour's negation bleeding in.
+      let after = folded.slice(m.index + m[0].length, m.index + m[0].length + 80);
+      const nextEl = after.search(/\br\d+\b/i);
+      if (nextEl >= 0) after = after.slice(0, nextEl);
+      if (FALSE_PREMISE_NEG.test(after)) {
+        out.push({ element: rn, evidence: sent.trim().slice(0, 90) });
+      }
+    }
+  }
+  return out;
+}
 
 function _findContradictions(text, correctSet) {
   if (!text || correctSet.size === 0) return [];

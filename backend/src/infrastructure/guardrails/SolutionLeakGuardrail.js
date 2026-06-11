@@ -120,7 +120,25 @@ class SolutionLeakGuardrail extends IGuardrail {
     //     order-INDEPENDENT. We split into sentences, drop questions, and
     //     check whether any non-question sentence mentions every correct
     //     element regardless of permutation.
-    if (correctAnswer.length >= 2) {
+    //
+    // BUG-ALGUNOS (2026-06-11): EXCEPTION — if the student THIS TURN already
+    // produced the exact correct set (turnVerdict.verdict === "correct": every
+    // correct element proposed, no errors, nothing missing), the tutor echoing
+    // those same elements reveals NOTHING — the student supplied them. Treating
+    // it as a leak triggered the surgical rewrite that turned the honest
+    // acknowledgment "R1, R2 y R4 están en el camino" into the FALSE and
+    // demoralising "Algunos de los elementos que has propuesto están en el
+    // camino" ("algunos" = some, when it was ALL). That misrewrite made the
+    // student think they were only partly right and the conversation looped.
+    // The fair-game gate is scoped to verdict==="correct" (an EXACT match, set
+    // by AcDetector only when proposed === correctAnswer), so a wrong/superset
+    // answer like "R1 R2 R3 R4" still has its correct subset protected. The
+    // "don't confirm without reasoning" policy is a SEPARATE concern handled by
+    // the false/premature-confirmation guardrails, not by faking a partial leak.
+    const verdictStr = ctx && ctx.turnVerdict &&
+      (typeof ctx.turnVerdict === "string" ? ctx.turnVerdict : ctx.turnVerdict.verdict);
+    const studentNamedFullAnswer = verdictStr === "correct";
+    if (!studentNamedFullAnswer && correctAnswer.length >= 2) {
       const sentences = splitSentencesKeepEnd(response);
       for (let i = 0; i < sentences.length; i++) {
         const sent = sentences[i];
