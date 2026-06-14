@@ -79,6 +79,12 @@ function allConceptsAreStateDescriptions(concepts) {
 const preNegationWords = [
   // es
   "no", "sin", "ni", "tampoco", "excepto", "salvo", "menos", "quitando", "descartando",
+  // BUG-NEG-MODAL (2026-06-14): students reject elements with finite/infinitive
+  // verbs too ("descartaría r3 y r5", "quito r3", "eliminaría r5"). Only the
+  // gerunds were listed, so these came out PROPOSED. Accent-folded downstream.
+  "descarto", "descartaria", "descartar", "descartamos", "descartaba",
+  "quito", "quitaria", "quitar", "elimino", "eliminaria", "eliminar",
+  "excluyo", "excluiria", "excluir", "excluyendo", "eliminando",
   // val
   "sense", "tampoc", "excepte", "llevat de", "menys",
   // en
@@ -146,6 +152,17 @@ const postNegationPhrases = [
   "tiene el interruptor abierto", "tiene un interruptor abierto",
   "en interruptor obert", "en un interruptor obert", "té l'interruptor obert",
   "behind an open switch", "has an open switch",
+  // Closure battery (2026-06-11): real-ish student synonyms for the excluding
+  // states that were missing — each left the justified element as PROPOSED
+  // ("r3 está desconectada…" → R3 proposed → AC1 detected → the tutor
+  // re-interrogated what the student had just answered).
+  "desconectada", "desconectado", "desconectadas", "desconectados",
+  "queda fuera", "quedan fuera", "fuera del circuito",
+  "se anula", "se anulan", "anulada", "anulado",
+  "aislada", "aislado", "queda aislada", "queda aislado",
+  "puenteada", "puenteado",
+  "desconnectada", "desconnectat", "aillada", "aillat",
+  "disconnected", "bypassed", "isolated",
   "está cortocircuitada", "está cortocircuitado", "cortocircuitada", "cortocircuitado",
   "en cortocircuito", "en corto", "está en corto", "está en cortocircuito",
   // val - state description
@@ -350,11 +367,42 @@ var FLOW_NEGATION_HEADS = [
   "no circula la corriente por", "no deja pasar corriente por", "no deja pasar la corriente por",
   "no fluye corriente por", "no fluye por", "no pasa por", "no circula por",
   "no hay corriente por", "no hay corriente en", "no llega corriente a", "sin corriente por",
+  // BUG-NEG-MODAL (2026-06-14): production transcript CONV[109] — the student
+  // justified excluding R3 as "es imposible que pase corriente por r3" and
+  // "porque … no puede pasar corriente por r3". None of the heads above matched
+  // (they only cover the bare present "no pasa/circula/fluye"), so R3 was read
+  // as PROPOSED → the false-accusation reply ("¿por qué pensaste que R3…?") that
+  // makes the student feel unheard. Modal/periphrastic forms are flow negations
+  // too. Accent-folded downstream ("podría" → "podria").
+  "no puede pasar corriente por", "no puede pasar la corriente por",
+  "no puede circular corriente por", "no puede circular la corriente por",
+  "no puede fluir corriente por", "no puede fluir la corriente por",
+  "no puede pasar por", "no puede circular por", "no puede fluir por",
+  "no podria pasar corriente por", "no podria circular corriente por",
+  "no podria pasar por", "no podria circular por",
+  "es imposible que pase corriente por", "es imposible que pase la corriente por",
+  "es imposible que circule corriente por", "es imposible que circule la corriente por",
+  "imposible que pase corriente por", "imposible que pase la corriente por",
+  "es imposible que pase por", "es imposible que circule por",
+  "imposible que pase por", "imposible que circule por",
+  "no puede haber corriente por", "no puede haber corriente en",
+  // Closure battery (2026-06-11): "el interruptor abierto IMPIDE EL PASO de la
+  // corriente por r3" left R3 PROPOSED ("impide" sat outside the pre-window and
+  // no head matched). Blocking verbs are flow negations.
+  "impide el paso de la corriente por", "impide el paso de corriente por",
+  "impide que pase la corriente por", "impide el paso por",
+  "bloquea la corriente por", "bloquea el paso de la corriente por",
+  "corta la corriente por", "corta el paso de la corriente por",
+  "no atraviesa", "no cruza",
   // val
   "no passa corrent per", "no circula corrent per", "no passa per", "no deixa passar corrent per",
+  "no pot passar corrent per", "no pot circular corrent per", "no pot passar per",
+  "es impossible que passe corrent per", "impossible que passe corrent per",
   // en
   "no current flows through", "no current through", "current doesn't flow through",
   "doesn't flow through", "no current flows",
+  "current can't flow through", "current cannot flow through",
+  "no current can flow through", "current can't pass through", "can't flow through",
 ].map(foldForMatch);
 
 var FLOW_STOP_RE = /[.!?]|\bpero\b|\bsino\b|\baunque\b|\bbut\b/;
@@ -964,7 +1012,7 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
     if (occ.length < 2) return;
     occ.sort(function (a, b) { return a.pos - b.pos; });
     var PURE_SEP = /^[\s,]*(?:(?:y|e|i|o|and|ni|la|el|las|los|les)\b[\s,]*)*$/;
-    var EXCEPT_BEFORE = /\b(menos|excepto|salvo|quitando|descartando|sin|ni|menys|excepte|llevat|except|excluding|without)\b[\s,]*(?:la|el|las|los|les)?[\s,]*$/;
+    var EXCEPT_BEFORE = /\b(menos|excepto|salvo|quitando|descartando|descarto|descartaria|descartar|quito|quitaria|quitar|elimino|eliminaria|eliminar|excluyo|excluir|excluyendo|eliminando|sin|ni|menys|excepte|llevat|except|excluding|without)\b[\s,]*(?:la|el|las|los|les)?[\s,]*$/;
     // Split occurrences into chains of pure-coordination-joined members.
     var chains = [[occ[0]]];
     for (var k = 1; k < occ.length; k++) {

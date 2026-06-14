@@ -102,6 +102,22 @@ class PedagogicalReviewerAgent extends AgentInterface {
       corrections.push("dataset_style");
     }
 
+    // --- 5. Intra-sentence English code-switch ------------------------------
+    // The LanguageDriftGuardrail only catches WHOLE English sentences; a
+    // Spanish/Valencian sentence with one or two English words embedded
+    // ("estás en el right track", "specifically, …") reads as es/val and slips
+    // through — yet it's a glaring "small/foreign-model" tell. Triggering a full
+    // regeneration for two words would just produce the "regenerando…" spam, so
+    // we repair it inline with a curated, high-precision phrase map. Only fires
+    // for es/val sessions.
+    if (lang === "es" || lang === "val") {
+      const deswitched = this._fixCodeSwitch(text, lang);
+      if (deswitched && deswitched !== text) {
+        text = deswitched;
+        corrections.push("code_switch");
+      }
+    }
+
     context.llmResponse = text;
     context.pedagogicalCorrectionsApplied = corrections;
   }
@@ -221,6 +237,58 @@ class PedagogicalReviewerAgent extends AgentInterface {
     const { enforceDatasetStyle } = require("../services/rag/guardrails");
     const r = enforceDatasetStyle(text);
     return r && r.changed ? r.text : text;
+  }
+
+  // Curated, HIGH-PRECISION English→es/val replacements for the intra-sentence
+  // code-switch that qwen drops into otherwise-Spanish replies (observed:
+  // "right track", "specifically", "indeed"). Every entry is an unambiguously
+  // English fragment that is NOT a Spanish/Valencian word or a common technical
+  // loanword (we deliberately exclude "ok", "online", "test", "feedback",
+  // "software"…). Multi-word phrases are listed before their single-word
+  // substrings so the longest match wins. Matching is case-insensitive with
+  // ASCII word boundaries (all keys are accent-free English), and the original
+  // capitalisation of the first letter is preserved.
+  _fixCodeSwitch(text, lang) {
+    if (typeof text !== "string" || text.length === 0) return text;
+    const val = lang === "val";
+    // [pattern, es, val] — order matters: longest/most-specific first.
+    const MAP = [
+      ["on the right track", "por buen camino", "pel bon camí"],
+      ["the right track", "el buen camino", "el bon camí"],
+      ["right track", "buen camino", "bon camí"],
+      ["good job", "buen trabajo", "bon treball"],
+      ["well done", "bien hecho", "ben fet"],
+      ["keep going", "sigue así", "continua així"],
+      ["you are right", "tienes razón", "tens raó"],
+      ["you're right", "tienes razón", "tens raó"],
+      ["for example", "por ejemplo", "per exemple"],
+      ["of course", "por supuesto", "per descomptat"],
+      ["in other words", "en otras palabras", "en altres paraules"],
+      ["that said", "dicho esto", "dit això"],
+      ["let's see", "veamos", "vegem"],
+      ["let us see", "veamos", "vegem"],
+      ["specifically", "en concreto", "en concret"],
+      ["actually", "en realidad", "en realitat"],
+      ["however", "sin embargo", "no obstant"],
+      ["therefore", "por tanto", "per tant"],
+      ["instead", "en su lugar", "en el seu lloc"],
+      ["indeed", "efectivamente", "efectivament"],
+      ["exactly", "exactamente", "exactament"],
+      ["remember", "recuerda", "recorda"],
+    ];
+    let out = text;
+    for (let i = 0; i < MAP.length; i++) {
+      const en = MAP[i][0];
+      const repl = val ? MAP[i][2] : MAP[i][1];
+      // ASCII boundaries: not preceded/followed by a letter or digit.
+      const re = new RegExp("(^|[^A-Za-z0-9])(" + en.replace(/ /g, "\\s+") + ")(?![A-Za-z0-9])", "gi");
+      out = out.replace(re, function (m, pre, hit) {
+        // Preserve a leading capital if the matched fragment was capitalised.
+        const r = /^[A-Z]/.test(hit) ? repl.charAt(0).toUpperCase() + repl.slice(1) : repl;
+        return pre + r;
+      });
+    }
+    return out;
   }
 }
 

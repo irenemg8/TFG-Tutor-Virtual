@@ -192,8 +192,26 @@ class TutoringOrchestrator {
         timedOut: ctx.retrievalTimedOut || false,
       });
 
-      // Check for deterministic finish
-      if (this._shouldFinishDeterministically(ctx)) {
+      // Check for deterministic finish. The trace line below exists because
+      // runs 6-7 were debugged BLIND: the DEBUG_PIPELINE dump showed every
+      // stage except WHY the close did or did not fire. One line per turn
+      // makes the next production transcript self-diagnosing.
+      const willFinish = this._shouldFinishDeterministically(ctx);
+      try {
+        const c = ctx.cumulativeAnswer || {};
+        console.log(
+          "[TRACE] [" + (ctx.reqId || "") + "] 🏁 CLOSURE_CHECK close=" + willFinish +
+          " ready=" + (c.closureReady === true) +
+          " complete=" + (c.complete === true) +
+          " named=[" + (c.namedCorrect || []).join(",") + "]" +
+          " excluded=[" + (c.excluded || []).join(",") + "]" +
+          " concepts=[" + (c.reasoningConcepts || []).join(",") + "]" +
+          " wronglyNamed=[" + (c.wronglyNamed || []).join(",") + "]" +
+          " alreadyClosed=" + (ctx.exerciseAlreadyClosed === true) +
+          " cls=" + (ctx.classification && ctx.classification.type)
+        );
+      } catch (_) { /* tracing must never break the turn */ }
+      if (willFinish) {
         ctx.deterministicFinish = true;
         ctx.finalResponse = this._buildFinishMessage(ctx);
         ctx.timing.pipelineMs = Date.now() - ctx.timing.pipelineStartMs;

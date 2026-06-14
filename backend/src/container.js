@@ -187,12 +187,29 @@ const container = {
           return c.negated.indexOf("R5") >= 0;
         } catch (_) { return false; }
       })();
+      // closureSemantics: discriminates the LATEST closure behaviour (run-6/7
+      // fixes + review batch). Runs the run-6 markerless-justification replay
+      // through the loaded code — only the current semantics yields
+      // closureReady=true here, so older syncs print OFF even when the four
+      // basic flags are ON.
+      const _semanticsOk = (function () {
+        try {
+          const { computeCumulativeAnswer } = require("./domain/services/rag/cumulativeAnswer");
+          const cum = computeCumulativeAnswer([
+            { role: "user", content: "r1 r2 r4" },
+            { role: "assistant", content: "¿Por qué crees que R3 y R5 no influyen?" },
+            { role: "user", content: "r3 está en un interruptor abierto y r5 en corto" },
+          ], ["R1", "R2", "R4"], ["R1", "R2", "R3", "R4", "R5"]);
+          return cum.closureReady === true;
+        } catch (_) { return false; }
+      })();
       console.log(
         "[Container] Loop-fix deploy check: cumulativeAnswer=" + (_cumOk ? "ON" : "OFF") +
         " closure=" + (_closureOk ? "ON" : "OFF") +
         " progressBanner=" + (_bannerOk ? "ON" : "OFF") +
         " classifierFlowNeg=" + (_classifierOk ? "ON" : "OFF") +
-        ((_cumOk && _closureOk && _bannerOk && _classifierOk) ? "" : "  ⚠ STALE FILES — sync backend/src and restart")
+        " closureSemantics=" + (_semanticsOk ? "ON" : "OFF") +
+        ((_cumOk && _closureOk && _bannerOk && _classifierOk && _semanticsOk) ? "" : "  ⚠ STALE FILES — sync backend/src COMPLETO and restart")
       );
     } catch (e) {
       console.log("[Container] Loop-fix deploy check FAILED: " + e.message);

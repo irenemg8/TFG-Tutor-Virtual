@@ -1493,6 +1493,115 @@ function section16() {
     "closureReady=" + run6g.closureReady);
 }
 
+// ─── 17. INTEGRATION: real orchestrator pipeline closes run-7 at turn 2 ──────
+//
+// Run-7 (2026-06-11) replayed perfectly in unit tests yet production did not
+// close. Every prior test exercised the PIECES (classifier, cumulativeAnswer,
+// _shouldFinishDeterministically) in isolation — this section runs the REAL
+// TutoringOrchestrator.process() with the REAL ContextAgent, ClassifierAgent
+// and AcDetectorAgent over in-memory repos, turn by turn, asserting the
+// deterministic finish fires through the actual integration path. If this
+// passes locally and production still does not close, the deployed files are
+// stale — full stop.
+async function section17() {
+  section("17. Integration: orchestrator.process() end-to-end closure (run-7)");
+  const TutoringOrchestrator = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const ContextAgent = require(path.join(ROOT, "src/domain/agents/contextAgent"));
+  const ClassifierAgent = require(path.join(ROOT, "src/domain/agents/classifierAgent"));
+  const AcDetectorAgent = require(path.join(ROOT, "src/domain/agents/acDetectorAgent"));
+
+  // In-memory message store mimicking the Message entity surface ContextAgent uses.
+  const store = [];
+  function mkMsg(role, content, classification) {
+    return {
+      role, content,
+      metadata: classification ? { classification } : null,
+      isAssistant: function () { return role === "assistant"; },
+      toOllamaFormat: function () { return { role: role, content: content }; },
+    };
+  }
+  const messageRepo = {
+    getAllMessages: async () => store.slice(),
+    countConsecutiveFromEnd: async (id, types) => 0,
+    countAssistantMessages: async () => store.filter((m) => m.isAssistant()).length,
+    getLastAssistantMessages: async (id, n) => store.filter((m) => m.isAssistant()).slice(-n),
+  };
+  const exercise = {
+    hasValidTutorContext: () => true,
+    getExerciseNumber: () => 1,
+    getCorrectAnswer: () => ["R1", "R2", "R4"],
+    getEvaluableElements: () => ["R1", "R2", "R3", "R4", "R5"],
+    tutorContext: { correctAnswer: ["R1", "R2", "R4"], acRefs: [] },
+  };
+  const noLog = { logClassify: () => {}, logPrompt: () => {}, traceLlmCall: () => {}, logLlmOut: () => {}, logGuardrail: () => {} };
+  const agents = {
+    context: new ContextAgent({
+      ejercicioRepo: { findById: async () => exercise },
+      interaccionRepo: { existsForUser: async () => true, create: async () => ({ id: "int-1" }) },
+      messageRepo: messageRepo,
+      config: { HISTORY_MAX_MESSAGES: 80 },
+      historySummarizer: { summarize: async () => null },
+    }),
+    inputGuardrail: { execute: async (ctx) => { ctx.inputSecurity = { safe: true, category: "safe" }; ctx.inputBlocked = false; } },
+    classifier: new ClassifierAgent({ classifyQuery: classifyQuery, debugLogger: noLog }),
+    acDetector: new AcDetectorAgent({}),
+    retrieval: { canSkip: () => true },
+    tutor: { execute: async (ctx) => { ctx.llmResponse = ctx._scriptedReply || "ok"; ctx.llmMessages = []; } },
+    guardrail: { canSkip: () => true },
+    persistence: {
+      execute: async (ctx) => {
+        store.push(mkMsg("user", ctx.userMessage, null));
+        store.push(mkMsg("assistant", ctx.finalResponse || ctx.llmResponse || "", ctx.classification && ctx.classification.type));
+      },
+    },
+  };
+  const orch17 = new TutoringOrchestrator(agents);
+
+  async function turn(userMessage, scriptedReply) {
+    const ctx = await orch17.process({
+      userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: userMessage,
+    });
+    // The tutor stub reads _scriptedReply off the ctx; set it via closure instead:
+    return ctx;
+  }
+  // Re-bind tutor stub per turn with the scripted production reply so the
+  // persisted history matches the real transcript.
+  let scripted = "";
+  agents.tutor = { execute: async (ctx) => { ctx.llmResponse = scripted; ctx.llmMessages = []; } };
+
+  // Turn 1: "r1 r2 r4" — must NOT close (no exclusions/reasoning yet).
+  scripted = "Los elementos R1, R2 y R4 están correctamente identificados. ¿Por qué crees que R3 y R5 no influyen en la tensión entre N2 y 0?";
+  const t1 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "r1 r2 r4" });
+  assert("17/INT: turn 1 ('r1 r2 r4') does NOT close",
+    t1.deterministicFinish !== true,
+    "deterministicFinish=" + t1.deterministicFinish + " final=" + String(t1.finalResponse).slice(0, 60));
+
+  // Turn 2: the reasoned exclusions — the REAL pipeline must close HERE.
+  scripted = "(no debería llegar al tutor)";
+  const t2 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "porque r3 está en circuito abierto y r5 en corto" });
+  assert("17/INT: turn 2 (reasoned exclusions) CLOSES through the real pipeline",
+    t2.deterministicFinish === true && /<END_EXERCISE>/.test(t2.finalResponse || ""),
+    "deterministicFinish=" + t2.deterministicFinish + " final=" + JSON.stringify(String(t2.finalResponse).slice(0, 80)));
+
+  // Turn 3 (post-close follow-up): must NOT re-close.
+  scripted = "Respuesta normal al follow-up. ¿Alguna duda más?";
+  const t3 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "gracias, ya lo entiendo" });
+  assert("17/INT: post-close follow-up does NOT re-close (de-sticky through real pipeline)",
+    t3.deterministicFinish !== true && !/<END_EXERCISE>/.test(t3.finalResponse || ""),
+    "deterministicFinish=" + t3.deterministicFinish + " final=" + String(t3.finalResponse).slice(0, 60));
+}
+
+// ─── 18. CLOSURE BATTERY: 20 realistic conversations through the real
+//        pipeline (15 phrasings that must close + 5 guards that must not) ────
+async function section18() {
+  section("18. Closure battery (tests/closure_battery.js): realistic phrasings end-to-end");
+  const { runBattery, SCENARIOS } = require(path.join(ROOT, "tests/closure_battery"));
+  const r = await runBattery(false);
+  assert("18/BATTERY: all " + SCENARIOS.length + " realistic scenarios behave (close ⇔ expected)",
+    r.fail === 0,
+    r.fail + " failed: " + r.failures.join(" | ").slice(0, 300));
+}
+
 // ─── Summary ────────────────────────────────────────────────────────────────
 (async function main() {
   await section8();
@@ -1504,6 +1613,8 @@ function section16() {
   section14();
   section15();
   section16();
+  await section17();
+  await section18();
 
   const passed = results.filter(r => r.ok).length;
   const failed = results.length - passed;

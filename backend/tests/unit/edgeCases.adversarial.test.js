@@ -61,8 +61,24 @@ describe("SolutionLeakGuardrail (B2 — leak de la respuesta completa)", () => {
     expect(r.violated).toBe(true);
   });
 
-  test("does NOT flag when the same listing appears inside a question", () => {
+  // BUG-SL-EXACT (2026-06-14): updated. A question that names EXACTLY the
+  // correct set ("¿Crees que son R1, R2 y R4 las que importan?") hands the
+  // student the answer just as much as an affirmative listing — there is no
+  // legitimate Socratic reason for the tutor to enumerate precisely the answer
+  // set and ask "are these the ones?". This was the production leak Irene
+  // reported ("de la nada te dice las resistencias"). It is now flagged.
+  // A FULL enumeration of every evaluable element ("¿cuáles de R1..R5…?") is
+  // still exempt (see the test below), since it reveals nothing.
+  test("flags an exact-set listing inside a question [BUG-SL-EXACT]", () => {
     const r = g.check("¿Crees que son R1, R2 y R4 las que importan?", { correctAnswer });
+    expect(r.violated).toBe(true);
+  });
+
+  test("does NOT flag a full enumeration of every evaluable element in a question", () => {
+    const r = g.check(
+      "¿Cuáles de R1, R2, R3, R4 y R5 crees que influyen en la tensión?",
+      { correctAnswer, evaluableElements: ["R1", "R2", "R3", "R4", "R5"] }
+    );
     expect(r.violated).toBe(false);
   });
 

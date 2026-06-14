@@ -29,6 +29,7 @@
  */
 
 const { classifyQuery } = require("./queryClassifier");
+const { stripAccents } = require("../text/accentNormalizer");
 
 function _norm(x) {
   return typeof x === "string" ? x.toUpperCase().replace(/\s+/g, "") : "";
@@ -121,6 +122,17 @@ function computeCumulativeAnswer(messages, correctAnswer, evaluableElements) {
       for (const concept of (c.concepts || [])) {
         if (EXCLUSION_CONCEPT_RE.test(concept)) reasoningConcepts.add(concept);
       }
+      // Closure battery (2026-06-11): c.concepts comes from findConcepts(),
+      // whose dictionary is narrower than the negation vocabulary — a Valencian
+      // justification ("perquè r3 està en circuit obert i r5 en curtcircuit")
+      // excluded both elements but yielded concepts=[] and never armed
+      // closureReady. Scan the RAW message for excluding-state wording too, so
+      // the reasoning credit is decoupled from the concept dictionary.
+      const raw = stripAccents(String(m.content).toLowerCase());
+      const stateHit = raw.match(
+        /(cortocircuit\w*|curtcircuit\w*|\bcorto\b|abiert\w*|obert\w*|interruptor|desconect\w*|desconnect\w*|puentead\w*|aislad\w*|aillad\w*|anulad\w*|queda fuera|fuera del circuito|no atraviesa|impide|bypass\w*|shorted|open switch|disconnected|isolated)/
+      );
+      if (stateHit && negated.length > 0) reasoningConcepts.add(stateHit[1]);
     }
   }
 

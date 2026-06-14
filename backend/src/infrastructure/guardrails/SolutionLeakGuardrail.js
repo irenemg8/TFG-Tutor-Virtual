@@ -194,7 +194,12 @@ class SolutionLeakGuardrail extends IGuardrail {
       //     cuenta de que la corriente pasa por R1, R2 y R4?" is the same leak
       //     with flow phrasing — StateReveal exempts flow questions by design,
       //     so this rule is the net for the full-set variant).
-      const INFLUENCE_RE = /\b(influy|influir|afect|contribu|relevant|important|depend|pasa|circula|fluye|passa|flueix|flows?|passes?)/;
+      // BUG-SL-EXACT (2026-06-14): broadened with the neutral "what about X"
+      // verbs ("ocurre", "sucede", "identific…", "considera", "piensa en",
+      // "recuerda", "fíjate", "ten en cuenta"). Production CONV[109] leaked
+      // "¿Y qué ocurre con … R1, R2 y R4 en esa ruta?" — no influence verb, so
+      // it escaped even though it named the full set before the student did.
+      const INFLUENCE_RE = /\b(influy|influir|afect|contribu|relevant|important|depend|pasa|circula|fluye|passa|flueix|flows?|passes?|ocurre|sucede|identific|considera|piensa|recuerda|fijate|ten en cuenta|tienes en cuenta|que hay de|que pasa con)/;
       const correctSetB2 = new Set(correctAnswer.map((c) => String(c).toUpperCase()));
       const evalSetB2 = ((ctx && ctx.evaluableElements) || []).map((e) => String(e).toUpperCase());
       const nonCorrectEval = evalSetB2.filter((e) => !correctSetB2.has(e));
@@ -216,13 +221,23 @@ class SolutionLeakGuardrail extends IGuardrail {
           const coversAll = nonCorrectEval.length === 0 ||
             nonCorrectEval.every((e) => found.indexOf(e) >= 0);
           if (coversAll) continue;
-        }
-        if (INFLUENCE_RE.test(stripAccents(sent.toLowerCase()))) {
+          // Extras present but not a full enumeration (e.g. a comparison
+          // "¿cómo R1,R2,R4 frente a R3…?"): still requires an influence verb,
+          // otherwise it could be a neutral mention of a wrong element.
+          if (!INFLUENCE_RE.test(stripAccents(sent.toLowerCase()))) continue;
           return {
             violated: true,
             evidence: "question names the full correct set + influence verb: '" + sent.trim().slice(0, 90) + "'",
           };
         }
+        // BUG-SL-EXACT (2026-06-14): the question names EXACTLY the correct set
+        // and no other element. Listing precisely R1,R2,R4 together hands the
+        // student the answer regardless of the verb ("¿has identificado ya R1,
+        // R2 y R4?", "¿qué ocurre con R1, R2 y R4…?"). No influence verb needed.
+        return {
+          violated: true,
+          evidence: "question names exactly the correct set: '" + sent.trim().slice(0, 90) + "'",
+        };
       }
     }
     return { violated: false };
