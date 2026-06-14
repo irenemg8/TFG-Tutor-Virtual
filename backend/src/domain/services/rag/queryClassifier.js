@@ -165,6 +165,26 @@ const postNegationPhrases = [
   "disconnected", "bypassed", "isolated",
   "está cortocircuitada", "está cortocircuitado", "cortocircuitada", "cortocircuitado",
   "en cortocircuito", "en corto", "está en corto", "está en cortocircuito",
+  // BUG-NEG-PHRASING (2026-06-14): offline replay of the 322 production
+  // transcripts surfaced ~20 residual false-accusations — the student excluded
+  // R3/R5 with wording the dictionary missed, so the element was read as
+  // PROPOSED and the tutor challenged what the student had just ruled out.
+  // Each phrasing below comes verbatim from a real transcript:
+  //   - past tense of the open-state ("R3 estaba abierta")
+  //   - terminal-level open ("R3 tiene un terminal abierto / sin conectar")
+  //   - line/branch open ("R3 en una línea abierta")
+  //   - existential framing ("en R3 hay un interruptor abierto", "un cortocircuito")
+  "estaba abierto", "estaba abierta", "estaban abiertos", "estaban abiertas",
+  "quedaba abierto", "quedaba abierta", "queda abierto", "queda abierta",
+  "terminal abierto", "terminal abierta", "un terminal abierto",
+  "tiene un terminal abierto", "tiene el terminal abierto",
+  "terminal sin conectar", "terminal sin conexion", "un terminal sin conectar",
+  "terminal que no esta conectado", "un terminal que no esta conectado",
+  "tiene un terminal que no esta conectado", "tiene un terminal sin conectar",
+  "linea abierta", "en linea abierta", "en una linea abierta",
+  "rama abierta", "en rama abierta", "en una rama abierta",
+  "hay un interruptor abierto", "hay interruptor abierto", "hay un cortocircuito",
+  "un cortocircuito", "en un cortocircuito", "con un cortocircuito",
   // val - state description
   "està en obert", "en circuit obert", "està obert", "està oberta",
   "curtcircuitada", "curtcircuitat", "en curtcircuit", "està curtcircuitada", "està curtcircuitat",
@@ -210,7 +230,11 @@ var postNegationPhrasesF = postNegationPhrases.map(foldForMatch);
 // belongs to "el interruptor", not R4). Only the long, self-disambiguating
 // switch phrases get the wide window; the rest keep the tight one.
 var postNegationPhraseWideF = postNegationPhrasesF.map(function (p) {
-  return p.indexOf("interruptor") >= 0 || p.indexOf("switch") >= 0;
+  // BUG-NEG-PHRASING (2026-06-14): the new terminal/line/branch phrasings are
+  // as long and self-disambiguating as the switch ones ("R3 tiene un terminal
+  // abierto" needs ~26 chars after R3), so they also earn the wide window.
+  return p.indexOf("interruptor") >= 0 || p.indexOf("switch") >= 0 ||
+    p.indexOf("terminal") >= 0 || p.indexOf("linea") >= 0 || p.indexOf("rama") >= 0;
 });
 
 // Index of the last sentence terminator (.!?) in `s`, treating a RUN of dots
@@ -393,7 +417,17 @@ var FLOW_NEGATION_HEADS = [
   "impide que pase la corriente por", "impide el paso por",
   "bloquea la corriente por", "bloquea el paso de la corriente por",
   "corta la corriente por", "corta el paso de la corriente por",
+  // BUG-NEG-PHRASING (2026-06-14): "el cortocircuito … evita que pase corriente
+  // por r5" — "evita" is a blocking verb, same class as impide/bloquea/corta.
+  "evita que pase la corriente por", "evita que pase corriente por",
+  "evita el paso de la corriente por", "evita el paso de corriente por",
+  "evita que circule la corriente por", "evita que circule corriente por",
   "no atraviesa", "no cruza",
+  // BUG-NEG-PHRASING (2026-06-14): "la corriente pasa por el cable … en vez de
+  // pasar por r5" — the contrastive flow head excludes the element that follows.
+  "en vez de pasar por", "en lugar de pasar por",
+  "en vez de circular por", "en lugar de circular por",
+  "en vez de pasar la corriente por", "en lugar de pasar la corriente por",
   // val
   "no passa corrent per", "no circula corrent per", "no passa per", "no deixa passar corrent per",
   "no pot passar corrent per", "no pot circular corrent per", "no pot passar per",
@@ -1031,7 +1065,17 @@ function classifyQuery(userMessage, correctAnswer, evaluableElements, lastAssist
         /^\s*tampoco\b/.test(after);
       var exceptGoverned = EXCEPT_BEFORE.test(folded.substring(Math.max(0, first.pos - 24), first.pos)) &&
         chain.some(function (o) { return negated.indexOf(o.el) >= 0; });
-      if (!trailingNo && !exceptGoverned) continue;
+      // BOTH (BUG-NEG-PHRASING 2026-06-14): "r3 y r5 ambas están cortocircuitadas",
+      // "las dos en abierto" — a "both" quantifier right after the list, paired
+      // with an excluding state/negation, governs every member. Without it the
+      // "ambas" pushes the state out of each element's per-element window and
+      // BOTH leak to PROPOSED — a double false-accusation seen in the replay.
+      // Requires the excluding cue too, so "r3 y r5 ambas influyen" stays proposed.
+      var afterWide = folded.substring(last.end, Math.min(folded.length, last.end + 48));
+      var EXCL_STATE_RE = /(corto|cortocircuit|curtcircuit|abiert|obert|interruptor|desconect|desconnect|aislad|aillad|anulad|puentead|fuera|no influye|no contribuye|no pasa|no circula|no cuenta)/;
+      var bothGoverned = /^\s*(ambas|ambos|les dues|totes dues|las dos|los dos|both)\b/.test(afterWide) &&
+        EXCL_STATE_RE.test(afterWide);
+      if (!trailingNo && !exceptGoverned && !bothGoverned) continue;
       for (var j = 0; j < chain.length; j++) {
         var el = chain[j].el;
         if (negated.indexOf(el) < 0) negated.push(el);

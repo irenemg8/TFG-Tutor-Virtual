@@ -50,11 +50,30 @@ function intersect(a, b) {
  * @param {Array<string>} correctAnswerRaw - respuesta correcta del ejercicio
  * @returns {Array<{id, name, misconception, strategy, confidence, reason}>}
  */
+// A canonical circuit element token: a letter run + digits (R3, C2, L1, V1…).
+// Used to decide whether the exercise's correct answer is an ELEMENT SET (Ej1-5)
+// or a numeric/text answer (Ej6/7: "por todas circula la misma corriente").
+const ELEMENT_TOKEN_RE = /^[A-Z]+\d+$/;
+
 function matchACs(acPatterns, proposedRaw, negatedRaw, correctAnswerRaw) {
   if (!Array.isArray(acPatterns) || acPatterns.length === 0) return [];
   const proposed = toUpperSet(proposedRaw);
   const negated = toUpperSet(negatedRaw);
   const correct = toUpperSet(correctAnswerRaw);
+
+  // BUG-AC-NUMERIC (2026-06-14): every match rule below reasons about element
+  // membership RELATIVE to the correct element set ("wrongly includes",
+  // "wrongly excludes", "missing"). When the exercise answer is numeric/text
+  // (Ej6/7: "por todas circula la misma corriente"), `correct` holds that text
+  // blob and contains NO element tokens — so the `wronglyIncluded` filter treats
+  // EVERY element the student names as "wrong" and fires AC2/AC14 spuriously
+  // (verified: a student naming R1..R6 triggered AC2@0.85 AND AC14@0.85 even on
+  // a correct enumeration). Element-based AC detection is only meaningful when
+  // the correct answer is itself an element set; bail out cleanly otherwise.
+  // The patterns stay in the JSON (Ej6/7 would need concept-based ACs, which is
+  // a separate mechanism) — we just don't fire unreliable element matches.
+  const correctIsElementSet = [...correct].some((x) => ELEMENT_TOKEN_RE.test(x));
+  if (!correctIsElementSet) return [];
   const missing = new Set();
   for (const c of correct) {
     if (!proposed.has(c) && !negated.has(c)) missing.add(c);

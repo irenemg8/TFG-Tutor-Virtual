@@ -154,3 +154,27 @@ describe("queryClassifier mixed proposal → partial_correct", () => {
     expect(r.type).toBe(types.partialCorrect);
   });
 });
+
+// BUG-AC-NUMERIC (2026-06-14): exercises with a numeric/text correct answer
+// (Ej6/7: "por todas circula la misma corriente") must NOT fire element-based
+// ACs — the `wronglyIncluded` filter has no element set to compare against, so
+// every named element looked "wrong" and AC2/AC14 fired spuriously.
+describe("acRegistry.matchACs — numeric/text correct answer guard", () => {
+  const ej6Patterns = [
+    { id: "AC2", name: "Atenuación", misconception: "x", strategy: "y",
+      match: { includes: ["R1", "R2", "R3", "R4", "R5", "R6"] } },
+    { id: "AC14", name: "Serie/paralelo", misconception: "x", strategy: "y",
+      match: { includes: ["R1", "R2", "R3", "R4", "R5", "R6"] } },
+  ];
+  const numericAnswer = ["por todas las resistencias pasa la misma corriente"];
+
+  test("does NOT fire element ACs when correct answer is text", () => {
+    const r = matchACs(ej6Patterns, ["R1", "R2", "R3", "R4", "R5", "R6"], [], numericAnswer);
+    expect(r).toEqual([]);
+  });
+
+  test("still fires normally when correct answer IS an element set", () => {
+    const r = matchACs(ej1Patterns, ["R1", "R2", "R3", "R4"], [], ej1Correct);
+    expect(r.map((a) => a.id)).toContain("AC1");
+  });
+});
