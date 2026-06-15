@@ -38,7 +38,24 @@ class Ejercicio {
   }
 
   getEvaluableElements() {
-    return this.tutorContext?.evaluableElements || [];
+    const explicit = this.tutorContext?.evaluableElements || [];
+    if (explicit.length > 0) return explicit;
+    // BUG-EVAL-EMPTY (2026-06-15): rows seeded before the netlist-fallback
+    // existed have an EMPTY elementos_evaluables. An empty set silently breaks
+    // TWO things and sends the tutor into an infinite re-ask loop:
+    //   1. flow-negation detection — "no pasa la corriente por R5" needs the
+    //      element list to negate R5 across the >15-char gap; without it R5 is
+    //      read as PROPOSED, poisoning cumulativeAnswer.wronglyNamed.
+    //   2. cumulative closure — `excluded` only counts elements that are in
+    //      evaluableElements, so it stays [] and closureReady is never true.
+    // Derive the set from the netlist (same logic as the seeder) so the system
+    // is robust without a re-seed, then union the correct answer for safety.
+    const netlist = this.tutorContext?.netlist || "";
+    const out = [];
+    const push = (x) => { const u = String(x).toUpperCase(); if (u && out.indexOf(u) < 0) out.push(u); };
+    (netlist.match(/R\d+/gi) || []).forEach(push);
+    (this.getCorrectAnswer() || []).forEach(push);
+    return out;
   }
 
   getExerciseNumber() {

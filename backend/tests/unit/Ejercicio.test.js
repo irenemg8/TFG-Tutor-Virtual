@@ -40,3 +40,31 @@ describe("Ejercicio.getExerciseNumber", () => {
     expect(build({ title: "Algo", image: "foo.png" }).getExerciseNumber()).toBeNull();
   });
 });
+
+// BUG-EVAL-EMPTY (2026-06-15): rows seeded before the netlist-fallback have an
+// empty elementos_evaluables, which silently broke flow-negation + cumulative
+// closure and sent the tutor into an infinite re-ask loop. getEvaluableElements
+// must derive the set from the netlist when the explicit field is empty.
+describe("Ejercicio.getEvaluableElements — netlist fallback", () => {
+  const netlist = "R1 N1 N2 1\nV1 N1 0 1\nR2 N2 0 1\nR3 N3 0 1\nR4 N2 0 1\nR5 0 0 1";
+
+  test("uses explicit evaluableElements when present", () => {
+    const ej = new Ejercicio({ title: "Ejercicio 1", tutorContext: { evaluableElements: ["R1", "R2"], netlist } });
+    expect(ej.getEvaluableElements()).toEqual(["R1", "R2"]);
+  });
+
+  test("derives from netlist when evaluableElements is empty", () => {
+    const ej = new Ejercicio({ title: "Ejercicio 1", tutorContext: { evaluableElements: [], netlist, correctAnswer: ["R1", "R2", "R4"] } });
+    expect(ej.getEvaluableElements().sort()).toEqual(["R1", "R2", "R3", "R4", "R5"]);
+  });
+
+  test("unions the correct answer even if not in the netlist", () => {
+    const ej = new Ejercicio({ title: "Ejercicio 1", tutorContext: { netlist: "R1 N1 N2 1", correctAnswer: ["R1", "R9"] } });
+    expect(ej.getEvaluableElements().sort()).toEqual(["R1", "R9"]);
+  });
+
+  test("returns [] when there is nothing to derive from", () => {
+    const ej = new Ejercicio({ title: "Ejercicio 1", tutorContext: { netlist: "", correctAnswer: [] } });
+    expect(ej.getEvaluableElements()).toEqual([]);
+  });
+});
