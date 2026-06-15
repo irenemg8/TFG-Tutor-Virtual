@@ -321,6 +321,13 @@ class TutoringOrchestrator {
     // hit the legacy correct_good_reasoning gate below and re-emitted the
     // canned congratulation instead of answering.
     if (ctx && ctx.exerciseAlreadyClosed) return false;
+    // State-confusion guard (2026-06-15): never close on a turn where the
+    // student attributed the WRONG physical state to an element ("R3 en
+    // cortocircuito" — R3 is open). The set may be complete and the exclusions
+    // "reasoned" by the heuristic, but the justification is actually wrong, so
+    // congratulating would validate a misconception. Let the tutor challenge
+    // the state first (the [ESTADO CONFUNDIDO] banner handles this turn).
+    if (ctx && Array.isArray(ctx.stateMismatches) && ctx.stateMismatches.length > 0) return false;
     const prevGoodReasoning = (ctx && ctx.loopState && ctx.loopState.prevGoodReasoningTurns) || 0;
     if (cls === "correct_good_reasoning" && prevGoodReasoning >= 1) return true;
 

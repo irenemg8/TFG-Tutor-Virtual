@@ -307,6 +307,26 @@ class TutorAgent extends AgentInterface {
       }
     }
 
+    // 1e. STATE CONFUSION banner (2026-06-15). The student attributed the WRONG
+    //    physical state to an element ("R3 en cortocircuito" — R3 is open; "R5
+    //    en abierto" — R5 is shorted). AcDetectorAgent derived the true states
+    //    from the netlist + expert reasoning. This must OVERRIDE any "correct
+    //    rejection" praise: the element may be correctly excluded, but the
+    //    REASON is wrong, so we challenge the state — never confirm it.
+    let stateMismatchBanner = "";
+    const stateMismatches = context.stateMismatches || [];
+    if (stateMismatches.length > 0) {
+      const sm = stateMismatches[0];
+      const saidEs = sm.said === "short" ? "en cortocircuito" : "en circuito abierto";
+      stateMismatchBanner =
+        "[ESTADO CONFUNDIDO — PRIORIDAD MÁXIMA, IGNORA OTROS HINTS]\n" +
+        "El alumno ha atribuido a " + sm.element + " un estado que NO le corresponde: afirma que está " + saidEs + ".\n" +
+        "Aunque quizá excluya bien " + sm.element + ", el MOTIVO es erróneo: NO se lo confirmes, NO le felicites, NO digas '¡Bien!'.\n" +
+        "Cuestiónaselo de forma socrática: invítale a mirar los terminales de " + sm.element +
+        " (y el interruptor, si lo hubiera) en el netlist y a reconsiderar qué estado tiene realmente. " +
+        "NUNCA reveles tú el estado correcto. UNA sola pregunta, corta.\n\n";
+    }
+
     // 2. Build conversation progress hint
     const progressHint = this._buildProgressHint(context.history);
 
@@ -329,15 +349,25 @@ class TutorAgent extends AgentInterface {
     // entre comillas el LLM tiene una referencia explícita de qué evitar.
     let doNotRepeatHint = "";
     const lastQ = (context.loopState && context.loopState.lastAssistantQuestion) || "";
-    if (lastQ && lastQ.length > 10) {
+    const recentQs = this._recentTutorQuestions(context.history, 3);
+    const askedList = recentQs.length > 0
+      ? recentQs
+      : (lastQ && lastQ.length > 10 ? [lastQ.replace(/\s+/g, " ").trim()] : []);
+    if (askedList.length > 0) {
+      // BUG-REPEAT-PARAPHRASE (2026-06-15): the old hint quoted ONLY the last
+      // question, so qwen dodged the similarity guard by rewording it or by
+      // re-applying the SAME shape to another element. Show the last few and ban
+      // the SHAPE, not just the words; force a real change of tack when stuck.
       doNotRepeatHint =
-        "[DO NOT REPEAT YOUR PREVIOUS QUESTION]\n" +
-        "Your previous Socratic question was LITERALLY:\n" +
-        "  «" + lastQ.replace(/\s+/g, " ").trim() + "»\n" +
-        "Do NOT repeat that question, even with synonyms. " +
-        "If the student didn't answer it, it means the question was unhelpful — " +
-        "change angle: ask about a DIFFERENT element, a DIFFERENT property, or " +
-        "give a concrete factual hint and ask a yes/no follow-up.\n\n";
+        "[NO REPITAS TUS PREGUNTAS ANTERIORES]\n" +
+        "Ya has hecho estas preguntas:\n" +
+        askedList.map(function (q) { return "  • «" + q + "»"; }).join("\n") + "\n" +
+        "PROHIBIDO repetir cualquiera de ellas, aunque sea: (a) reformulada con otras palabras, " +
+        "(b) con la MISMA estructura aplicada a otro elemento (p.ej. '¿por qué no influye R5?' → " +
+        "'¿por qué no influye R3?'), o (c) la misma idea general ('¿por qué las otras no influyen?'). " +
+        "Si el alumno sigue atascado, esa pregunta NO le está ayudando: CAMBIA de táctica de verdad — " +
+        "da UN hecho concreto del circuito (sin revelar la respuesta ni los estados) y pregunta algo simple de sí/no, " +
+        "o pídele que justifique UN elemento concreto que él ya nombró. Nunca devuelvas la misma pregunta abierta.\n\n";
     }
 
     // BUG-011-D (2026-05-03): hechos ya establecidos por el tutor en
@@ -455,13 +485,15 @@ class TutorAgent extends AgentInterface {
     // cumulative banner is additive context and does NOT suppress the hints.
     const cumulativeIsTier1 = !!(cum && cum.complete && cum.stillMissing.length === 0);
     const hasTier1Banner =
-      verdictBanner.length > 0 || acDetectedBanner.length > 0 || cumulativeIsTier1;
+      verdictBanner.length > 0 || acDetectedBanner.length > 0 || cumulativeIsTier1 ||
+      stateMismatchBanner.length > 0;
     const safeProgressHint = hasTier1Banner ? "" : progressHint;
     const safeRepetitionHint = hasTier1Banner ? "" : repetitionHint;
     const safeStrategyHint = hasTier1Banner ? "" : strategyHint;
     const safeConceptsBanner = acDetectedBanner.length > 0 ? "" : conceptsBanner;
 
     const dynamicContext =
+      stateMismatchBanner +
       explanationHint +
       cumulativeBanner +
       verdictBanner +
@@ -726,6 +758,27 @@ class TutorAgent extends AgentInterface {
       banner += T.partial;
     }
     return banner + "\n";
+  }
+
+  // Last up-to-N DISTINCT Socratic questions the tutor has asked (most recent
+  // first), extracted from the live history. Shared by the anti-repetition hint
+  // so the LLM sees more than just its immediately-previous question — that is
+  // what lets it dodge the similarity guard by rewording or by re-applying the
+  // same question shape to a different element ("¿por qué no influye R5?" →
+  // "¿por qué no influye R3?").
+  _recentTutorQuestions(history, n) {
+    if (!Array.isArray(history)) return [];
+    const out = [];
+    const seen = new Set();
+    for (let i = history.length - 1; i >= 0 && out.length < (n || 3); i--) {
+      if (history[i].role !== "assistant") continue;
+      const matches = (history[i].content || "").match(/[^.!?]*\?/g);
+      if (!matches || matches.length === 0) continue;
+      const q = matches[matches.length - 1].replace(/\s+/g, " ").trim();
+      const key = q.toLowerCase();
+      if (q.length > 8 && !seen.has(key)) { seen.add(key); out.push(q); }
+    }
+    return out;
   }
 
   _buildProgressHint(history) {

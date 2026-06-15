@@ -38,6 +38,13 @@ class AcDetectorAgent extends AgentInterface {
   }
 
   async execute(context) {
+    // State-confusion detection (2026-06-15) runs BEFORE the proposed/negated
+    // skip gate, because a turn like "R3 en cortocircuito" must be flagged even
+    // when the only signal is a (correctly-excluding) negation. Derives each
+    // element's true state from the exercise netlist + expert reasoning and
+    // flags an opposite-state attribution ("R3 en corto" when R3 is open).
+    context.stateMismatches = _computeStateMismatches(context);
+
     if (this.canSkip(context)) {
       context.detectedACs = [];
       context.turnVerdict = null;
@@ -99,6 +106,18 @@ function _traceAcDetection(context, detectedACs, verdict, reason) {
       + " reason=" + reason
     );
   } catch (_) { /* nunca romper el flujo por una traza */ }
+}
+
+function _computeStateMismatches(context) {
+  try {
+    const { deriveElementStates, detectStateMismatch } = require("../services/rag/elementStates");
+    const tc = context && context.exercise && context.exercise.tutorContext;
+    if (!tc) return [];
+    const states = deriveElementStates(tc.netlist, tc.expertMode || tc.expertReasoning);
+    return detectStateMismatch(context.userMessage || "", states);
+  } catch (_) {
+    return [];
+  }
 }
 
 function _norm(x) {
