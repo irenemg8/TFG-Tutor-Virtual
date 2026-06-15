@@ -31,6 +31,14 @@ class PoliGptLlmAdapter extends ILlmService {
     this.model = opts.model || config.POLIGPT_MODEL;
     this.defaultTemperature = opts.temperature != null ? opts.temperature : config.OLLAMA_TEMPERATURE;
     this.defaultMaxTokens = opts.maxTokens != null ? opts.maxTokens : config.OLLAMA_NUM_PREDICT;
+    // COLD-START (2026-06-14): PoliGPT is Ollama-backed and unloads the model
+    // from GPU when idle, so the next student turn after a gap pays a 30-150s
+    // cold reload (the production "tardando demasiado" timeouts). Ollama's
+    // `keep_alive` keeps the model resident: "60m" = stay loaded 60min after the
+    // last call, "-1" = never unload. Verified PoliGPT accepts the field. This
+    // only fights IDLE eviction; memory-pressure eviction by another model needs
+    // a pinned instance on the UPV side.
+    this.keepAlive = opts.keepAlive != null ? opts.keepAlive : config.OLLAMA_KEEP_ALIVE;
     this.defaultTimeoutMs = opts.timeoutMs != null
       ? opts.timeoutMs
       : Number(process.env.OLLAMA_TIMEOUT_MS || 60000);
@@ -85,6 +93,9 @@ class PoliGptLlmAdapter extends ILlmService {
       max_tokens: options.numPredict != null
         ? options.numPredict
         : (options.maxTokens != null ? options.maxTokens : this.defaultMaxTokens),
+      // Keep the model warm between turns (Ollama-native param, see constructor).
+      // Sent on every call so the idle timer resets each turn.
+      keep_alive: options.keepAlive != null ? options.keepAlive : this.keepAlive,
     };
   }
 

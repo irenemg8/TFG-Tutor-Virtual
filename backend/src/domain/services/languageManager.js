@@ -95,6 +95,17 @@ const HEURISTIC_STOPWORDS = {
     "en", "se", "su", "sus", "no", "sí", "creo", "pienso", "yo", "tú",
     "esto", "eso", "aquí", "allí", "cómo", "cuál", "cuándo", "dónde",
     "está", "están", "tiene", "hay",
+    // BUG-LM-DRIFT (2026-06-14): "No te preocupes, vamos paso a paso." (español
+    // perfecto) se clasificaba como inglés porque "a" y "no" cuentan para EN y
+    // la lista ES no incluía "a"/"te"/"vamos"… → el guardrail language_drift
+    // borraba la frase. Añadidas las palabras función más frecuentes del español
+    // para que una frase ES gane con holgura. Solo ayuda: una frase realmente
+    // inglesa apenas contiene estas formas.
+    "a", "al", "te", "me", "lo", "le", "les", "nos", "mi", "mis", "tu", "tus",
+    "vamos", "va", "van", "voy", "vas", "más", "ya", "muy", "también", "tan",
+    "este", "esta", "estos", "estas", "ese", "esa", "esos", "esas",
+    "todo", "toda", "todos", "todas", "cada", "así", "cuando", "entre",
+    "sobre", "desde", "hasta", "vamos", "paso", "ahora", "bien",
   ],
   val: [
     "el", "la", "els", "les", "un", "una", "que", "què", "és", "són",
@@ -105,6 +116,12 @@ const HEURISTIC_STOPWORDS = {
     // entries ("hi ha", "moltes vegades") could never match a token — dead
     // signal. Kept the single-token forms only.
     "moltes", "mentre",
+    // BUG-LM-DRIFT (2026-06-14): same enrichment as ES so a Valencian sentence
+    // wins reliably over the ambiguous EN function words ("a", "no").
+    "a", "al", "et", "em", "ho", "li", "ens", "meu", "teu", "anem", "va",
+    "més", "ja", "molt", "també", "tan", "aquest", "aquesta", "aquests",
+    "aquestes", "tot", "tota", "tots", "totes", "cada", "així", "entre",
+    "sobre", "des", "fins", "ara", "pas", "bé",
   ],
   en: [
     "the", "a", "an", "of", "to", "and", "or", "but", "because", "for",
