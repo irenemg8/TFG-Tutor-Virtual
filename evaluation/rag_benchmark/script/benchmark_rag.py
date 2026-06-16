@@ -1,25 +1,68 @@
 #!/usr/bin/env python3
 """
-==============================================================================
-BENCHMARK RAG - Socratic Tutor Ohm's Law
-==============================================================================
-Models:
-  qwen2.5:latest  ->  UPV Ollama   (https://ollama.gti-ia.upv.es:443)
-  llama           ->  PoliGPT      (https://api.poligpt.upv.es)
-  phi4            ->  PoliGPT      (https://api.poligpt.upv.es)
-
-Metrics (identical to previous benchmarks):
-  A. Efficiency : average_latency, p95_latency, throughput, average_tokens
-  B. Pedagogical (1-5 each):
-       socratic_quality       - does it guide or instruct?
-       conceptual_precision   - does it diagnose the specific error?
-       consistency            - does it adapt to the student level?
-       hallucination_rate     - is it factually correct? (5=no hallucinations)
-  C. total_score (4-20)
-  D. AC detection: precision, recall, F1
-
-Output: JSON + XLSX (7 sheets identical to informe_comparativos_modelos.xlsx)
-==============================================================================
+------------------------------------------------------------------------------
+            _________________________________________________________
+            |                       BENCHMARK RAG                   |
+            |  Runs the Socratic Ohm's-law tutor benchmark by        |
+            |  driving the real backend RAG pipeline, scoring every  |
+            |  turn (efficiency, pedagogy, AC detection) and writing |
+            |  the JSON and 7-sheet XLSX comparison reports.         |
+        ____|________________                                        |
+   Txt -> | extract_think() | -> (Txt, Txt)                          |
+          -------------------                                        |
+        ____|___________________________                             |
+        | detect_acs_in_response() | -> [Txt]                        |
+        ---------------------------                                  |
+        ____|_________________________                               |
+        | evaluate_socraticidad() | -> (Z, Txt)                      |
+        --------------------------                                   |
+        ____|________________________________                        |
+        | evaluate_precision_conceptual() | -> (Z, Txt)              |
+        ----------------------------------                           |
+        ____|_______________________                                 |
+        | evaluate_consistencia() | -> (Z, Txt)                      |
+        --------------------------                                   |
+        ____|__________________________                              |
+        | evaluate_tasa_alucinacion() | -> (Z, Txt)                  |
+        ------------------------------                               |
+        ____|___________________________                             |
+        | compute_cot_faithfulness() | -> R                          |
+        -----------------------------                                |
+        ____|________________________                               |
+        | compute_cot_relevance() | -> R                             |
+        --------------------------                                   |
+        ____|________________                                        |
+        | build_feedback() | -> Txt                                  |
+        -------------------                                          |
+        ____|__________________                                      |
+        | build_rag_prompt() | -> Txt                                |
+        ---------------------                                        |
+        ____|________________                                        |
+        | save_json() | -> Path                                      |
+        ---------------                                              |
+        ____|_________________________                               |
+        | compute_model_stats() | -> dict                            |
+        ------------------------                                     |
+        ____|___________________                                     |
+        | build_sheet_name() | -> Txt                                |
+        ---------------------                                        |
+        ____|_____________________                                   |
+        | build_formula_range() | -> Txt                             |
+        ------------------------                                     |
+        ____|________________                                        |
+        | save_xlsx() | -> Path                                      |
+        ---------------                                              |
+        ____|___________________                                     |
+        | print_summary() | -> void                                  |
+        ------------------                                           |
+        ____|___________                                             |
+        | main() | -> void                                           |
+        ----------                                                   |
+            |                                                        |
+            |  Classes: EvalResult, RagKnowledgeBase,                |
+            |           BackendClient, RagBenchmark                  |
+            |________________________________________________________|
+------------------------------------------------------------------------------
 """
 
 import os
@@ -40,24 +83,17 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Force UTF-8 output (needed on Windows with cp1252)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# ─────────────────────────────────────────────────────────────
-# CONFIGURATION
-# ─────────────────────────────────────────────────────────────
-# Backend URL (Node.js app that runs the full RAG pipeline)
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3030")
 
 _SCRIPT_DIR = Path(__file__).parent
 DATA_DIR    = (_SCRIPT_DIR / "../../../backend/src/data").resolve()
 OUTPUT_DIR  = (_SCRIPT_DIR / "../results").resolve()
 
-# Exercises that have an available dataset (exercise 2 does not exist)
 ALL_EXERCISES = [1, 3, 4, 5, 6, 7]
 
-# Efficiency thresholds (consistent with evaluate_model.py)
 THRESHOLDS = {
     "optimal_latency":    3.0,
     "acceptable_latency": 5.0,
@@ -66,37 +102,39 @@ THRESHOLDS = {
 }
 
 
-# ─────────────────────────────────────────────────────────────
-# RESULT DATACLASS
-# ─────────────────────────────────────────────────────────────
 @dataclass
 class EvalResult:
-    # Identification
+    """
+            _________________________________________________________
+            |                       EVALRESULT                      |
+            |  Dataclass holding every metric of a single benchmark |
+            |  turn: identification, test data, RAG context, model  |
+            |  output, efficiency, AC detection, pedagogy and CoT.  |
+        ____|________________                                        |
+        | to_dict() | -> Dict          (reads all attributes)        |
+        -------------                                                |
+            |________________________________________________________|
+    """
     model:           str
     ejercicio:       int
     sample_id:       int
-    conversation_id: int   # group of turns within the same exercise
-    turn:            int   # turn number within the conversation (1, 2, 3...)
+    conversation_id: int
+    turn:            int
 
-    # Test data
     student_answer: str
     expected_tutor: str
     expected_acs:   List[str]
 
-    # RAG
     retrieved_context: str
     rag_prompt:        str
 
-    # Model response
     model_response: str
     think_content:  str
     tutor_response: str
 
-    # Efficiency
     latencia:        float
     tokens_generados: int
 
-    # AC detection
     detected_acs:    List[str]
     true_positives:  List[str]
     false_positives: List[str]
@@ -105,42 +143,66 @@ class EvalResult:
     ac_recall:       float
     ac_f1:           float
 
-    # Pedagogical metrics (1-5)
     socraticidad:         int
     precision_conceptual: int
     consistencia:         int
     tasa_alucinacion:     int
     score_total:          int
 
-    # Reasoning (CoT)
     faithfulness: Optional[float]
     relevance:    Optional[float]
 
-    # Feedback
     feedback_constructivo: str
     timestamp: str = ""
 
     def to_dict(self) -> Dict:
-        """Convert the result to a plain dictionary."""
+        """
+           IN -> ____|__________
+                | to_dict() | -> Dict
+                 -----------
+           Returns the result as a plain dictionary via dataclasses.asdict.
+        """
         return asdict(self)
 
 
-# ─────────────────────────────────────────────────────────────
-# RAG KNOWLEDGE BASE
-# ─────────────────────────────────────────────────────────────
 class RagKnowledgeBase:
     """
-    Loads tutorContext_por_ejercicio.json and alternative_conceptions.json.
-    Provides structured context by exercise_id and AC detection rules.
+            _________________________________________________________
+            |                   RAGKNOWLEDGEBASE                    |
+            |  Loads the exercise tutor contexts and the global     |
+            |  alternative-conception definitions, and exposes the  |
+            |  context retrieval and AC-matching rules used during  |
+            |  evaluation.                                          |
+        ____|________________                                        |
+   Path -> | __init__() | -> void   (writes _ctx (dict), _ac_defs (dict))|
+           ------------                                              |
+        ____|____________                                            |
+        | retrieve() | -> Txt                                        |
+        -------------                                                |
+        ____|___________________                                     |
+        | expected_acs_for() | -> [Txt]                              |
+        ---------------------                                        |
+        ____|___________________                                     |
+        | get_ac_patterns() | -> [Dict]                              |
+        --------------------                                         |
+        ____|________________                                        |
+        | get_enunciado() | -> Txt                                   |
+        -------------------                                          |
+            |________________________________________________________|
     """
 
     def __init__(self, data_dir: Path):
-        """Load the knowledge base files from the given data directory."""
+        """
+           IN -> Path ____|___________
+                      | __init__() | -> void   (writes _ctx (dict), _ac_defs (dict))
+                       ------------
+           Loads tutorContext_por_ejercicio.json and
+           alternative_conceptions.json from the given data directory.
+        """
         ctx_path = data_dir / "contextos-ejercicios" / "tutorContext_por_ejercicio.json"
         with open(ctx_path, encoding="utf-8") as f:
             raw = json.load(f)
 
-        # Build context dictionary without dict comprehension
         self._ctx: Dict[int, Dict] = {}
         for entry in raw:
             exercise_id = entry["ejercicio"]
@@ -153,9 +215,14 @@ class RagKnowledgeBase:
         print(f"  RAG KB loaded: {len(self._ctx)} exercises, "
               f"{len(self._ac_defs)} global ACs")
 
-    # ── Context retrieval ─────────────────────────────────────
     def retrieve(self, exercise_id: int) -> str:
-        """Return the structured context string for the given exercise."""
+        """
+           IN -> Z ____|____________
+                  | retrieve() | -> Txt   (reads _ctx (dict), _ac_defs (dict))
+                   ------------
+           Returns the structured context string (statement, expert mode
+           and possible ACs) for the given exercise.
+        """
         ctx = self._ctx.get(exercise_id)
         if not ctx:
             return f"[No context available for exercise {exercise_id}]"
@@ -185,13 +252,14 @@ class RagKnowledgeBase:
 
         return "\n".join(lines)
 
-    # ── Expected ACs based on the student answer ──────────────
     def expected_acs_for(self, exercise_id: int, student_answer: str) -> List[str]:
         """
-        Use the 'match' rules in acPatterns to determine which ACs the
-        student shows in their answer.
-          match.includes  -> the student MENTIONS an incorrect component
-          match.missesAny -> the student OMITS a correct component
+           IN -> Z, Txt ____|____________________
+                        | expected_acs_for() | -> [Txt]   (reads _ctx (dict))
+                         ---------------------
+           Applies the 'match' rules in acPatterns (includes -> mentions a
+           wrong component, missesAny -> omits a correct one) to list which
+           ACs the student answer exhibits.
         """
         ctx = self._ctx.get(exercise_id, {})
         answer_upper = student_answer.upper()
@@ -202,14 +270,12 @@ class RagKnowledgeBase:
             includes_list  = match_rules.get("includes",  [])
             misses_any_list = match_rules.get("missesAny", [])
 
-            # Check if the student mentions any incorrect component
             if includes_list:
                 for rule in includes_list:
                     if rule.upper() in answer_upper:
                         found_acs.append(pattern["id"])
                         break
                 else:
-                    # Only check missesAny if includes did not match
                     if misses_any_list:
                         for rule in misses_any_list:
                             if rule.upper() not in answer_upper:
@@ -224,32 +290,74 @@ class RagKnowledgeBase:
         return found_acs
 
     def get_ac_patterns(self, exercise_id: int) -> List[Dict]:
-        """Return the list of AC patterns for the given exercise."""
+        """
+           IN -> Z ____|___________________
+                  | get_ac_patterns() | -> [Dict]   (reads _ctx (dict))
+                   --------------------
+           Returns the list of AC patterns for the given exercise.
+        """
         return self._ctx.get(exercise_id, {}).get("acPatterns", [])
 
     def get_enunciado(self, exercise_id: int) -> str:
-        """Return the problem statement for the given exercise."""
+        """
+           IN -> Z ____|________________
+                  | get_enunciado() | -> Txt   (reads _ctx (dict))
+                   -----------------
+           Returns the problem statement for the given exercise.
+        """
         return self._ctx.get(exercise_id, {}).get("enunciado", "")
 
 
-# ─────────────────────────────────────────────────────────────
-# BACKEND CLIENT
-# ─────────────────────────────────────────────────────────────
 class BackendClient:
     """
-    Calls the Node.js backend API (POST /api/ollama/chat/stream).
-    The backend runs the full RAG pipeline:
-      ragMiddleware -> ChromaDB -> Orchestrator -> GuardrailPipeline -> LLM streaming.
+            _________________________________________________________
+            |                     BACKENDCLIENT                     |
+            |  HTTP client for the Node.js backend that runs the    |
+            |  full RAG pipeline (ragMiddleware -> ChromaDB ->      |
+            |  Orchestrator -> GuardrailPipeline -> LLM streaming). |
+            |  Handles login, exercise mapping and SSE chat.        |
+        ____|________________                                        |
+   Txt -> | __init__() | -> void   (writes base_url (Txt), session (Obj),|
+          ------------               exercise_map (dict))             |
+        ____|_________                                               |
+        | login() | -> void                                          |
+        ----------                                                   |
+        ____|__________________                                      |
+        | load_exercises() | -> void                                 |
+        -------------------                                          |
+        ____|___________________                                     |
+        | set_exercise_map() | -> void                               |
+        --------------------                                         |
+        ____|________________                                        |
+        | stream_chat() | -> (Txt, Txt | null, R, Z)                 |
+        ----------------                                             |
+        ____|_________                                               |
+        | check() | -> T/F                                           |
+        ----------                                                   |
+            |________________________________________________________|
     """
 
     def __init__(self, base_url: str = BACKEND_URL):
+        """
+           IN -> Txt ____|___________
+                     | __init__() | -> void   (writes base_url (Txt), session (Obj), exercise_map (dict))
+                      ------------
+           Initializes the HTTP session (TLS verification off) and an empty
+           benchmark-number to DB-id exercise map.
+        """
         self.base_url = base_url.rstrip("/")
         self.session  = requests.Session()
         self.session.verify = False
-        self.exercise_map: Dict[int, str] = {}  # benchmark_number -> db_id
+        self.exercise_map: Dict[int, str] = {}
 
     def login(self) -> None:
-        """Login via DEV_BYPASS_AUTH and store the session cookie."""
+        """
+           IN -> ____|_______
+                | login() | -> void   (reads base_url (Txt), session (Obj))
+                 ---------
+           Logs in via the DEV_BYPASS_AUTH dev-login endpoint and stores the
+           session cookie; raises on failure.
+        """
         url  = f"{self.base_url}/api/auth/dev-login"
         resp = self.session.post(url, json={}, timeout=10)
         if resp.status_code not in (200, 201):
@@ -265,9 +373,12 @@ class BackendClient:
         bench_enunciados: Dict[int, str],
     ) -> None:
         """
-        Fetch all exercises from the backend and map benchmark numbers to DB IDs.
-        Matches by comparing the first 20 chars of the tutorContext enunciado
-        against the exercise statement stored in the DB.
+           IN -> [Z], dict ____|__________________
+                           | load_exercises() | -> void   (writes exercise_map (dict))
+                            -------------------
+           Fetches all backend exercises and maps each benchmark number to a
+           DB id by matching the first 20 chars of the statement; raises when
+           nothing maps.
         """
         resp = self.session.get(f"{self.base_url}/api/ejercicios", timeout=10)
         if resp.status_code != 200:
@@ -305,7 +416,12 @@ class BackendClient:
             )
 
     def set_exercise_map(self, mapping: Dict[str, str]) -> None:
-        """Manually set exercise_map from a {str(number): db_id} dict."""
+        """
+           IN -> dict ____|____________________
+                      | set_exercise_map() | -> void   (writes exercise_map (dict))
+                       --------------------
+           Manually sets exercise_map from a {str(number): db_id} dict.
+        """
         self.exercise_map = {int(k): v for k, v in mapping.items()}
 
     def stream_chat(
@@ -315,9 +431,12 @@ class BackendClient:
         interaccion_id: Optional[str] = None,
     ) -> Tuple[str, Optional[str], float, int]:
         """
-        Call POST /api/ollama/chat/stream and parse the SSE response.
-        Returns (tutor_text, interaccion_id, latency_s, token_estimate).
-        Pass interaccion_id from the previous turn to continue the same conversation.
+           IN -> Txt, Txt, Txt | null ____|________________
+                                      | stream_chat() | -> (Txt, Txt | null, R, Z)
+                                       ----------------
+           Calls POST /api/ollama/chat/stream, parses the SSE stream and
+           returns (tutor_text, interaccion_id, latency_s, token_estimate);
+           pass the previous interaccion_id to continue the conversation.
         """
         url     = f"{self.base_url}/api/ollama/chat/stream"
         payload: Dict[str, Any] = {
@@ -341,7 +460,6 @@ class BackendClient:
             for raw_line in resp.iter_lines(decode_unicode=True):
                 if raw_line is None:
                     continue
-                # SSE comment lines (": ok", ": ping")
                 if raw_line.startswith(": "):
                     continue
                 if not raw_line.startswith("data: "):
@@ -360,12 +478,10 @@ class BackendClient:
                     print(f"  [BackendClient] SSE error: {chunk['error']}")
                     break
 
-                # First event when a new interaction is created
                 if "interaccionId" in chunk:
                     new_iid = chunk["interaccionId"]
                     continue
 
-                # Streamed text piece
                 if "chunk" in chunk:
                     piece = chunk["chunk"]
                     if chunk.get("replace"):
@@ -383,7 +499,12 @@ class BackendClient:
             return "", new_iid, latency, 0
 
     def check(self) -> bool:
-        """Check if the backend is reachable."""
+        """
+           IN -> ____|_______
+                | check() | -> T/F   (reads base_url (Txt), session (Obj))
+                 ---------
+           Returns True when GET /api/ejercicios responds with status 200.
+        """
         try:
             resp = self.session.get(f"{self.base_url}/api/ejercicios", timeout=5)
             return resp.status_code == 200
@@ -391,13 +512,13 @@ class BackendClient:
             return False
 
 
-# ─────────────────────────────────────────────────────────────
-# CoT EXTRACTION (<think>)
-# ─────────────────────────────────────────────────────────────
 def extract_think(raw_text: str) -> Tuple[str, str]:
     """
-    Extract the <think>...</think> block and the clean socratic response.
-    Returns: (think_content, tutor_response)
+       IN -> Txt ____|_________________
+                 | extract_think() | -> (Txt, Txt)
+                  -----------------
+       Splits the raw model output into the <think>...</think> reasoning and
+       the clean socratic response (think_content, tutor_response).
     """
     match = re.search(r"<think>(.*?)</think>", raw_text, re.DOTALL)
     if match:
@@ -407,9 +528,6 @@ def extract_think(raw_text: str) -> Tuple[str, str]:
     return "", raw_text
 
 
-# ─────────────────────────────────────────────────────────────
-# AC DETECTION IN TUTOR RESPONSE
-# ─────────────────────────────────────────────────────────────
 AC_KEYWORDS: Dict[str, List[str]] = {
     "AC1":  ["interruptor", "abierto", "circuito abierto", "sin camino",
              "corriente cero", "desconecta", "no circula", "rama abierta"],
@@ -426,9 +544,11 @@ AC_KEYWORDS: Dict[str, List[str]] = {
 
 def detect_acs_in_response(response: str, ac_patterns: List[Dict]) -> List[str]:
     """
-    Detect which ACs the tutor addresses in its response using keywords.
-    The tutor is considered to address an AC if the response contains
-    at least 2 relevant keywords for that AC.
+       IN -> Txt, [Dict] ____|___________________________
+                         | detect_acs_in_response() | -> [Txt]
+                          ---------------------------
+       Returns the ACs the tutor addresses, considering an AC covered when
+       at least 2 of its (fixed + dynamic) keywords appear in the response.
     """
     response_lower = response.lower()
     detected_list = []
@@ -438,10 +558,8 @@ def detect_acs_in_response(response: str, ac_patterns: List[Dict]) -> List[str]:
         strategy = pattern.get("strategy", "").lower()
         misc     = pattern.get("misconception", "").lower()
 
-        # Fixed keywords + significant words from strategy and misconception
         fixed_keywords = AC_KEYWORDS.get(ac_id, [])
 
-        # Build dynamic keywords without list comprehension
         combined_text = strategy + " " + misc
         all_words = combined_text.split()
         dynamic_keywords = []
@@ -452,7 +570,6 @@ def detect_acs_in_response(response: str, ac_patterns: List[Dict]) -> List[str]:
 
         all_keywords = fixed_keywords + dynamic_keywords
 
-        # Count how many keywords appear in the response
         hit_count = 0
         for keyword in all_keywords:
             if keyword in response_lower:
@@ -464,17 +581,14 @@ def detect_acs_in_response(response: str, ac_patterns: List[Dict]) -> List[str]:
     return detected_list
 
 
-# ─────────────────────────────────────────────────────────────
-# REWARD FUNCTIONS (5 levels - same framework as previous benchmarks)
-# ─────────────────────────────────────────────────────────────
-
 def evaluate_socraticidad(response: str) -> Tuple[int, str]:
     """
-    Level 1 - Instructive    : gives the answer directly.
-    Level 2 - Closed questions: asks but the answer is implicit.
-    Level 3 - Clarification  : asks for reasoning without attacking the root error.
-    Level 4 - Scaffolding    : confronts the student idea with the theory.
-    Level 5 - Induction      : counterexample / reduction to absurdity.
+       IN -> Txt ____|________________________
+                 | evaluate_socraticidad() | -> (Z, Txt)
+                  --------------------------
+       Scores the socratic quality 1-5 (instructive, closed question,
+       clarification, scaffolding, induction to contradiction) and returns
+       the score with a justification.
     """
     if not response or not response.strip():
         return 1, "Empty response"
@@ -483,7 +597,6 @@ def evaluate_socraticidad(response: str) -> Tuple[int, str]:
     resp_lower = resp.lower()
     ends_with_question = resp.endswith("?")
 
-    # Level 1: direct answer or no question
     direct_patterns = [
         r"\bla respuesta (correcta )?es\b", r"\bla solución es\b",
         r"\bdebes usar\b", r"\btienes que (usar|incluir|considerar)\b",
@@ -501,7 +614,6 @@ def evaluate_socraticidad(response: str) -> Tuple[int, str]:
     if gives_direct_answer:
         return 1, "Gives the answer directly before asking"
 
-    # Level 5: counterexample / reduction to absurdity
     contradiction_patterns = [
         r"si (siguieras|usaras|mantuvieras|aplicaras).{0,50}¿qué",
         r"¿(podría|sería posible).{0,40}si\b",
@@ -517,7 +629,6 @@ def evaluate_socraticidad(response: str) -> Tuple[int, str]:
         if re.search(pattern, resp_lower):
             return 5, "Induction to contradiction: uses counterexample or reduction to absurdity"
 
-    # Level 4: scaffolding (question that confronts with circuit theory)
     scaffold_patterns = [
         r"¿qué (pasa|ocurre|sucede) (con|cuando|si)\b",
         r"¿cómo (afecta|influye|cambia)\b",
@@ -548,7 +659,6 @@ def evaluate_socraticidad(response: str) -> Tuple[int, str]:
         return 4, ("Scaffolding for detection: identifies the error area "
                    "and asks a question that confronts the theory")
 
-    # Level 2: closed question (answer already implicit)
     closed_patterns = [
         r"¿no (es|crees|sería|tienes)\b",
         r"¿verdad\s*\?$", r"¿correcto\s*\?$", r"¿sí\s*\?$", r"¿no\s*\?$",
@@ -558,7 +668,6 @@ def evaluate_socraticidad(response: str) -> Tuple[int, str]:
         if re.search(pattern, resp_lower):
             return 2, "Closed question: the answer is already implicit in the question"
 
-    # Level 3: clarification (asks for reasoning but does not attack the root)
     clarify_patterns = [
         r"¿por qué (crees|piensas|dices|afirmas)\b",
         r"¿puedes (explicar|describir|elaborar|detallar)\b",
@@ -571,7 +680,6 @@ def evaluate_socraticidad(response: str) -> Tuple[int, str]:
         if re.search(pattern, resp_lower):
             return 3, "Clarification: asks the student to explain their reasoning"
 
-    # Level 3 by default if ends with ? but without the above characteristics
     return 3, "Generic question: asks for clarification without attacking the root error"
 
 
@@ -582,18 +690,18 @@ def evaluate_precision_conceptual(
     student_answer: str,
 ) -> Tuple[int, str]:
     """
-    Level 1 - Unacceptable: validates incorrect answers or makes physics errors.
-    Level 2 - Poor        : generic, without diagnosing the specific error.
-    Level 3 - Sufficient  : identifies the error, correct concepts, vague diagnosis.
-    Level 4 - Good        : identifies the AC with precise language.
-    Level 5 - Excellent   : AC + connection with circuit topology/structure.
+       IN -> Txt, [Txt], [Dict], Txt ____|________________________________
+                                     | evaluate_precision_conceptual() | -> (Z, Txt)
+                                      ----------------------------------
+       Scores the conceptual precision 1-5 (unacceptable, poor, sufficient,
+       good, excellent) from vocabulary, AC coverage and topology cues, and
+       returns the score with a justification.
     """
     if not response or not response.strip():
         return 1, "Empty response"
 
     response_lower = response.lower()
 
-    # Level 1: validates incorrect answer or serious physics error
     validation_patterns = [
         r"\b(correcto|excelente|perfecto|bien hecho|has acertado)\b",
         r"(la respuesta correcta es|estás (en lo )?correcto|has identificado bien)",
@@ -609,7 +717,6 @@ def evaluate_precision_conceptual(
         if re.search(pattern, response_lower):
             return 1, "Validates incorrect answer or makes serious physics error"
 
-    # Count technical vocabulary hits
     tech_vocab_list = [
         "resistencia", "corriente", "tensión", "voltaje", "nodo",
         "interruptor", "circuito abierto", "cortocircuito",
@@ -623,7 +730,6 @@ def evaluate_precision_conceptual(
     if vocab_hits == 0:
         return 2, "Generic response: no technical vocabulary or error diagnosis"
 
-    # Specific concepts for each expected AC
     ac_concepts: Dict[str, List[str]] = {
         "AC1":  ["circuito abierto", "interruptor", "sin camino", "no circula", "rama"],
         "AC2":  ["atenuación", "señal"],
@@ -646,7 +752,6 @@ def evaluate_precision_conceptual(
     else:
         address_ratio = 1.0
 
-    # Level 5: identifies AC + connects with topology (nodes, path, structure)
     topology_patterns = [
         r"nodo [n]?\d", r"entre n\d y [n0]?\d",
         r"camino (eléctrico|desde|hasta)",
@@ -680,12 +785,12 @@ def evaluate_precision_conceptual(
 
 def evaluate_consistencia(response: str, student_answer: str) -> Tuple[int, str]:
     """
-    Measures whether the tutor response is calibrated to the student answer.
-    Level 1 - Completely ignores the student answer.
-    Level 2 - Disproportionate (too long or too short).
-    Level 3 - Partially addresses what the student said.
-    Level 4 - Well calibrated and references the student answer.
-    Level 5 - Perfect calibration to the level shown.
+       IN -> Txt, Txt ____|_______________________
+                      | evaluate_consistencia() | -> (Z, Txt)
+                       --------------------------
+       Scores 1-5 how well the response is calibrated to the student answer
+       (length ratio and shared resistor mentions) and returns the score
+       with a justification.
     """
     if not response or not student_answer:
         return 1, "Empty input or response"
@@ -696,7 +801,6 @@ def evaluate_consistencia(response: str, student_answer: str) -> Tuple[int, str]
     max_student_words = max(student_word_count, 1)
     ratio = response_word_count / max_student_words
 
-    # Find resistors mentioned by the student and by the tutor
     student_resistors = set(re.findall(r"\br\d\b", student_answer.lower()))
     response_resistors = set(re.findall(r"\br\d\b", response.lower()))
 
@@ -723,11 +827,12 @@ def evaluate_consistencia(response: str, student_answer: str) -> Tuple[int, str]
 
 def evaluate_tasa_alucinacion(response: str, exercise_context: str) -> Tuple[int, str]:
     """
-    5 - No hallucinations : factually correct.
-    4 - Minor imprecision : nomenclature error without conceptual impact.
-    3 - Some inaccuracy   : mostly correct.
-    2 - Notable inaccuracy: about the specific circuit.
-    1 - Serious hallucination: invents components or incorrect physics.
+       IN -> Txt, Txt ____|__________________________
+                      | evaluate_tasa_alucinacion() | -> (Z, Txt)
+                       ------------------------------
+       Scores factual correctness 1-5 (5 = no hallucinations) by detecting
+       invented resistors and serious/minor physics errors, and returns the
+       score with a justification.
     """
     if not response:
         return 3, "Empty response, not evaluable"
@@ -743,9 +848,8 @@ def evaluate_tasa_alucinacion(response: str, exercise_context: str) -> Tuple[int
     else:
         invented_resistors = set()
 
-    # Serious hallucination patterns
     serious_patterns = [
-        r"\br[89]\b", r"\br10\b", r"\br11\b",   # resistors outside the circuit
+        r"\br[89]\b", r"\br10\b", r"\br11\b",
         r"corriente.{0,25}infinita",
         r"resistencia.{0,20}negativa",
         r"(fórmula|ecuación).{0,15}(incorrecta|errónea)",
@@ -759,9 +863,8 @@ def evaluate_tasa_alucinacion(response: str, exercise_context: str) -> Tuple[int
     if len(invented_resistors) >= 2:
         is_serious = True
 
-    # Minor imprecision patterns
     minor_patterns = [
-        r"el voltaje de la resistencia",   # should be "diferencia de potencial"
+        r"el voltaje de la resistencia",
         r"amperios en la resistencia",
     ]
     has_minor = False
@@ -786,11 +889,14 @@ def evaluate_tasa_alucinacion(response: str, exercise_context: str) -> Tuple[int
     return 5, "No hallucinations detected: factually correct response"
 
 
-# ─────────────────────────────────────────────────────────────
-# FAITHFULNESS / RELEVANCE (CoT)
-# ─────────────────────────────────────────────────────────────
 def compute_cot_faithfulness(think_content: str, response: str) -> float:
-    """Check whether the thinking is consistent with the final response."""
+    """
+       IN -> Txt, Txt ____|___________________________
+                      | compute_cot_faithfulness() | -> R
+                       ----------------------------
+       Returns the fraction of circuit keywords in the reasoning that also
+       appear in the final response (0.5 when the reasoning is empty).
+    """
     keywords_pattern = r"r\d|serie|paralelo|corriente|tensión|nodo|interruptor|cortocircuito"
     think_keywords = set(re.findall(keywords_pattern, think_content.lower()))
     response_keywords = set(re.findall(keywords_pattern, response.lower()))
@@ -802,7 +908,13 @@ def compute_cot_faithfulness(think_content: str, response: str) -> float:
 
 
 def compute_cot_relevance(think_content: str, student_answer: str) -> float:
-    """Check whether the thinking is relevant to the student problem."""
+    """
+       IN -> Txt, Txt ____|________________________
+                      | compute_cot_relevance() | -> R
+                       -------------------------
+       Returns the fraction of circuit keywords in the student answer that
+       also appear in the reasoning (0.5 when the answer has none).
+    """
     keywords_pattern = r"r\d|serie|paralelo|cortocircuito|abierto"
     student_keywords = set(re.findall(keywords_pattern, student_answer.lower()))
     think_keywords   = set(re.findall(keywords_pattern, think_content.lower()))
@@ -813,9 +925,6 @@ def compute_cot_relevance(think_content: str, student_answer: str) -> float:
     return 0.5
 
 
-# ─────────────────────────────────────────────────────────────
-# CONSTRUCTIVE FEEDBACK (rule-based)
-# ─────────────────────────────────────────────────────────────
 SOCRATIC_LABELS = {
     1: "Instructive",
     2: "Closed questions",
@@ -840,7 +949,13 @@ def build_feedback(
     socratic_reason: str,
     precision_reason: str,
 ) -> str:
-    """Build a constructive feedback string based on all four scores."""
+    """
+       IN -> Z, Z, Z, Z, Txt, Txt ____|__________________
+                                  | build_feedback() | -> Txt
+                                   ------------------
+       Builds a constructive feedback string from the four pedagogical
+       scores and an overall-performance band based on their total.
+    """
     total = socratic_score + precision_score + consistency_score + hallucination_score
 
     socratic_label = SOCRATIC_LABELS.get(socratic_score, "")
@@ -863,11 +978,14 @@ def build_feedback(
     return feedback
 
 
-# ─────────────────────────────────────────────────────────────
-# RAG PROMPT BUILDER
-# ─────────────────────────────────────────────────────────────
 def build_rag_prompt(student_answer: str, context: str) -> str:
-    """Build the RAG prompt combining context and the student answer."""
+    """
+       IN -> Txt, Txt ____|___________________
+                      | build_rag_prompt() | -> Txt
+                       --------------------
+       Builds the RAG prompt that joins the retrieved context, the student
+       answer and the instruction to emit one brief socratic question.
+    """
     separator = "-" * 60
     prompt = (
         f"{context}\n\n"
@@ -880,25 +998,46 @@ def build_rag_prompt(student_answer: str, context: str) -> str:
     return prompt
 
 
-# ─────────────────────────────────────────────────────────────
-# BENCHMARK RUNNER
-# ─────────────────────────────────────────────────────────────
 class RagBenchmark:
     """
-    Runs the RAG benchmark by calling the backend HTTP API.
-    Each message goes through the real pipeline:
-      ragMiddleware -> ChromaDB -> Orchestrator -> GuardrailPipeline -> LLM.
-    RagKnowledgeBase is used only for evaluation (expected ACs, hallucination check).
+            _________________________________________________________
+            |                     RAGBENCHMARK                      |
+            |  Orchestrates the benchmark: loads datasets, drives    |
+            |  the backend RAG pipeline per turn and scores every    |
+            |  response. RagKnowledgeBase is used only for           |
+            |  evaluation (expected ACs, hallucination check).       |
+        ____|________________________                                |
+   Path, Txt -> | __init__() | -> void   (writes kb (RagKnowledgeBase),|
+                ------------               data_dir (Path), backend_url (Txt))|
+        ____|________________                                        |
+        | load_dataset() | -> [Dict]                                 |
+        -----------------                                            |
+        ____|_______                                                 |
+        | run() | -> [EvalResult]                                    |
+        --------                                                     |
+            |________________________________________________________|
     """
 
     def __init__(self, data_dir: Path, backend_url: str = BACKEND_URL):
-        """Initialize the benchmark with the given data directory and backend URL."""
+        """
+           IN -> Path, Txt ____|___________
+                           | __init__() | -> void   (writes kb (RagKnowledgeBase), data_dir (Path), backend_url (Txt))
+                            ------------
+           Initializes the benchmark with its knowledge base, data directory
+           and backend URL.
+        """
         self.kb          = RagKnowledgeBase(data_dir)
         self.data_dir    = data_dir
         self.backend_url = backend_url
 
     def load_dataset(self, exercise_id: int) -> List[Dict]:
-        """Load the dataset for a given exercise and normalize field names."""
+        """
+           IN -> Z ____|_______________
+                  | load_dataset() | -> [Dict]   (reads data_dir (Path))
+                   -----------------
+           Loads the dataset for an exercise and normalizes field names,
+           supporting both 'student'/'alumno' and 'tutor'.
+        """
         file_path = self.data_dir / "datasets" / f"dataset_exercise_{exercise_id}.json"
         if not file_path.exists():
             print(f"  [WARN] Dataset not found: {file_path}")
@@ -907,7 +1046,6 @@ class RagBenchmark:
         with open(file_path, encoding="utf-8") as f:
             raw_data = json.load(f)
 
-        # Normalize: supports 'student'/'alumno' and 'tutor'
         result = []
         for item in raw_data:
             student_text = item.get("student") or item.get("alumno", "")
@@ -924,14 +1062,20 @@ class RagBenchmark:
         turns: int = 3,
         exercise_map: Optional[Dict[str, str]] = None,
     ) -> List[EvalResult]:
-        """Run the benchmark and return all evaluation results."""
+        """
+           IN -> [Txt], [Z], Z, Z, dict ____|_______
+                                        | run() | -> [EvalResult]   (reads kb, backend_url)
+                                         --------
+           Runs the full benchmark: logs in, maps exercises, groups dataset
+           cases into conversations, drives every turn through the backend
+           pipeline and returns all scored EvalResult items.
+        """
 
         if models is None:
             models = ["qwen2.5:latest"]
         if exercises is None:
             exercises = ALL_EXERCISES
 
-        # ── Set up BackendClient ─────────────────────────────────
         backend = BackendClient(self.backend_url)
         print(f"\n  Checking backend at {self.backend_url} ...")
         if not backend.check():
@@ -979,7 +1123,6 @@ class RagBenchmark:
                 exercise_context = self.kb.retrieve(exercise_id)
                 ac_patterns      = self.kb.get_ac_patterns(exercise_id)
 
-                # Group samples into conversations of `turns` turns
                 groups = []
                 index  = 0
                 while index < len(dataset):
@@ -992,7 +1135,6 @@ class RagBenchmark:
 
                 for group in groups:
                     conversation_counter = conversation_counter + 1
-                    # interaccionId returned by the backend; reused across turns
                     current_iid: Optional[str] = None
 
                     turn_index = 0
@@ -1007,7 +1149,6 @@ class RagBenchmark:
 
                         expected_acs = self.kb.expected_acs_for(exercise_id, student_answer)
 
-                        # Send student message through the backend RAG pipeline
                         raw_response, current_iid, latency, token_count = backend.stream_chat(
                             db_exercise_id=db_exercise_id,
                             user_message=student_answer,
@@ -1028,7 +1169,6 @@ class RagBenchmark:
 
                         think_content, tutor_response = extract_think(raw_response)
 
-                        # AC detection
                         detected_acs    = detect_acs_in_response(tutor_response, ac_patterns)
                         expected_set    = set(expected_acs)
                         detected_set    = set(detected_acs)
@@ -1051,7 +1191,6 @@ class RagBenchmark:
                         else:
                             ac_f1 = 0.0
 
-                        # Reward functions
                         socratic_score,    socratic_reason    = evaluate_socraticidad(tutor_response)
                         precision_score,   precision_reason   = evaluate_precision_conceptual(
                             tutor_response, expected_acs, ac_patterns, student_answer
@@ -1065,7 +1204,6 @@ class RagBenchmark:
                         total_score = (socratic_score + precision_score
                                        + consistency_score + hallucination_score)
 
-                        # CoT metrics
                         if think_content:
                             faithfulness_score = compute_cot_faithfulness(think_content, tutor_response)
                             relevance_score    = compute_cot_relevance(think_content, student_answer)
@@ -1118,12 +1256,14 @@ class RagBenchmark:
         return all_results
 
 
-# ─────────────────────────────────────────────────────────────
-# JSON OUTPUT
-# ─────────────────────────────────────────────────────────────
 def save_json(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> Path:
-    """Save all results to a JSON file and return its path."""
-    # Build sets without set comprehensions
+    """
+       IN -> [EvalResult], Path, Txt ____|_____________
+                                     | save_json() | -> Path
+                                      -------------
+       Writes all results plus run metadata to a timestamped JSON file and
+       returns its path.
+    """
     models_set = set()
     exercises_set = set()
     for result in results:
@@ -1151,11 +1291,14 @@ def save_json(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
     return file_path
 
 
-# ─────────────────────────────────────────────────────────────
-# XLSX OUTPUT (7 sheets - identical to informe_comparativos_modelos.xlsx)
-# ─────────────────────────────────────────────────────────────
 def compute_model_stats(results: List[EvalResult], model_name: str) -> Dict:
-    """Compute aggregated statistics for a single model."""
+    """
+       IN -> [EvalResult], Txt ____|_______________________
+                               | compute_model_stats() | -> Dict
+                                ------------------------
+       Aggregates the efficiency, pedagogical and CoT statistics for a
+       single model across all its results.
+    """
     model_results = []
     for result in results:
         if result.model == model_name:
@@ -1199,19 +1342,16 @@ def compute_model_stats(results: List[EvalResult], model_name: str) -> Dict:
     for result in model_results:
         total_scores.append(result.score_total)
 
-    # Count socratic >= 4
     socratic_high_count = 0
     for result in model_results:
         if result.socraticidad >= 4:
             socratic_high_count = socratic_high_count + 1
 
-    # Count total score >= 15
     high_score_count = 0
     for result in model_results:
         if result.score_total >= 15:
             high_score_count = high_score_count + 1
 
-    # Count results with think content
     cot_count = 0
     for result in model_results:
         if result.think_content:
@@ -1264,22 +1404,40 @@ def compute_model_stats(results: List[EvalResult], model_name: str) -> Dict:
 
 
 def build_sheet_name(model_name: str) -> str:
-    """Return a safe Excel sheet name for a model."""
+    """
+       IN -> Txt ____|____________________
+                 | build_sheet_name() | -> Txt
+                  --------------------
+       Returns a safe Excel sheet name for a model (special chars replaced,
+       prefixed with Results_, truncated to fit).
+    """
     safe_name = model_name.replace(":", "_").replace("/", "_")
     return "Results_" + safe_name[:28]
 
 
 def build_formula_range(model_name: str, column_letter: str, max_row: int) -> str:
-    """Return an Excel formula range string like 'SheetName'!A2:A10000."""
+    """
+       IN -> Txt, Txt, Z ____|______________________
+                         | build_formula_range() | -> Txt
+                          ------------------------
+       Returns an Excel formula range string like 'SheetName'!A2:A10000 for
+       the given model column.
+    """
     sheet_name = build_sheet_name(model_name)
     return f"'{sheet_name}'!{column_letter}2:{column_letter}{max_row}"
 
 
 def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> Path:
-    """Save all results to an XLSX file with 7 sheets and return its path."""
+    """
+       IN -> [EvalResult], Path, Txt ____|_____________
+                                     | save_xlsx() | -> Path
+                                      -------------
+       Writes the 7-sheet XLSX report (per-model data, metadata, ranking,
+       article results, efficiency, CoT) with Excel formulas and returns
+       its path.
+    """
     file_path = out_dir / f"rag_benchmark_{timestamp_str}.xlsx"
 
-    # Build sorted model and exercise lists without comprehensions
     models_set = set()
     exercises_set = set()
     for result in results:
@@ -1292,16 +1450,8 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
         "qwen2.5:latest": "RAG",
     }
 
-    # Large row range so Excel formulas capture all data
     MAX_ROW = 10000
 
-    # Column letters for the Results sheets (fixed order):
-    # A=ID, B=Conversation, C=Turn, D=Exercise,
-    # E=Student Answer, F=Tutor Response,
-    # G=Socratic Quality, H=Conceptual Precision, I=Consistency, J=Hallucination Rate,
-    # K=Total Score, L=Latency(s), M=Tokens, N=Throughput,
-    # O=Expected ACs, P=Detected ACs, Q=AC Precision, R=AC Recall, S=AC F1,
-    # T=Faithfulness, U=Relevance, V=Think Content, W=Constructive Feedback
     COLUMNS = {
         "id":    "A", "conv":  "B", "turn":  "C", "ex":   "D",
         "est":   "E", "tut":   "F",
@@ -1313,7 +1463,6 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
 
     with pd.ExcelWriter(str(file_path), engine="openpyxl") as writer:
 
-        # ── Data sheets per model (raw values) ───────────────────
         for model_name in models:
             rows = []
             for result in results:
@@ -1345,7 +1494,7 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
                     "AC Precision":              round(result.ac_precision, 3),
                     "AC Recall":                 round(result.ac_recall, 3),
                     "AC F1":                     round(result.ac_f1, 3),
-                    "Faithfulness":              result.faithfulness,  # None -> empty cell
+                    "Faithfulness":              result.faithfulness,
                     "Relevance":                 result.relevance,
                     "Think Content":             result.think_content or "",
                     "Constructive Feedback":     result.feedback_constructivo,
@@ -1355,7 +1504,6 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
             sheet_name = build_sheet_name(model_name)
             pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
 
-        # ── Metadata sheet ────────────────────────────────────────
         exercises_str = []
         for exercise_id in exercises:
             exercises_str.append(str(exercise_id))
@@ -1370,16 +1518,12 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
         ]
         pd.DataFrame(meta_rows).to_excel(writer, sheet_name="Metadata", index=False)
 
-        # ── Summary sheets with FORMULAS (via openpyxl) ──────────
         workbook = writer.book
 
-        # Compute stats for ranking (sorted by score_total descending)
         all_model_stats = {}
         for model_name in models:
             all_model_stats[model_name] = compute_model_stats(results, model_name)
 
-        # Sort models by total score (descending) without lambda
-        # Build a list of (score, model_name) pairs, sort it, then extract names
         score_and_model_pairs = []
         for model_name in models:
             model_score = all_model_stats[model_name]["score_total"]
@@ -1389,7 +1533,6 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
         for score_value, model_name in score_and_model_pairs:
             ranked_models.append(model_name)
 
-        # ── Ranking sheet ────────────────────────────────────────
         ranking_sheet = workbook.create_sheet("Ranking")
         ranking_sheet.append([
             "Ranking", "Model", "samples",
@@ -1433,7 +1576,6 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
             ])
             rank_number = rank_number + 1
 
-        # ── Article Results sheet ─────────────────────────────────
         article_sheet = workbook.create_sheet("Results_Article")
         article_sheet.append([
             "Model", "Arch.", "samples",
@@ -1463,7 +1605,6 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
                 0.7,
             ])
 
-        # ── Efficiency sheet ──────────────────────────────────────
         efficiency_sheet = workbook.create_sheet("Efficiency")
         efficiency_sheet.append(["Model", "avg_latency", "p95_latency", "throughput", "avg_tokens"])
         for model_name in ranked_models:
@@ -1477,7 +1618,6 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
                 f"=IFERROR(AVERAGE({tok_range}),\"\")",
             ])
 
-        # ── CoT Analysis sheet ────────────────────────────────────
         cot_sheet = workbook.create_sheet("CoT Analysis")
         cot_sheet.append(["Model", "faithfulness", "relevance", "pct_cot"])
         for model_name in ranked_models:
@@ -1496,11 +1636,14 @@ def save_xlsx(results: List[EvalResult], out_dir: Path, timestamp_str: str) -> P
     return file_path
 
 
-# ─────────────────────────────────────────────────────────────
-# CONSOLE SUMMARY
-# ─────────────────────────────────────────────────────────────
 def print_summary(results: List[EvalResult]) -> None:
-    """Print a formatted summary table of results to the console."""
+    """
+       IN -> [EvalResult] ____|_________________
+                          | print_summary() | -> void
+                           -----------------
+       Prints the per-model summary table and the threshold-compliance
+       block to the console.
+    """
     models_set = set()
     for result in results:
         models_set.add(result.model)
@@ -1547,7 +1690,6 @@ def print_summary(results: List[EvalResult]) -> None:
 
     print(f"{'=' * 70}")
 
-    # Threshold compliance
     print("\n  THRESHOLD COMPLIANCE:")
 
     all_latencies = []
@@ -1560,7 +1702,6 @@ def print_summary(results: List[EvalResult]) -> None:
     else:
         overall_throughput = 0
 
-    # Count socratic >= 4
     socratic_high = 0
     for result in results:
         if result.socraticidad >= 4:
@@ -1612,11 +1753,14 @@ def print_summary(results: List[EvalResult]) -> None:
     print()
 
 
-# ─────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────
 def main() -> None:
-    """Entry point: parse CLI arguments and run the benchmark."""
+    """
+       IN -> ____|_______
+            | main() | -> void
+             --------
+       Entry point: parses CLI arguments, runs the benchmark and writes the
+       JSON, XLSX and console summary outputs.
+    """
     parser = argparse.ArgumentParser(
         description="RAG Benchmark - Socratic Tutor Ohm's Law"
     )

@@ -1,13 +1,17 @@
 "use strict";
 
-/**
- * BUG-008 (2026-05-03): qwen2.5 mezcla frases en inglés dentro de respuestas
- * en español/valenciano. El LanguageDriftGuardrail antiguo sólo detectaba
- * scripts no-latinos; ahora también flagea drift ES↔EN cuando ctx.lang es
- * "es" o "val" y al menos una frase es claramente inglesa.
- */
-
 const LanguageDriftGuardrail = require("../../src/infrastructure/guardrails/LanguageDriftGuardrail");
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |     LANGUAGEDRIFTGUARDRAIL — UNIT TESTS (BUG-008)     |
+            |  Regresses BUG-008 (2026-05-03): the model mixed      |
+            |  English phrases into es/val replies. Verifies check() |
+            |  flags ES<->EN drift, surgicalFix excises the English  |
+            |  phrase while keeping the trailing question, non-Latin |
+            |  precedence, and buildRetryHint per language.         |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("LanguageDriftGuardrail (BUG-008 — drift ES↔EN intra-respuesta)", () => {
   const g = new LanguageDriftGuardrail();
@@ -85,7 +89,6 @@ describe("LanguageDriftGuardrail (BUG-008 — drift ES↔EN intra-respuesta)", (
     test("devuelve null si el filtrado se lleva la pregunta interrogativa", () => {
       const text = "Bien encaminado. How does R2 affect the circuit when R5 is shorted?";
       const fix = g.surgicalFix(text, { lang: "es" });
-      // ES queda "Bien encaminado." → sin "?" original presente, ¡pero sí lo tenía!
       expect(fix).toBeNull();
     });
 

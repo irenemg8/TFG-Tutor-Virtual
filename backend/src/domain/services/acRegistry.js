@@ -3,31 +3,26 @@
 const fs = require("fs");
 const path = require("path");
 
-/**
- * AC Registry — matchea la respuesta del alumno contra los patrones de
- * Alternative Conceptions definidos por ejercicio en
- * tutorContext_por_ejercicio.json (campo `acPatterns`).
- *
- * Patrón soportado:
- *   {
- *     id: "AC1",
- *     name: "Modelo del circuito abierto",
- *     misconception: "Incluye R3 pensando que circula corriente por el interruptor abierto",
- *     strategy: "Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; no nombres R3.",
- *     match: {
- *       includes?: ["R3"],         // dispara si proposed contiene CUALQUIERA
- *       includesAll?: ["R5","R3"], // dispara si proposed contiene TODOS
- *       excludes?: ["R3"],         // dispara si negated (rejected) contiene cualquiera
- *       missesAny?: ["R4"],        // dispara si MISSING contiene cualquiera
- *       missesAll?: ["R1","R2"],   // dispara si MISSING contiene TODOS
- *       proposedSetEquals?: ["R3","R4","R5"]  // dispara si proposed === exactamente esa set
- *     }
- *   }
- *
- * El matcher devuelve un array de matches con confianza (0..1) ordenados
- * por relevancia, para que el TutorAgent inyecte el banner [AC DETECTADA].
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                       ACREGISTRY                      |
+            |  Module. Matches the student's answer against the      |
+            |  Alternative-Conception patterns defined per exercise |
+            |  in tutorContext_por_ejercicio.json (acPatterns), and |
+            |  serves those patterns from an in-memory cache.       |
+            |                                                       |
+            |  [Obj], [Txt], [Txt], [Txt] -> | matchACs() | -> [Obj]|
+            |  Z -> | getPatternsForExercise() | -> [Obj]           |
+            |  Txt -> | reloadPatternsForTests() | -> void          |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
+/*
+   [Txt] -> ____|______________
+           | toUpperSet() | -> Set
+            ----------------
+      Builds a Set of uppercased, whitespace-stripped string entries.
+*/
 function toUpperSet(arr) {
   const s = new Set();
   if (!Array.isArray(arr)) return s;
@@ -37,41 +32,35 @@ function toUpperSet(arr) {
   return s;
 }
 
+/*
+   Set, Set -> ____|_____________
+              | intersect() | -> [Txt]
+               ---------------
+      Returns the elements of the first set that are present in the second.
+*/
 function intersect(a, b) {
   const out = [];
   for (const x of a) if (b.has(x)) out.push(x);
   return out;
 }
 
-/**
- * @param {Array<object>} acPatterns - el campo acPatterns del tutorContext
- * @param {Array<string>} proposedRaw - elementos que el alumno propone
- * @param {Array<string>} negatedRaw - elementos que el alumno rechaza
- * @param {Array<string>} correctAnswerRaw - respuesta correcta del ejercicio
- * @returns {Array<{id, name, misconception, strategy, confidence, reason}>}
- */
-// A canonical circuit element token: a letter run + digits (R3, C2, L1, V1…).
-// Used to decide whether the exercise's correct answer is an ELEMENT SET (Ej1-5)
-// or a numeric/text answer (Ej6/7: "por todas circula la misma corriente").
 const ELEMENT_TOKEN_RE = /^[A-Z]+\d+$/;
 
+/*
+   [Obj], [Txt], [Txt], [Txt] -> ____|____________
+                                | matchACs() | -> [Obj]
+                                 -------------
+      Matches proposed / negated / correct element sets against the
+      acPatterns rules (includes, excludes, misses, set-equality) and
+      returns scored matches sorted by descending confidence. Bails out
+      with [] when the correct answer is not an element set.
+*/
 function matchACs(acPatterns, proposedRaw, negatedRaw, correctAnswerRaw) {
   if (!Array.isArray(acPatterns) || acPatterns.length === 0) return [];
   const proposed = toUpperSet(proposedRaw);
   const negated = toUpperSet(negatedRaw);
   const correct = toUpperSet(correctAnswerRaw);
 
-  // BUG-AC-NUMERIC (2026-06-14): every match rule below reasons about element
-  // membership RELATIVE to the correct element set ("wrongly includes",
-  // "wrongly excludes", "missing"). When the exercise answer is numeric/text
-  // (Ej6/7: "por todas circula la misma corriente"), `correct` holds that text
-  // blob and contains NO element tokens — so the `wronglyIncluded` filter treats
-  // EVERY element the student names as "wrong" and fires AC2/AC14 spuriously
-  // (verified: a student naming R1..R6 triggered AC2@0.85 AND AC14@0.85 even on
-  // a correct enumeration). Element-based AC detection is only meaningful when
-  // the correct answer is itself an element set; bail out cleanly otherwise.
-  // The patterns stay in the JSON (Ej6/7 would need concept-based ACs, which is
-  // a separate mechanism) — we just don't fire unreliable element matches.
   const correctIsElementSet = [...correct].some((x) => ELEMENT_TOKEN_RE.test(x));
   if (!correctIsElementSet) return [];
   const missing = new Set();
@@ -109,8 +98,6 @@ function matchACs(acPatterns, proposedRaw, negatedRaw, correctAnswerRaw) {
       const target = toUpperSet(m.includes);
       const hit = intersect(target, proposed);
       if (hit.length > 0) {
-        // Solo cuenta si el elemento NO está en la respuesta correcta
-        // (incluir un elemento que no debería) — esa es la marca de la AC.
         const wronglyIncluded = hit.filter((x) => !correct.has(x));
         if (wronglyIncluded.length > 0) {
           confidence = Math.max(confidence, 0.85);
@@ -123,7 +110,6 @@ function matchACs(acPatterns, proposedRaw, negatedRaw, correctAnswerRaw) {
       const target = toUpperSet(m.excludes);
       const hit = intersect(target, negated);
       if (hit.length > 0) {
-        // El alumno rechaza algo que SÍ debería estar
         const wronglyRejected = hit.filter((x) => correct.has(x));
         if (wronglyRejected.length > 0) {
           confidence = Math.max(confidence, 0.8);
@@ -145,8 +131,6 @@ function matchACs(acPatterns, proposedRaw, negatedRaw, correctAnswerRaw) {
       const target = toUpperSet(m.missesAny);
       const hit = intersect(target, missing);
       if (hit.length > 0) {
-        // misses_any es señal débil: muchos alumnos olvidan algo aunque
-        // no estén mostrando esa AC. Confianza más baja.
         confidence = Math.max(confidence, 0.55);
         reasons.push("misses " + hit.join(","));
       }
@@ -168,10 +152,6 @@ function matchACs(acPatterns, proposedRaw, negatedRaw, correctAnswerRaw) {
   return matches;
 }
 
-// In-memory cache of acPatterns por número de ejercicio. Se carga la
-// primera vez que alguien lo pide y se reutiliza después. La entidad
-// TutorContext / la DB no persisten acPatterns (decisión NS-1.b para no
-// migrar el schema), así que el JSON es la fuente de verdad en runtime.
 let _patternsByExercise = null;
 const DEFAULT_JSON = path.resolve(
   __dirname,
@@ -182,6 +162,13 @@ const DEFAULT_JSON = path.resolve(
   "tutorContext_por_ejercicio.json"
 );
 
+/*
+   Txt -> ____|_________
+         | _load() | -> Map
+          ----------
+      Reads the exercises JSON and builds a Map from exercise number to its
+      acPatterns array.
+*/
 function _load(jsonPath) {
   const raw = fs.readFileSync(jsonPath || DEFAULT_JSON, "utf8");
   const arr = JSON.parse(raw);
@@ -193,11 +180,24 @@ function _load(jsonPath) {
   return map;
 }
 
+/*
+   Z -> ____|________________________
+       | getPatternsForExercise() | -> [Obj]
+        --------------------------
+      Returns the cached acPatterns for an exercise, loading the JSON on
+      first use; [] when the exercise is unknown.
+*/
 function getPatternsForExercise(exerciseNum) {
   if (_patternsByExercise == null) _patternsByExercise = _load();
   return _patternsByExercise.get(Number(exerciseNum)) || [];
 }
 
+/*
+   Txt -> ____|________________________
+         | reloadPatternsForTests() | -> void
+          --------------------------
+      Forces a reload of the cache from the given JSON path (test hook).
+*/
 function reloadPatternsForTests(jsonPath) {
   _patternsByExercise = _load(jsonPath);
 }

@@ -7,35 +7,37 @@ const {
   ADHERENCE_POSITIVE_VERBS: POSITIVE_VERBS,
 } = require("../../domain/services/languageManager");
 
-/**
- * AdherenceGuardrail (NS-33) — defensa en profundidad post-LLM contra
- * fallos sistemáticos de adherencia de qwen2.5 7B al protocolo socrático
- * y a la verdad pedagógica del backend.
- *
- * Tres sub-reglas, todas deterministas (sin LLM):
- *
- *   1. Contradicción Rn — el LLM dice "R1 no contribuye" cuando R1 sí
- *      está en correctAnswer (o "R5 sí contribuye" cuando no lo está).
- *      Las dos polaridades violan TUTOR AUTHORITY del system prompt.
- *      Surgical fix: eliminar la oración contradictoria.
- *
- *   2. Multi-pregunta — qwen2.5 7B encadena 2-3 preguntas en una sola
- *      respuesta a pesar de la regla "ONE single question". Surgical
- *      fix: truncar al primer signo de cierre de pregunta.
- *
- *   3. Missed affirmation (solo log) — el banner [VEREDICTO DEL TURNO]
- *      indicó hits que el LLM debía afirmar por nombre y la respuesta no
- *      menciona ninguno. No mutamos el texto en esta v1 (riesgo de fix
- *      automático mal compuesto); solo registramos para medir tasa real
- *      antes de decidir si el fix vale la pena.
- *
- * Severity: med — los violations de adherencia degradan la UX pero no
- * son leaks de la solución; SolutionLeakGuardrail (high) ya cubre eso.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   ADHERENCEGUARDRAIL                |
+            |  Guardrail adapter (IGuardrail). Deterministic defense |
+            |  in depth against the LLM breaking Socratic protocol:  |
+            |  contradicting the ground truth about an Rn, chaining  |
+            |  several questions, planting a false premise/accusation|
+            |  about an element, or missing an affirmation it owed.  |
+        ____|_____________________                                   |
+        | check() | -> Obj  (reads correctAnswer, turnVerdict, ctx)  |
+        -----------                                                  |
+        ____|_______________________                                 |
+        | surgicalFix() | -> Obj          (reads correctAnswer)      |
+        -----------------                                            |
+        ____|___________________                                     |
+        | buildRetryHint() | -> Txt                                  |
+        --------------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class AdherenceGuardrail extends IGuardrail {
   get id() { return "adherence"; }
   get severity() { return "med"; }
 
+  /*
+   Txt, Obj -> ____|_________
+              | check() | -> Obj
+               -----------
+      Runs the contradiction, multi-question, false-premise, false-accusation
+      and missed-affirmation rules; returns the surgical/retry violations.
+  */
   check(response, ctx) {
     if (typeof response !== "string" || response.length === 0) {
       return { violated: false };
@@ -44,49 +46,32 @@ class AdherenceGuardrail extends IGuardrail {
     const verdict = (ctx && ctx.turnVerdict) || null;
     const violations = [];
 
-    // Rule 1: contradicción Rn
+    // Rule 1: contradiction about an Rn.
     const contradictions = _findContradictions(response, correctAnswer);
     if (contradictions.length > 0) {
       violations.push({ rule: "contradiction", details: contradictions });
     }
 
-    // Rule 2: multi-pregunta. BUG-AD (2026-06-10): antes contaba TODOS los "?",
-    // así que una coletilla retórica ("…, ¿verdad?") + la pregunta socrática
-    // real contaban 2 y disparaban la regla; peor, el surgicalFix truncaba en
-    // el PRIMER "?", quedándose con la coletilla y tirando la pregunta buena.
-    // Ahora contamos sólo preguntas SUSTANTIVAS (las coletillas no cuentan).
+    // Rule 2: multi-question (only substantive questions count, not tags).
     const substantiveQs = _countSubstantiveQuestions(response);
     if (substantiveQs > 1) {
       violations.push({ rule: "multi_question", details: { count: substantiveQs } });
     }
 
-    // Rule 4 (false-premise question): a QUESTION that presupposes a CORRECT
-    // element does not contribute ("¿por qué R4 no influye?") plants a falsehood
-    // — production showed qwen2.5 doing this repeatedly despite the system-prompt
-    // rule. The contradiction rule (Rule 1) deliberately skips questions, so this
-    // is a separate, question-targeted check restricted to CORRECT elements (it
-    // must NOT fire on "¿por qué R3 no influye?" when R3 is genuinely irrelevant).
+    // Rule 4: false-premise question about a CORRECT element.
     const falsePremise = _findFalsePremiseQuestions(response, correctAnswer);
     if (falsePremise.length > 0) {
       violations.push({ rule: "false_premise", details: falsePremise });
     }
 
-    // Rule 5 (false ACCUSATION, 2026-06-11): the inverse of Rule 4. A question
-    // presupposing the student CLAIMED an element contributes ("¿por qué
-    // pensaste que R3 también influía?") when the student in fact NEGATED it
-    // and never proposed it. Production: the student wrote "porque r3 está en
-    // interruptor abierto y r5 en corto" (a correct, reasoned exclusion) and
-    // the tutor replied "¿Por qué pensaste que R3 también influía?" — the
-    // student answered, furious: "no dije que r3 influía". Deterministic and
-    // high-precision: requires an accusation verb (pensaste/creías/dijiste…)
-    // + a contribute verb + an Rn the student has negated (this turn or
-    // cumulatively) and NEVER proposed in any turn.
+    // Rule 5: false accusation (the student is told they claimed an element
+    // they actually negated and never proposed).
     const falseAccusation = _findFalseAccusations(response, ctx);
     if (falseAccusation.length > 0) {
       violations.push({ rule: "false_accusation", details: falseAccusation });
     }
 
-    // Rule 3: missed affirmation (log-only — no surgical fix in v1)
+    // Rule 3: missed affirmation (log-only, no surgical fix).
     if (verdict && verdict.hits && verdict.hits.length > 0) {
       const lower = response.toLowerCase();
       const mentioned = verdict.hits.filter((h) => {
@@ -103,9 +88,8 @@ class AdherenceGuardrail extends IGuardrail {
 
     if (violations.length === 0) return { violated: false };
 
-    // Surgically-fixable rules (contradiction, multi_question) and retry-only
-    // rules (false_premise / false_accusation — no safe rewrite, so they force
-    // an LLM retry). missed_affirmation alone stays log-only.
+    // Surgically-fixable rules vs retry-only rules; missed_affirmation alone
+    // stays log-only.
     const surgicalRules = violations.filter(
       (v) => v.rule === "contradiction" || v.rule === "multi_question"
     );
@@ -123,6 +107,13 @@ class AdherenceGuardrail extends IGuardrail {
     };
   }
 
+  /*
+   Txt, Obj -> ____|_______________
+              | surgicalFix() | -> Obj
+               -----------------
+      Fixes the two safe rules: drops sentences with a contradicted Rn claim,
+      and truncates after the first substantive question.
+  */
   surgicalFix(response, ctx) {
     if (typeof response !== "string" || response.length === 0) {
       return { applied: false, text: response };
@@ -147,10 +138,8 @@ class AdherenceGuardrail extends IGuardrail {
       }
     }
 
-    // Rule 2 fix: keep through the FIRST SUBSTANTIVE question, dropping any
-    // extra questions after it. BUG-AD: we truncate at the first substantive
-    // "?" (skipping rhetorical tag-questions like "¿verdad?") instead of the
-    // first "?" — otherwise we'd keep the tag and discard the real question.
+    // Rule 2 fix: keep through the first substantive question (skipping
+    // rhetorical tag-questions), dropping any extra questions after it.
     if (_countSubstantiveQuestions(text) > 1) {
       const end = _firstSubstantiveQuestionEnd(text);
       if (end > 0) {
@@ -166,11 +155,14 @@ class AdherenceGuardrail extends IGuardrail {
     return { applied: true, text: text, before: response, after: text };
   }
 
+  /*
+   Txt -> ____|___________________
+         | buildRetryHint() | -> Txt
+          --------------------
+      Hint for the retry-only rules (false_premise, false_accusation): never
+      put words in the student's mouth, in either polarity, without revealing.
+  */
   buildRetryHint(_lang) {
-    // Contradiction / multi_question are corrected surgically (no retry hint
-    // needed). The rules that reach a retry are false_premise and
-    // false_accusation — neither can be safely rewritten — so the hint targets
-    // both: never put words in the student's mouth, in either polarity.
     return (
       "[CORRIGE TU PREGUNTA] Dos prohibiciones sobre premisas falsas:\n" +
       "1. NO preguntes '¿por qué [X] no influye / no contribuye?' sobre una resistencia que SÍ " +
@@ -188,6 +180,12 @@ class AdherenceGuardrail extends IGuardrail {
 
 // ---------- helpers ----------
 
+/*
+   [Txt] -> ____|____________
+           | _normSet() | -> Set<Txt>
+            ------------
+      Uppercased, trimmed Set of the string entries in the array.
+*/
 function _normSet(arr) {
   const s = new Set();
   for (const x of arr || []) {
@@ -196,24 +194,31 @@ function _normSet(arr) {
   return s;
 }
 
+/*
+   Txt -> ____|________
+         | _esc() | -> Txt
+          --------
+      Escapes regex metacharacters in a string.
+*/
 function _esc(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Rhetorical tag-questions ("…, ¿verdad?", "…, right?") are NOT a second
-// Socratic question — they're confirmation-seeking fillers. We must not count
-// them toward the "ONE question" rule nor keep them when truncating. es/val/en.
+// Rhetorical tag-questions ("…, ¿verdad?", "…, right?") that must NOT count
+// toward the one-question rule nor be kept when truncating (es/val/en).
 const TAG_QUESTION_WORDS = [
-  // es
   "verdad", "cierto", "vale", "no", "si", "sí", "de acuerdo", "no crees", "no es asi", "no es así",
-  // val
   "veritat", "cert", "no et sembla", "oi",
-  // en
   "right", "correct", "okay", "ok", "isn't it", "isnt it", "is not it", "you see",
 ];
 
-// Returns the "core" of an interrogative fragment: the text from the last "¿"
-// to the "?" (Spanish), lowercased and stripped of question punctuation.
+/*
+   Txt -> ____|_______________
+         | _questionCore() | -> Txt
+          -----------------
+      Core of an interrogative fragment (text after the last "¿"), lowercased
+      and stripped of question punctuation.
+*/
 function _questionCore(fragment) {
   let q = String(fragment);
   const op = q.lastIndexOf("¿");
@@ -221,8 +226,12 @@ function _questionCore(fragment) {
   return q.replace(/[?¡!.]/g, "").trim().toLowerCase();
 }
 
-// A fragment is a tag-question if its core is exactly a tag word, or it ends
-// with ", <tag>" (the comma-attached trailing tag, common when there is no "¿").
+/*
+   Txt -> ____|_________________
+         | _isTagQuestion() | -> T/F
+          ------------------
+      True when the fragment's core is a tag word, or it ends with ", <tag>".
+*/
 function _isTagQuestion(fragment) {
   const core = _questionCore(fragment);
   if (TAG_QUESTION_WORDS.indexOf(core) >= 0) return true;
@@ -231,7 +240,12 @@ function _isTagQuestion(fragment) {
   return false;
 }
 
-// Count the interrogative fragments that are NOT rhetorical tag-questions.
+/*
+   Txt -> ____|___________________________
+         | _countSubstantiveQuestions() | -> Z
+          ----------------------------
+      Count of interrogative fragments that are not rhetorical tag-questions.
+*/
 function _countSubstantiveQuestions(text) {
   const frags = String(text).match(/[^.!?]*\?/g) || [];
   let n = 0;
@@ -241,7 +255,12 @@ function _countSubstantiveQuestions(text) {
   return n;
 }
 
-// Char index just past the "?" of the first SUBSTANTIVE question, or -1.
+/*
+   Txt -> ____|____________________________
+         | _firstSubstantiveQuestionEnd() | -> Z
+          -----------------------------
+      Char index just past the "?" of the first substantive question, or -1.
+*/
 function _firstSubstantiveQuestionEnd(text) {
   const re = /[^.!?]*\?/g;
   let m;
@@ -251,49 +270,29 @@ function _firstSubstantiveQuestionEnd(text) {
   return -1;
 }
 
-// Detects sentences/clauses that explicitly state Rn does/does not
-// contribute, and crosses them against the correctAnswer ground truth.
-//
-// We match two polarities:
-//   negativeClaim: "R5 no contribuye / R5 no es / R5 tampoco interviene"
-//   positiveClaim: "R5 sí contribuye / R5 forma parte / R5 cumple"
-// A negativeClaim about an Rn that IS correct → contradiction.
-// A positiveClaim about an Rn that is NOT correct → contradiction.
-//
-// IMPORTANT: matches inside QUESTIONS are NOT contradictions. The Socratic
-// strategy explicitly asks "¿por qué crees que R2 no influye?" to attack a
-// misconception — that's a valid pedagogical move, not a tutor mistake.
-// Same principle StateRevealGuardrail applies. Without this gate the
-// guardrail destroys the Socratic question and the student receives a
-// truncated affirmation with no question
-
-// Detects QUESTION sentences that presuppose a CORRECT element does not
-// contribute ("¿por qué R4 no influye?"). We scan only interrogatives, find each
-// Rn, and check whether — within the span AFTER that Rn (truncated at the next
-// element so a neighbour's negation doesn't bleed) — there is a negated
-// contribute-verb. Only CORRECT elements count: "¿por qué R3 no influye?" with
-// R3 irrelevant is a legitimate Socratic move.
-// Review C5 (2026-06-11): added the path/membership predicates ("no está en el
-// camino") that PAST_INFLUENCE_RE (rule 5) already had — the asymmetry let
-// "¿por qué crees que R4 no está en el camino?" (R4 correct) pass clean.
+// Negated contribute/path predicate used by the false-premise scan; matches in
+// QUESTIONS only (declarative contradictions are handled by Rule 1).
 var FALSE_PREMISE_NEG = /\bno\s+(?:influye|influyen|contribuye|contribuyen|afecta|afectan|participa|participan|cuenta|cuentan|interviene|intervienen|importa|importan|forma\s+parte|forman\s+parte|es\s+relevante|son\s+relevantes|esta(?:n)?\s+en\s+el\s+(?:mismo\s+)?camino|esta(?:n)?\s+en\s+la\s+rama)\b/;
 
+/*
+   Txt, Set<Txt> -> ____|___________________________
+                   | _findFalsePremiseQuestions() | -> [Obj]
+                    ----------------------------
+      Finds questions that presuppose a CORRECT element does not contribute
+      ("¿por qué R4 no influye?"), returning {element, evidence} entries.
+*/
 function _findFalsePremiseQuestions(text, correctSet) {
   if (!text || !correctSet || correctSet.size === 0) return [];
   const out = [];
   const sentences = String(text).split(/(?<=[.!?])\s+/);
   for (const sent of sentences) {
-    if (sent.indexOf("?") < 0 && sent.indexOf("¿") < 0) continue; // questions only
+    if (sent.indexOf("?") < 0 && sent.indexOf("¿") < 0) continue;
     const folded = stripAccents(sent.toLowerCase());
     const re = /\br(\d+)\b/gi;
     let m;
     while ((m = re.exec(folded)) !== null) {
       const rn = ("R" + m[1]).toUpperCase();
       if (!correctSet.has(rn)) continue;
-      // span AFTER this Rn, truncated at the next element mention. The window is
-      // generous (80 chars) so an intervening relative clause ("R2, que está
-      // conectada entre N2 y tierra, no influye…") doesn't hide the verb; the
-      // next-element truncation still prevents a neighbour's negation bleeding in.
       let after = folded.slice(m.index + m[0].length, m.index + m[0].length + 80);
       const nextEl = after.search(/\br\d+\b/i);
       if (nextEl >= 0) after = after.slice(0, nextEl);
@@ -305,31 +304,29 @@ function _findFalsePremiseQuestions(text, correctSet) {
   return out;
 }
 
-// Rule 5 (false accusation) regexes, accent-folded. The accusation verb is the
-// load-bearing precision gate: a bare "¿influye R3?" never fires; only the
-// "you said/thought it mattered" shape does. The NEGATED form ("¿por qué
-// pensaste que R3 NO influía?") is a different question (about the exclusion,
-// not an accusation of inclusion) and is explicitly skipped.
+// Rule 5 (false accusation) regexes, accent-folded. ACCUSE_VERB_RE is the
+// precision gate (only the "you said/thought it mattered" shape fires);
+// NEGATED_INFLUENCE_RE marks the negated form, which is skipped.
 var ACCUSE_VERB_RE = /\b(pensast\w*|pensab\w*|creist\w*|creia(s)?\b|creies|pensav\w*|dijist\w*|deies|you\s+(thought|said)|did\s+you\s+(think|say))/;
-// Run-4 (2026-06-11): the LLM phrased the accusation as "¿por qué pensaste que
-// R5 también ESTABA EN EL CAMINO?" — a path/membership predicate, not an
-// influence verb — and the rule missed it. Both regexes carry the same
-// additions so the negated-form skip stays symmetric.
 var PAST_INFLUENCE_RE = /\b(influia|influian|influye|influyen|contribuia|contribuian|contribuye|contribuyen|afectaba|afectaban|afecta|afectan|importaba|importaban|importa|estaba\s+en\s+el\s+(mismo\s+)?camino|estaban\s+en\s+el\s+(mismo\s+)?camino|formaba\s+parte|formaban\s+parte|era\s+relevante|eran\s+relevantes|influenced|mattered|contributed|was\s+in\s+the\s+path|was\s+part)\b/;
 var NEGATED_INFLUENCE_RE = /\bno\s+(influia|influian|influye|influyen|contribuia|contribuian|contribuye|contribuyen|afectaba|afectaban|afecta|afectan|importaba|importaban|importa|estaba\s+en\s+el\s+(mismo\s+)?camino|formaba\s+parte|era\s+relevante)\b/;
 
+/*
+   Txt, Obj -> ____|________________________
+              | _findFalseAccusations() | -> [Obj]
+               -------------------------
+      Finds questions accusing the student of having claimed an Rn matters
+      when they negated it and never proposed it; returns {element, evidence}.
+*/
 function _findFalseAccusations(text, ctx) {
   if (!text || !ctx) return [];
   const cum = ctx.cumulativeAnswer || null;
-  // Everything the student has EVER negated (this turn + across the session)…
   const everNegated = _normSet(
     [].concat(ctx.negated || [],
       (cum && cum.excluded) || [],
       (cum && cum.wronglyExcluded) || [])
   );
   if (everNegated.size === 0) return [];
-  // …minus anything they EVER proposed (any turn): if they once proposed Rn,
-  // "why did you think Rn mattered" refers to that real proposal — legitimate.
   const everProposed = _normSet(
     [].concat(ctx.proposed || [],
       (cum && cum.namedCorrect) || [],
@@ -345,7 +342,7 @@ function _findFalseAccusations(text, ctx) {
     if (sent.indexOf("?") < 0 && sent.indexOf("¿") < 0) continue;
     const folded = stripAccents(sent.toLowerCase());
     if (!ACCUSE_VERB_RE.test(folded)) continue;
-    if (NEGATED_INFLUENCE_RE.test(folded)) continue; // "…que R3 NO influía" — not an accusation of inclusion
+    if (NEGATED_INFLUENCE_RE.test(folded)) continue;
     if (!PAST_INFLUENCE_RE.test(folded)) continue;
     const re = /\br(\d+)\b/gi;
     let m;
@@ -359,13 +356,19 @@ function _findFalseAccusations(text, ctx) {
   return out;
 }
 
+/*
+   Txt, Set<Txt> -> ____|____________________
+                   | _findContradictions() | -> [Obj]
+                    ---------------------
+      Declarative sentences (questions skipped) that state an Rn does/does not
+      contribute against the ground truth; returns {element, polarity, evidence}.
+*/
 function _findContradictions(text, correctSet) {
   if (!text || correctSet.size === 0) return [];
   const out = [];
-  // Walk sentences keeping their terminator so we can tell questions apart.
   const sentences = text.split(/(?<=[.!?])\s+/);
   for (const sent of sentences) {
-    if (sent.includes("?") || sent.includes("¿")) continue; // skip questions
+    if (sent.includes("?") || sent.includes("¿")) continue;
     const hits = sent.matchAll(/\bR(\d+)\b\s+([^.,!?\n]{0,80})/gi);
     for (const m of hits) {
       const rn = "R" + m[1];

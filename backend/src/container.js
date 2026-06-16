@@ -2,39 +2,55 @@
 
 const config = require("./config/environment");
 
-/**
- * Dependency Injection Container (PostgreSQL only).
- *
- * Tras la migración final Mongo→Pg (2026-04-21), este container solo soporta
- * DATABASE_TYPE="postgresql". Los modos "mongodb" y "dual-write" fueron
- * eliminados junto con todo el código de Mongoose.
- *
- * Usage:
- *   const container = require('./container');
- *   await container.initialize();
- *   const { usuarioRepo, messageRepo, orchestrator, ... } = container;
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                        CONTAINER                      |
+            |  Dependency Injection Container (PostgreSQL only).     |
+            |  After the final Mongo->Pg migration (2026-04-21) it  |
+            |  only supports DATABASE_TYPE="postgresql"; the         |
+            |  "mongodb" and "dual-write" modes were removed with   |
+            |  all Mongoose code. Wires the repositories, the LLM   |
+            |  adapter, the guardrail pipeline, the history          |
+            |  summariser, the agents and the orchestrator.         |
+            |  Usage: require it, await initialize(), then read the |
+            |  exposed fields (usuarioRepo, messageRepo,             |
+            |  orchestrator, ...).                                   |
+        ____|________________                                       |
+   IN -> | initialize() | -> Promise<void>                          |
+          --------------                                            |
+        ____|___________________                                    |
+        | _initPostgreSQL() | -> Promise<void>                      |
+        ---------------------                                       |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const container = {
   _initialized: false,
 
-  // Repositories (ports)
   usuarioRepo: null,
   ejercicioRepo: null,
   interaccionRepo: null,
   messageRepo: null,
   resultadoRepo: null,
 
-  // Domain services (ports)
   securityService: null,
   llmService: null,
   guardrailPipeline: null,
   kgConceptPatterns: [],
 
-  // Agent system
   orchestrator: null,
   agents: null,
 
+  /*
+       ____|________
+      | initialize() | -> Promise<void>
+       -------------
+      Builds the whole container: opens the DB, instantiates the
+      DB-independent adapters, loads the KG and BM25 indices, runs the
+      Chroma health check, assembles the guardrail pipeline, the history
+      summariser, the agents and the orchestrator.
+  */
   async initialize() {
     if (this._initialized) return;
 
@@ -50,16 +66,12 @@ const container = {
 
     await this._initPostgreSQL();
 
-    // DB-independent adapters
     const HeuristicSecurityAdapter = require("./infrastructure/security/HeuristicSecurityAdapter");
     const { emitEvent } = require("./infrastructure/events/ragEventBus");
     this.securityService = new HeuristicSecurityAdapter({
       logger: function (event, payload) { emitEvent(event, "end", payload); },
     });
 
-    // LLM adapter (port: ILlmService) — selected by LLM_PROVIDER env var.
-    //   - "poligpt" → PoliGptLlmAdapter (OpenAI-compatible LiteLLM proxy at UPV)
-    //   - "ollama"  → OllamaLlmAdapter (legacy direct Ollama; default)
     const llmCfg = require("./infrastructure/llm/config");
     if (llmCfg.LLM_PROVIDER === "poligpt") {
       const PoliGptLlmAdapter = require("./infrastructure/llm/PoliGptLlmAdapter");
@@ -71,7 +83,6 @@ const container = {
       console.log("[Container] LLM provider: ollama (model=" + llmCfg.OLLAMA_MODEL + ")");
     }
 
-    // Load KG concept patterns (used by the StateRevealGuardrail)
     const { loadKG, getAllEntries } = require("./infrastructure/search/knowledgeGraph");
     const { loadConceptPatternsFromKG } = require("./domain/services/rag/guardrails");
     try {
@@ -88,9 +99,6 @@ const container = {
       console.warn("[Container] KG concept patterns not available:", err.message);
     }
 
-    // Load BM25 indices for every exercise dataset. Previously only the legacy
-    // ragMiddleware loaded these; with USE_ORCHESTRATOR=1 the new pipeline ran
-    // without BM25 (semantic-only fallback), silently degrading retrieval.
     try {
       const fs = require("fs");
       const path = require("path");
@@ -112,10 +120,6 @@ const container = {
       console.warn("[Container] BM25 indices not loaded:", err.message);
     }
 
-    // Health check: verify Chroma collections are populated.
-    // In production (CHROMA_REQUIRED !== "false") an empty ChromaDB is FATAL —
-    // the system would silently serve degraded responses without semantic search.
-    // Set CHROMA_REQUIRED=false in development environments that run without ChromaDB.
     const chromaRequired = (process.env.CHROMA_REQUIRED || "true").toLowerCase() !== "false";
     try {
       const { getCollection } = require("./infrastructure/vectordb/chromaClient");
@@ -152,10 +156,6 @@ const container = {
         " (BM25 in-memory will still work, semantic search disabled)");
     }
 
-    // Guardrail pipeline (parallel + surgical-first + consolidated retry + budget)
-    // Profile selection: GUARDRAIL_PROFILE=legacy keeps the pre-hexagonal set
-    // (premature/didactic/dataset_style still inside the safety pipeline).
-    // Default profile delegates those three to the PedagogicalReviewerAgent.
     const { createGuardrailsForProfile } = require("./infrastructure/guardrails");
     const GuardrailPipeline = require("./domain/services/GuardrailPipeline");
     const trace = require("./infrastructure/events/pipelineDebugLogger");
@@ -166,11 +166,6 @@ const container = {
       " (" + guardrailList.length + " guardrails: " +
       guardrailList.map(function (g) { return g.id; }).join(", ") + ")"
     );
-    // Deploy-verification stamp (2026-06-11). Runs 3-5 were debugged blind
-    // because the server was running a MIX of old and new files (boot showed
-    // the new guardrails while the classifier/orchestrator were stale). This
-    // line inspects the LOADED code at runtime — if any flag prints OFF, that
-    // file on disk is outdated and the loop fixes will not work.
     try {
       const _orch = require("./domain/agents/orchestrator");
       const _tutor = require("./domain/agents/tutorAgent");
@@ -187,11 +182,6 @@ const container = {
           return c.negated.indexOf("R5") >= 0;
         } catch (_) { return false; }
       })();
-      // closureSemantics: discriminates the LATEST closure behaviour (run-6/7
-      // fixes + review batch). Runs the run-6 markerless-justification replay
-      // through the loaded code — only the current semantics yields
-      // closureReady=true here, so older syncs print OFF even when the four
-      // basic flags are ON.
       const _semanticsOk = (function () {
         try {
           const { computeCumulativeAnswer } = require("./domain/services/rag/cumulativeAnswer");
@@ -220,24 +210,15 @@ const container = {
       budgetMs: Number(process.env.GUARDRAIL_BUDGET_MS || 20000),
       minRetryBudgetMs: Number(process.env.GUARDRAIL_MIN_RETRY_BUDGET_MS || 8000),
       logger: trace,
-      // Lets the pipeline notify the SSE layer (via ragBus) right before an
-      // LLM rewrite so the frontend can show a placeholder instead of the
-      // leaked draft. See GuardrailPipeline.emitEvent for details.
       emitEvent: emitEvent,
     });
 
-    // History summariser: keeps an in-memory rolling summary of conversation
-    // turns that have fallen out of the HISTORY_MAX_MESSAGES window. The
-    // TutorAgent injects this summary as a second system message so the LLM
-    // doesn't lose memory of confirmations or concepts the student
-    // established earlier in a long session.
     const HistorySummarizer = require("./domain/services/historySummarizer");
     this.historySummarizer = new HistorySummarizer({
       llmService: this.llmService,
       logger: { log: function (msg) { console.warn(msg); } },
     });
 
-    // Build agent registry + orchestrator
     const { createAgentRegistry } = require("./domain/agents/agentRegistry");
     const TutoringOrchestrator = require("./domain/agents/orchestrator");
     const { classifyQuery } = require("./domain/services/rag/queryClassifier");
@@ -264,8 +245,6 @@ const container = {
       buildSystemPrompt: buildTutorSystemPrompt,
       logInteraction: logInteraction,
       emitEvent: emitEvent,
-      // Hex compliance: inject the pipeline logger so domain agents don't
-      // require("../../infrastructure/...") at module top-level.
       debugLogger: trace,
       config: ragConfig,
     });
@@ -275,6 +254,13 @@ const container = {
     console.log("[Container] Initialization complete");
   },
 
+  /*
+       ____|___________________
+      | _initPostgreSQL() | -> Promise<void>
+       -------------------
+      Creates the pg pool, runs the migrations and instantiates the Pg*
+      repositories (usuario, ejercicio, interaccion, message, resultado).
+  */
   async _initPostgreSQL() {
     const { createPool, runMigrations } = require("./infrastructure/persistence/postgresql/PgConnection");
     const pool = createPool(config.PG_CONNECTION_STRING);

@@ -6,26 +6,37 @@ const {
   getDidacticFallbackPrefix,
 } = require("../../domain/services/languageManager");
 
-/**
- * Detects when the tutor explains concepts didactically instead of scaffolding.
- * Patterns like "esto significa que", "cuando una resistencia está" etc.
- *
- * Surgical fix strategy:
- *   1. If the response already contains a question (?), strip the explanatory
- *      sentences and keep ONLY the questions. This preserves whatever
- *      pedagogical intent the LLM had at the end of its response.
- *   2. If there is no question at all, replace the response with a brief
- *      generic redirect plus one rotating scaffolding question. This avoids
- *      leaving the student with a dead-end explanation while still being
- *      pedagogically reasonable.
- *
- * Both branches are deterministic and never name a specific element.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |               DIDACTICEXPLANATIONGUARDRAIL            |
+            |  Guardrail adapter (IGuardrail). Catches the tutor     |
+            |  lecturing the concept ("esto significa que", "cuando  |
+            |  una resistencia está…") instead of scaffolding with   |
+            |  a Socratic question.                                  |
+        ____|_____________________                                   |
+        | check() | -> Obj                       (reads response)    |
+        -----------                                                  |
+        ____|_______________________                                 |
+        | surgicalFix() | -> Obj                 (reads response)    |
+        -----------------                                            |
+        ____|___________________                                     |
+        | buildRetryHint() | -> Txt                                  |
+        --------------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 class DidacticExplanationGuardrail extends IGuardrail {
   get id() { return "didactic_explanation"; }
   get severity() { return "med"; }
 
+  /*
+   Txt, Obj -> ____|_________
+              | check() | -> Obj
+               -----------
+      True (violated) when the response explains didactically rather than
+      scaffolding; the detected detail is returned as evidence.
+  */
   check(response, ctx) {
     if (typeof response !== "string") return { violated: false };
     const { checkDidacticExplanation } = require("../../domain/services/rag/guardrails");
@@ -34,14 +45,20 @@ class DidacticExplanationGuardrail extends IGuardrail {
     return { violated: true, evidence: r.details };
   }
 
+  /*
+   Txt, Obj -> ____|_______________
+              | surgicalFix() | -> Obj
+               -----------------
+      Two deterministic strategies, neither naming an element: keep only the
+      existing question(s) when present, else replace with a redirect plus
+      one rotating scaffolding question.
+  */
   surgicalFix(response, ctx) {
     if (typeof response !== "string" || response.trim() === "") {
       return { applied: false, text: response };
     }
     const lang = (ctx && ctx.lang) || "es";
 
-    // Strategy 1: keep existing questions only.
-    // Match "?" or Spanish "¿...?" terminated questions; tolerate newlines.
     const qs = response.match(/[¿?][^.!?\n]*[.!?]?|[^.!?\n]*\?/g) || [];
     const cleanQs = qs.map(q => q.trim()).filter(q => q.length > 0 && q.includes("?"));
     if (cleanQs.length > 0) {
@@ -51,13 +68,18 @@ class DidacticExplanationGuardrail extends IGuardrail {
       }
     }
 
-    // Strategy 2: replace with deterministic redirect + rotating fallback.
     const pool = getDidacticFallbackQuestions(lang);
     const prefix = getDidacticFallbackPrefix(lang);
     const fallback = prefix + " " + pool[Math.floor(Math.random() * pool.length)];
     return { applied: true, text: fallback, before: response, after: fallback };
   }
 
+  /*
+   Txt -> ____|___________________
+         | buildRetryHint() | -> Txt
+          --------------------
+      Delegates to the scaffolding instruction for the given language.
+  */
   buildRetryHint(lang) {
     const { getScaffoldInstruction } = require("../../domain/services/rag/guardrails");
     return getScaffoldInstruction(lang || "es");

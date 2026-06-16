@@ -1,13 +1,22 @@
 "use strict";
 
-// Verifies that flattenInteraccion surfaces the new fields:
-//   llmResponseOriginal — raw LLM output before any guardrail rewrite
-//   guardrailRewrites   — JSON-encoded list of {guardrailId,before,after,...}
-// Without these, the export only shows boolean flags per guardrail and an
-// analyst can't see what the model was about to say before redaction.
-
 const { _test } = require("../../src/interfaces/http/routes/exportRoutes");
 const { flattenInteraccion } = _test;
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |              EXPORT FLATTEN - FIX DETAILS             |
+            |  Test suite for flattenInteraccion surfacing the pre- |
+            |  fix capture fields: llmResponseOriginal (raw LLM     |
+            |  output before any guardrail rewrite) and             |
+            |  guardrailRewrites (JSON-encoded list of              |
+            |  {guardrailId,before,after,...}). Without these the   |
+            |  export shows only boolean flags per guardrail.       |
+        ____|________________                                       |
+   Obj -> | makeAssistant() | -> Obj                                |
+          -------------------                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("exportRoutes.flattenInteraccion — pre-fix capture", () => {
   const inter = {
@@ -20,6 +29,13 @@ describe("exportRoutes.flattenInteraccion — pre-fix capture", () => {
   const usuario = { upvLogin: "ana", firstName: "Ana", lastName: "P" };
   const ejercicio = { title: "Ej1" };
 
+  /*
+     IN -> ____|________________
+          | makeAssistant() | -> Obj
+           -------------------
+        Builds an assistant message with default per-turn metadata, merging
+        any extra metadata fields passed in.
+  */
   function makeAssistant(extraMeta) {
     return {
       role: "assistant",
@@ -69,7 +85,6 @@ describe("exportRoutes.flattenInteraccion — pre-fix capture", () => {
     ];
     const [row] = flattenInteraccion(inter, messages, usuario, ejercicio);
     expect(row.llmResponseOriginal).toBe("Has acertado con R1, R2 y R4.");
-    // Stored as JSON string so a CSV cell can hold the structured list.
     const parsed = JSON.parse(row.guardrailRewrites);
     expect(parsed).toEqual(fixDetails);
   });

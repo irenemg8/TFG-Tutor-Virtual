@@ -1,13 +1,18 @@
 "use strict";
 
-/**
- * BUG-013 (2026-05-03): el embedding remoto (Ollama UPV) tarda 10-18s
- * en cold-start. Para queries triviales (Rn corto, yes/no, "no sé") la
- * búsqueda semántica + BM25 no aporta info que el LLM no tenga ya. El
- * canSkip() del RetrievalAgent ahora bypassea el retrieval en esos casos.
- */
-
 const RetrievalAgent = require("../../src/domain/agents/retrievalAgent");
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |   RETRIEVAL SKIP — UNIT TESTS (BUG-013)               |
+            |  Regresses BUG-013 (2026-05-03): the remote embedding  |
+            |  has a 10-18s cold start, so for trivial queries       |
+            |  (short Rn, yes/no, "no sé") retrieval adds nothing.    |
+            |  Verifies RetrievalAgent.canSkip bypasses retrieval    |
+            |  for greetings/off-topic/short element queries but not |
+            |  for scaffold-needing cases.                          |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("RetrievalAgent.canSkip (BUG-013)", () => {
   const a = new RetrievalAgent({ runFullPipeline: () => {} });

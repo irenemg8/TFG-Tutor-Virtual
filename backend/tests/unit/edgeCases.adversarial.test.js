@@ -1,26 +1,5 @@
 "use strict";
 
-/**
- * Edge case adversarial test suite — Layer 1.
- *
- * Cubre los escenarios MVP-blocking del catálogo
- * `.apex/wiki/concepts/edge-cases-tutor-socratico.md` que no están ya
- * cubiertos por los tests existentes (acDetectorAgent.verdict,
- * adherenceGuardrail, redactElementMentions, whitespaceNormalise).
- *
- * Foco:
- *  - SolutionLeakGuardrail (B2) — afirmación con todas las correctas.
- *  - StateRevealGuardrail (B3, B4, B9) — hardcoded vs KG, question vs aff.
- *  - FalseConfirmationGuardrail (B1 + idempotencia + skip-no-elements).
- *  - CompleteSolutionGuardrail (B1-extension wronglyNegated/Proposed).
- *  - ensureResponseHasQuestion (B13) — respuesta sin "?" recibe fallback.
- *  - redactStateRevealSentence (NS-31 first-only).
- *  - extractResistances unicode bombs (A8) y mal-escritos (A22).
- *  - PrematureConfirmationGuardrail comportamiento legacy.
- *
- * NO requiere servers. NO toca LLM. NO toca BD.
- */
-
 const SolutionLeakGuardrail = require("../../src/infrastructure/guardrails/SolutionLeakGuardrail");
 const FalseConfirmationGuardrail = require("../../src/infrastructure/guardrails/FalseConfirmationGuardrail");
 const CompleteSolutionGuardrail = require("../../src/infrastructure/guardrails/CompleteSolutionGuardrail");
@@ -38,7 +17,19 @@ const {
   extractMentionedElements,
 } = require("../../src/domain/services/text/elementExtractor");
 
-// ─── B2 — SolutionLeakGuardrail ──────────────────────────────────────────────
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |   ADVERSARIAL EDGE CASES — UNIT TESTS (Layer 1)       |
+            |  Covers the MVP-blocking edge-case catalogue not       |
+            |  already exercised elsewhere: SolutionLeakGuardrail    |
+            |  (B2), StateRevealGuardrail (B3/B4/B9),                |
+            |  FalseConfirmationGuardrail (B1), CompleteSolution-    |
+            |  Guardrail, ensureResponseHasQuestion (B13),           |
+            |  redactStateRevealSentence (NS-31), extractResistances |
+            |  unicode bombs (A8/A22) and removeOpeningConfirmation. |
+            |  No LLM, DB or servers required.                      |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("SolutionLeakGuardrail (B2 — leak de la respuesta completa)", () => {
   const g = new SolutionLeakGuardrail();
@@ -49,8 +40,6 @@ describe("SolutionLeakGuardrail (B2 — leak de la respuesta completa)", () => {
     expect(r.violated).toBe(true);
   });
 
-  // BUG-001 (FIXED 2026-05-03): SolutionLeakGuardrail now scans sentences
-  // and verifies they contain ALL correct elements regardless of order.
   test("flags affirmative listing in any order [BUG-001 FIXED]", () => {
     const r = g.check("Las que aportan a la diferencia son R4, R1 y R2.", { correctAnswer });
     expect(r.violated).toBe(true);
@@ -61,14 +50,6 @@ describe("SolutionLeakGuardrail (B2 — leak de la respuesta completa)", () => {
     expect(r.violated).toBe(true);
   });
 
-  // BUG-SL-EXACT (2026-06-14): updated. A question that names EXACTLY the
-  // correct set ("¿Crees que son R1, R2 y R4 las que importan?") hands the
-  // student the answer just as much as an affirmative listing — there is no
-  // legitimate Socratic reason for the tutor to enumerate precisely the answer
-  // set and ask "are these the ones?". This was the production leak Irene
-  // reported ("de la nada te dice las resistencias"). It is now flagged.
-  // A FULL enumeration of every evaluable element ("¿cuáles de R1..R5…?") is
-  // still exempt (see the test below), since it reveals nothing.
   test("flags an exact-set listing inside a question [BUG-SL-EXACT]", () => {
     const r = g.check("¿Crees que son R1, R2 y R4 las que importan?", { correctAnswer });
     expect(r.violated).toBe(true);
@@ -95,12 +76,9 @@ describe("SolutionLeakGuardrail (B2 — leak de la respuesta completa)", () => {
   test("surgicalFix replaces the listing with a placeholder", () => {
     const fix = g.surgicalFix("Sí, las que contribuyen son R1, R2 y R4.", { correctAnswer, lang: "es" });
     expect(fix && fix.applied).toBe(true);
-    // After redaction the original element list must be gone or transformed.
     expect(/R1[,\s]+(y\s+)?R2[,\s]+(y\s+)?R4/i.test(fix.text)).toBe(false);
   });
 });
-
-// ─── B3, B4, B9 — StateRevealGuardrail ───────────────────────────────────────
 
 describe("StateRevealGuardrail (B3, B4, B9 — reveal de estado interno)", () => {
   const g = new StateRevealGuardrail();
@@ -116,8 +94,6 @@ describe("StateRevealGuardrail (B3, B4, B9 — reveal de estado interno)", () =>
   });
 
   test("B3 — hardcoded patterns ALSO fire inside questions (affirmative reveal in question form)", () => {
-    // "¿Sabías que R5 está cortocircuitada?" still leaks state even though
-    // it's a question. By design hardcoded patterns ignore the question gate.
     const r = g.check("¿Sabías que R5 está cortocircuitada?", {
       evaluableElements, kgConceptPatterns,
     });
@@ -133,7 +109,6 @@ describe("StateRevealGuardrail (B3, B4, B9 — reveal de estado interno)", () =>
   });
 
   test("B9 — KG concept inside a Socratic question DOES NOT trigger", () => {
-    // Pedagogically valid: asking the student about a concept is the goal.
     const r = g.check("¿Qué crees que pasa con R3 si hay circuito abierto?", {
       evaluableElements, kgConceptPatterns,
     });
@@ -155,8 +130,6 @@ describe("StateRevealGuardrail (B3, B4, B9 — reveal de estado interno)", () =>
   });
 });
 
-// ─── B1 — FalseConfirmationGuardrail ─────────────────────────────────────────
-
 describe("FalseConfirmationGuardrail (B1 — confirma una respuesta errónea)", () => {
   const g = new FalseConfirmationGuardrail();
 
@@ -170,8 +143,6 @@ describe("FalseConfirmationGuardrail (B1 — confirma una respuesta errónea)", 
   });
 
   test("does NOT trigger when student mentioned NO canonical element (conceptual reply)", () => {
-    // Skip-no-elements heuristic: "interruptor abierto" is a conceptual
-    // observation; confirming it is pedagogically acceptable.
     const r = g.check("Correcto, hay un interruptor abierto.", {
       classification: "wrong_answer",
       mentionedElements: [],
@@ -201,14 +172,12 @@ describe("FalseConfirmationGuardrail (B1 — confirma una respuesta errónea)", 
       "considerando la topología y la dirección de la corriente. " +
       "Perfecto coincide con tu razonamiento intuitivo.";
     const r = g.check(long, { classification: "wrong_answer", mentionedElements: ["R3"] });
-    // 'perfecto' aparece después de 100 chars pero antes de 200 → debería disparar.
     expect(r.violated).toBe(true);
   });
 
   test("surgicalFix is idempotent — does NOT re-prefix when starts with intermediate phrase", () => {
     const already = "Aún no del todo. Perfecto, has dicho R3.";
     const fix = g.surgicalFix(already, { classification: "wrong_answer", lang: "es" });
-    // Either applied:false or text unchanged — must not double-prefix.
     if (fix && fix.applied) {
       expect(fix.text).not.toMatch(/^Aún no del todo\. .+ Perfecto/);
     } else {
@@ -216,8 +185,6 @@ describe("FalseConfirmationGuardrail (B1 — confirma una respuesta errónea)", 
     }
   });
 });
-
-// ─── CompleteSolutionGuardrail — wrongly negated/proposed ────────────────────
 
 describe("CompleteSolutionGuardrail (validación parcial errónea)", () => {
   const g = new CompleteSolutionGuardrail();
@@ -227,7 +194,7 @@ describe("CompleteSolutionGuardrail (validación parcial errónea)", () => {
     const r = g.check("Perfecto, has descartado bien.", {
       correctAnswer,
       proposed: [],
-      negated: ["R4"], // R4 is correct → wrongly negated
+      negated: ["R4"],
     });
     expect(r.violated).toBe(true);
     expect(r.metadata.wronglyNegated).toContain("R4");
@@ -236,7 +203,7 @@ describe("CompleteSolutionGuardrail (validación parcial errónea)", () => {
   test("triggers when tutor confirms but student wrongly PROPOSED an incorrect element", () => {
     const r = g.check("Exacto, ese análisis es bueno.", {
       correctAnswer,
-      proposed: ["R3"], // R3 is not correct
+      proposed: ["R3"],
       negated: [],
     });
     expect(r.violated).toBe(true);
@@ -262,8 +229,6 @@ describe("CompleteSolutionGuardrail (validación parcial errónea)", () => {
   });
 });
 
-// ─── PrematureConfirmationGuardrail (legacy profile) ─────────────────────────
-
 describe("PrematureConfirmationGuardrail (A14 — premature confirm trap)", () => {
   const g = new PrematureConfirmationGuardrail();
 
@@ -279,8 +244,6 @@ describe("PrematureConfirmationGuardrail (A14 — premature confirm trap)", () =
     expect(() => g.check(null, {})).not.toThrow();
   });
 });
-
-// ─── B13 — ensureResponseHasQuestion fallback ────────────────────────────────
 
 describe("ensureResponseHasQuestion (B13 — respuesta sin pregunta)", () => {
   test("returns text untouched when it already contains '?'", () => {
@@ -312,12 +275,9 @@ describe("ensureResponseHasQuestion (B13 — respuesta sin pregunta)", () => {
 
   test("returns text unchanged on empty/null", () => {
     expect(ensureResponseHasQuestion("", "es")).toBe("");
-    // Non-string → returned as-is.
     expect(ensureResponseHasQuestion(null, "es")).toBe(null);
   });
 });
-
-// ─── NS-31 first-only redaction ──────────────────────────────────────────────
 
 describe("redactStateRevealSentence (NS-31 — first-only sub)", () => {
   const evaluableElements = ["R1", "R2", "R3", "R4", "R5"];
@@ -328,7 +288,6 @@ describe("redactStateRevealSentence (NS-31 — first-only sub)", () => {
       "Por eso R5 está cortocircuitada y no aporta.";
     const r = redactStateRevealSentence(input, evaluableElements, "está cortocircuitada", "es");
     expect(r.redacted).toBe(true);
-    // Only one placeholder should appear, not two.
     const matches = (r.text.match(/ese elemento tiene una propiedad relevante/gi) || []).length;
     expect(matches).toBe(1);
   });
@@ -355,9 +314,6 @@ describe("redactStateRevealSentence (NS-31 — first-only sub)", () => {
     expect(r.text).toBe(input);
   });
 
-  // BUG-009 (2026-05-03): el placeholder debe terminar en "." y dejar
-  // espacio antes de la siguiente frase para evitar pegoteo
-  // "identificar Podrías…" sin separación frástica.
   test("placeholder ends with period and is followed by space (BUG-009)", () => {
     const input =
       "R1 está cortocircuitada y no aporta. ¿Podrías explicarme por qué?";
@@ -372,11 +328,9 @@ describe("redactStateRevealSentence (NS-31 — first-only sub)", () => {
       "R1 está cortocircuitada. Podrías decirme algo más?";
     const r = redactStateRevealSentence(input, evaluableElements, "está cortocircuitada", "es");
     expect(r.redacted).toBe(true);
-    // Placeholder ends with "." so next sentence should be cleanly separated.
     expect(r.text).toMatch(/identificar\.\s+Podrías/);
   });
 
-  // BUG-009-B (2026-05-03): rotación de placeholder por priorHits.
   test("priorHits=0 usa placeholder #1 (variante por defecto)", () => {
     const input = "R1 está cortocircuitada. ¿Por qué crees?";
     const r = redactStateRevealSentence(input, evaluableElements, "está cortocircuitada", "es", 0);
@@ -417,20 +371,14 @@ describe("redactStateRevealSentence (NS-31 — first-only sub)", () => {
     expect(r2.text).toMatch(/key characteristic/);
   });
 
-  // BUG-012 (2026-05-03): cuando hay DOS frases con state-reveal sobre
-  // elementos distintos, el primer placeholder no debe dejar la segunda
-  // intacta. Eliminamos las secundarias sin reinyectar placeholder.
   test("doble state-reveal con Rn distinto: redacta primera, elimina segunda", () => {
     const input =
       "A R1 contribuye porque está conectada en serie. R5 no lo hace debido a estar cortocircuitada. ¿Por qué crees?";
     const r = redactStateRevealSentence(input, evaluableElements, "está conectada", "es");
     expect(r.redacted).toBe(true);
-    // Primera frase → placeholder
     expect(r.text).toMatch(/propiedad relevante|característica clave|pieza/);
-    // Segunda frase con R5+cortocircuitada eliminada
     expect(r.text).not.toMatch(/R5/);
     expect(r.text).not.toMatch(/cortocircuitada/i);
-    // La pregunta original sobrevive
     expect(r.text).toMatch(/\?$/);
   });
 
@@ -439,10 +387,7 @@ describe("redactStateRevealSentence (NS-31 — first-only sub)", () => {
       "A R1 contribuye porque está conectada en serie. R3 también está en el circuito principal. ¿Algo más?";
     const r = redactStateRevealSentence(input, evaluableElements, "está conectada", "es");
     expect(r.redacted).toBe(true);
-    // Primera frase → placeholder
     expect(r.text).toMatch(/propiedad relevante/);
-    // Segunda frase NO tiene keyword leak (no menciona "cortocircuitada"
-    // ni "no contribuye" etc.) → debe sobrevivir.
     expect(r.text).toMatch(/R3/);
   });
 
@@ -457,11 +402,8 @@ describe("redactStateRevealSentence (NS-31 — first-only sub)", () => {
   });
 });
 
-// ─── A8 — extractResistances unicode bombs ───────────────────────────────────
-
 describe("extractResistances (A8 — unicode homoglyphs / A22 — mal escrito)", () => {
   test("ignores mathematical-script 𝓡 (not ASCII R)", () => {
-    // 𝓡 (U+1D4E1) is mathematical script capital R — should NOT be parsed.
     const out = extractResistances("𝓡1, 𝓡2, 𝓡4");
     expect(out).not.toContain("R1");
     expect(out).not.toContain("R2");
@@ -496,8 +438,6 @@ describe("extractResistances (A8 — unicode homoglyphs / A22 — mal escrito)",
   });
 });
 
-// ─── extractMentionedElements robustness ────────────────────────────────────
-
 describe("extractMentionedElements (robustness)", () => {
   const universe = ["R1", "R2", "R3", "R4", "R5"];
 
@@ -507,13 +447,10 @@ describe("extractMentionedElements (robustness)", () => {
   });
 
   test("does not match substring 'R10' when looking for R1", () => {
-    // word-boundary-aware
     const out = extractMentionedElements("R10 contribuye", universe);
     expect(out).not.toContain("R1");
   });
 });
-
-// ─── removeOpeningConfirmation idempotency ──────────────────────────────────
 
 describe("removeOpeningConfirmation (B6 — anti-stack)", () => {
   test("strips a single 'Perfecto.' opening", () => {
@@ -522,8 +459,6 @@ describe("removeOpeningConfirmation (B6 — anti-stack)", () => {
   });
 
   test("does not eat the word 'Eso está' (regression bug 'Tá')", () => {
-    // 2026-04-27 bug: 'eso es' prefix matched 'Eso está' and stripped 6 chars,
-    // leaving 'tá muy bien dicho...' capitalised as 'Tá...'.
     const out = removeOpeningConfirmation("Eso está muy bien encaminado.", "es");
     expect(out).toBe("Eso está muy bien encaminado.");
   });
@@ -532,8 +467,6 @@ describe("removeOpeningConfirmation (B6 — anti-stack)", () => {
     expect(removeOpeningConfirmation("¿Qué crees?", "es")).toBe("¿Qué crees?");
   });
 });
-
-// ─── AdherenceGuardrail surgical idempotency edge ───────────────────────────
 
 describe("AdherenceGuardrail (NS-33 — surgical fix safety)", () => {
   const g = new AdherenceGuardrail();
@@ -547,7 +480,6 @@ describe("AdherenceGuardrail (NS-33 — surgical fix safety)", () => {
   });
 
   test("does NOT mutate when only missed_affirmation (log-only) fires", () => {
-    // verdict.hits=[R1] but response doesn't name R1: log-only, not surgical.
     const r = g.check("Vamos a revisar la corriente global.", {
       correctAnswer,
       turnVerdict: { hits: ["R1"], errors: [], missing: [], wronglyNegated: [] },

@@ -1,14 +1,45 @@
-// backend/src/utils/promptBuilder.js
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                     PROMPT BUILDER                    |
+            |  Module of functions that build the tutor system      |
+            |  prompt from an exercise, plus lightweight language   |
+            |  detection used to make the tutor reply in the        |
+            |  student's language.                                  |
+        ____|________________________                               |
+   Obj -> | buildTutorSystemPrompt() | -> Txt                       |
+          ----------------------------                              |
+        ____|_______________________                                |
+   Txt -> | getLanguageInstruction() | -> Txt                       |
+          ----------------------------                              |
+        ____|________________                                       |
+   Txt -> | detectLanguage() | -> Txt                               |
+          --------------------                                      |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const { detect } = require("tinyld");
 
 const FIN_TOKEN = "<END_EXERCISE>";
 
+/*
+   Obj -> ____|__________
+         | safeStr() | -> Txt
+          -----------
+      Returns the trimmed string, or "" when the value is not a string.
+*/
 function safeStr(x) {
   if (typeof x !== "string") return "";
   return x.trim();
 }
 
+/*
+   Obj,[Txt] -> ____|_______________
+               | pickFirstStr() | -> Txt
+                ----------------
+      Returns the first non-empty trimmed string found among the given
+      object keys, or "" when none match.
+*/
 function pickFirstStr(obj, keys) {
   for (const k of keys) {
     const v = safeStr(obj?.[k]);
@@ -17,6 +48,12 @@ function pickFirstStr(obj, keys) {
   return "";
 }
 
+/*
+   Obj -> ____|_________
+         | normId() | -> Txt
+          ----------
+      Normalizes an identifier to uppercase with all whitespace removed.
+*/
 function normId(s) {
   return String(s || "")
     .toUpperCase()
@@ -24,13 +61,26 @@ function normId(s) {
     .trim();
 }
 
+/*
+   [Txt] -> ____|_____________
+           | formatList() | -> Txt
+            --------------
+      Joins the truthy array entries into a comma-separated string, or ""
+      when the input is empty or not an array.
+*/
 function formatList(arr) {
   if (!Array.isArray(arr) || arr.length === 0) return "";
   return arr.filter(Boolean).join(", ");
 }
 
-// Parse netlist to generate an explicit per-resistance topology summary
-// so the LLM doesn't need to reason about circuit topology itself
+/*
+   Txt -> ____|________________________
+         | buildResistanceSummary() | -> Txt
+          --------------------------
+      Parses the netlist into an explicit per-resistance topology summary
+      (components, connections, detected short circuits, notes) so the LLM
+      does not have to reason about circuit topology itself.
+*/
 function buildResistanceSummary(netlist) {
   if (!netlist) return "";
 
@@ -40,19 +90,16 @@ function buildResistanceSummary(netlist) {
   const notes = [];
 
   for (const line of lines) {
-    // Parse resistance lines like "R1 N1 N2 1"
     const rMatch = line.match(/^(R\d+)\s+(\S+)\s+(\S+)/i);
     if (rMatch) {
       resistances.push({ name: rMatch[1].toUpperCase(), node1: rMatch[2], node2: rMatch[3] });
       continue;
     }
-    // Parse voltage sources like "V1 N1 0 1"
     const vMatch = line.match(/^(V\d+)\s+(\S+)\s+(\S+)/i);
     if (vMatch) {
       otherComponents.push(vMatch[1] + ": fuente de tensión entre " + vMatch[2] + " y " + vMatch[3]);
       continue;
     }
-    // Capture notes (switch info, etc.)
     if (line.length > 5) {
       notes.push(line);
     }
@@ -62,16 +109,13 @@ function buildResistanceSummary(netlist) {
 
   let summary = "TOPOLOGÍA DEL CIRCUITO (información interna, NO revelar al alumno):\n";
 
-  // Components
   for (const c of otherComponents) {
     summary += "- " + c + "\n";
   }
 
-  // Resistances with detected states
   for (const r of resistances) {
     let status = "Conectada entre " + r.node1 + " y " + r.node2;
 
-    // Detect short circuit (both nodes are the same)
     if (r.node1 === r.node2) {
       status += " → CORTOCIRCUITADA (ambos terminales en el mismo nudo)";
     }
@@ -79,17 +123,22 @@ function buildResistanceSummary(netlist) {
     summary += "- " + r.name + ": " + status + "\n";
   }
 
-  // Notes (switches, etc.)
   for (const note of notes) {
     summary += "- NOTA: " + note + "\n";
   }
 
-  // Add modoExperto reasoning (sanitized version is done later)
   return summary;
 }
 
+/*
+   Obj -> ____|________________________
+         | buildTutorSystemPrompt() | -> Txt
+          --------------------------
+      Assembles the full Socratic-tutor system prompt: fixed pedagogical
+      rules, the current exercise info, and the structured (sanitized)
+      tutor context derived from the exercise.
+*/
 function buildTutorSystemPrompt(ejercicio) {
-  // Campos base del ejercicio
   const titulo = pickFirstStr(ejercicio, ["titulo", "nombre", "name"]);
   const enunciado = pickFirstStr(ejercicio, ["enunciado", "texto", "statement", "descripcion"]);
   const concepto = pickFirstStr(ejercicio, ["concepto", "tema", "topic"]);
@@ -97,17 +146,14 @@ function buildTutorSystemPrompt(ejercicio) {
   const nivel = ejercicio?.nivel != null ? String(ejercicio.nivel) : "";
   const imagen = pickFirstStr(ejercicio, ["imagen", "image", "imageUrl", "img"]);
 
-  // TutorContext estructurado
   const tc = ejercicio?.tutorContext || {};
   const objetivo = pickFirstStr(tc, ["objetivo"]);
   const netlist = pickFirstStr(tc, ["netlist"]);
   const modoExperto = pickFirstStr(tc, ["modoExperto"]);
   const version = tc?.version != null ? String(tc.version) : "";
 
-  // IDs de AC relevantes (solo IDs, no el objeto entero)
   const acRefs = Array.isArray(tc?.ac_refs) ? tc.ac_refs.map(normId).filter(Boolean) : [];
 
-  // ✅ Respuesta correcta (lista cerrada para este ejercicio)
   const respuestaCorrecta = Array.isArray(tc?.respuestaCorrecta)
     ? tc.respuestaCorrecta.map(normId).filter(Boolean)
     : [];
@@ -146,18 +192,15 @@ CRITERIO DE FIN:
 - Al finalizar, añade el token ${FIN_TOKEN} al final.
 `.trim();
 
-  // Sanitize modoExperto: remove sentences that directly reveal the answer
   let modoExpertoSafe = modoExperto;
   if (modoExpertoSafe && respuestaCorrecta.length > 0) {
-    // Remove sentences that list the correct answer explicitly
     const sentences = modoExpertoSafe.split(/(?<=[.!?])\s+/);
     const filtered = [];
     for (const s of sentences) {
       const mentioned = (s.match(/R\d+/gi) || []).map(r => r.toUpperCase());
-      // Skip sentence if it contains ALL correct resistances (likely reveals the answer)
       const hasAll = respuestaCorrecta.every(r => mentioned.includes(r));
       if (hasAll && mentioned.length >= respuestaCorrecta.length) {
-        continue; // skip this sentence
+        continue;
       }
       filtered.push(s);
     }
@@ -217,10 +260,7 @@ const LANG_NAMES = {
   ur: "Urdu", vi: "Vietnamese", zh: "Chinese",
 };
 
-// Curated map for short texts where tinyld is unreliable
-// (e.g. "Hello" → tinyld says Italian, "Hi" → empty, "Hola" → empty)
 const SHORT_LANG_MAP = {
-  // English
   "hello": "en", "hi": "en", "hey": "en", "yes": "en", "no": "en", "sure": "en",
   "ok": "en", "thanks": "en", "thank you": "en", "of course": "en", "okay": "en",
   "please": "en", "help": "en", "right": "en", "good": "en", "great": "en",
@@ -228,37 +268,36 @@ const SHORT_LANG_MAP = {
   "i don't know": "en", "no idea": "en", "what": "en", "why": "en", "how": "en",
   "can you help": "en", "let me think": "en", "not sure": "en",
   "got it": "en", "i see": "en", "go on": "en", "go ahead": "en",
-  // French
   "bonjour": "fr", "salut": "fr", "oui": "fr", "merci": "fr",
   "bien sûr": "fr", "pourquoi": "fr", "d'accord": "fr", "bonsoir": "fr",
   "je pense": "fr", "je crois": "fr", "je ne sais pas": "fr",
   "s'il vous plaît": "fr", "au revoir": "fr", "comment": "fr",
   "exactement": "fr", "je comprends": "fr", "très bien": "fr",
-  // Spanish
   "hola": "es", "sí": "es", "si": "es", "gracias": "es", "vale": "es",
   "bueno": "es", "claro": "es", "por qué": "es", "cómo": "es",
   "de acuerdo": "es", "no sé": "es", "creo que": "es", "entiendo": "es",
   "por favor": "es", "buenos días": "es", "buenas tardes": "es",
   "no lo sé": "es", "adelante": "es", "correcto": "es",
-  // German
   "hallo": "de", "guten tag": "de", "ja": "de", "nein": "de", "danke": "de",
   "natürlich": "de", "warum": "de", "bitte": "de", "gut": "de",
   "ich denke": "de", "ich glaube": "de", "ich verstehe": "de",
   "guten morgen": "de", "guten abend": "de", "genau": "de",
-  // Italian
   "ciao": "it", "buongiorno": "it", "grazie": "it", "perché": "it",
   "certo": "it", "capisco": "it", "per favore": "it", "esatto": "it",
   "buonasera": "it", "arrivederci": "it", "penso": "it", "va bene": "it",
-  // Portuguese
   "olá": "pt", "obrigado": "pt", "obrigada": "pt", "sim": "pt",
   "por quê": "pt", "bom dia": "pt", "boa tarde": "pt", "entendo": "pt",
-  // Catalan
   "bon dia": "ca", "gràcies": "ca", "si us plau": "ca", "bona tarda": "ca",
   "adéu": "ca", "d'acord": "ca", "entenc": "ca",
 };
 
-// Precompute a normalized version of the map (no accents, no apostrophes)
-// so typos like "i dont know" match "i don't know", "ola" matches "olá", etc.
+/*
+   Txt -> ____|__________________
+         | stripDiacritics() | -> Txt
+          -------------------
+      Removes accents and apostrophes from a string so near-misses like
+      "i dont know" match "i don't know" and "ola" matches "ol\u00e1".
+*/
 function stripDiacritics(s) {
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/['']/g, "");
 }
@@ -267,6 +306,13 @@ for (var _k in SHORT_LANG_MAP) {
   SHORT_LANG_MAP_NORM[stripDiacritics(_k)] = SHORT_LANG_MAP[_k];
 }
 
+/*
+   Txt -> ____|________________
+         | detectLanguage() | -> Txt
+          --------------------
+      Returns the detected language code, preferring the curated short-text
+      maps over tinyld, or "" for inputs shorter than two characters.
+*/
 function detectLanguage(text) {
   if (typeof text !== "string" || text.trim().length < 2) {
     return "";
@@ -277,6 +323,13 @@ function detectLanguage(text) {
   return SHORT_LANG_MAP[lower] || SHORT_LANG_MAP_NORM[normalized] || detect(trimmed) || "";
 }
 
+/*
+   Txt -> ____|________________________
+         | getLanguageInstruction() | -> Txt
+          --------------------------
+      Builds the system-prompt snippet telling the tutor to reply in the
+      student's detected language, or "" when no language is recognized.
+*/
 function getLanguageInstruction(text) {
   var code = detectLanguage(text);
   if (!code) {

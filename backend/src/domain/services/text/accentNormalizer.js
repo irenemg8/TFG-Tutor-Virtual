@@ -1,27 +1,39 @@
 "use strict";
 
-// Accent-insensitive string normalization.
-// Used by classifier (match student input without accents) AND by guardrails
-// (match LLM output without accents). Single source of truth.
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    ACCENT NORMALIZER                  |
+            |  Module of accent-insensitive string utilities. Single  |
+            |  source of truth used by the classifier (student input) |
+            |  and the guardrails (LLM output).                      |
+        ____|________________                                       |
+   Txt -> | stripAccents()    | -> Txt                              |
+          ----------------------                                    |
+   Txt, Txt -> | includesAsWord() | -> T/F                          |
+               ----------------------                               |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-/**
- * Strip diacritical marks from a string using NFD normalization.
- * "tensión" → "tension", "perfécto" → "perfecto"
- *
- * Safe on non-string inputs (returns empty string).
- */
+/*
+   Txt -> ____|________________
+         | stripAccents() | -> Txt
+          ------------------
+      Strips diacritical marks via NFD normalization ("tension" with accent
+      becomes "tension"). Returns "" on non-string input.
+*/
 function stripAccents(str) {
   if (typeof str !== "string") return "";
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-/**
- * Substring match with word boundary on both ends. Prevents false positives
- * like English "correct" matching inside Spanish "correctas". Word chars are
- * [a-z0-9_]; anything else (space, punctuation, start/end) counts as boundary.
- *
- * Both inputs should already be lowercased and accent-stripped by the caller.
- */
+/*
+   Txt, Txt -> ____|___________________
+              | includesAsWord() | -> T/F
+               --------------------
+      Substring match with a word boundary on both ends, so "correct" does
+      not match inside "correctas". Both inputs should arrive lowercased and
+      accent-stripped by the caller.
+*/
 function includesAsWord(text, phrase) {
   if (typeof text !== "string" || typeof phrase !== "string" || phrase.length === 0) {
     return false;

@@ -1,13 +1,39 @@
-// backend/src/interfaces/http/routes/auth.js
-// CAS OAuth2 + modo DEMO
-// Usa el PgUsuarioRepository del container (migrado desde Mongoose Usuario).
-
 const { Router } = require("express");
 const crypto = require("crypto");
 const { AuthorizationCode } = require("simple-oauth2");
 const container = require("../../../container");
 
 const router = Router();
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                      AUTH ROUTES                      |
+            |  Express router for the CAS OAuth2 login flow plus a   |
+            |  DEMO bypass mode, backed by the container's user     |
+            |  repository. Mounted at the app root. Endpoints:      |
+            |     GET  /api/auth/cas/login     -> redirect to CAS   |
+            |     GET  /api/auth/cas/callback   -> redirect (sets    |
+            |          session) | error                             |
+            |     GET  /api/auth/me            -> Obj | 401         |
+            |     GET  /api/auth/logout        -> redirect to CAS   |
+            |     POST /api/auth/dev-login      -> Obj   (DEMO)      |
+            |     POST /api/auth/dev-logout     -> Obj   (DEMO)      |
+            |  Exports { router, requireAuth }.                     |
+        ____|________________                                       |
+   Txt, Txt -> | assertEnv() | -> void           (warns if missing)  |
+              -------------                                          |
+        ____|__________________                                      |
+        | getUsuarioRepo() | -> UsuarioRepo | null  (reads container)|
+        ------------------                                           |
+        ____|____________________                                    |
+   Obj -> | containerNotReady() | -> Obj          (sends 503)        |
+          -------------------                                        |
+        ____|_______________                                         |
+   Obj, Obj, Fn -> | requireAuth() | -> void      (session guard)    |
+                  ---------------                                    |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const {
   CAS_BASE_URL = "https://caspre.upv.es/cas",
@@ -19,6 +45,13 @@ const {
   DEV_BYPASS_AUTH,
 } = process.env;
 
+/*
+ Txt, Txt -> ____|________________
+            | assertEnv() | -> void
+             -------------
+    Logs an error when a required OAuth env var is missing, so the misconfig
+    is visible at boot. Does not throw.
+*/
 function assertEnv(name, value) {
   if (!value) {
     console.error(`[AUTH ENV] Falta variable ${name}. Revisa tu .env cargado.`);
@@ -41,14 +74,24 @@ const oauthClient = new AuthorizationCode({
   http: { json: true },
 });
 
-// ─── Helper: resolve usuarioRepo lazily so the container can still be
-//            initializing when routes are registered. Returns null if the
-//            container is not ready yet (caller must 503).
+/*
+       ____|__________________
+      | getUsuarioRepo() | -> UsuarioRepo | null    (reads container (Obj))
+       ------------------
+    Resolves the user repository lazily so routes can register before the
+    container finishes initializing. Returns null when not ready yet.
+*/
 function getUsuarioRepo() {
   if (!container._initialized || !container.usuarioRepo) return null;
   return container.usuarioRepo;
 }
 
+/*
+ Obj -> ____|____________________
+       | containerNotReady() | -> Obj    (sends 503)
+        -------------------
+    Sends a 503 service_unavailable response while persistence is not ready.
+*/
 function containerNotReady(res) {
   return res.status(503).json({
     error: "service_unavailable",
@@ -56,9 +99,6 @@ function containerNotReady(res) {
   });
 }
 
-/* ═══════════════════════════════════════════════════════════════════
- * 1. CAS LOGIN
- * ═══════════════════════════════════════════════════════════════════ */
 router.get("/api/auth/cas/login", async (req, res) => {
   console.log("[CAS LOGIN] start", { returnTo: req.query.returnTo });
   try {
@@ -67,8 +107,6 @@ router.get("/api/auth/cas/login", async (req, res) => {
     req.session.oauthState = state;
     req.session.returnTo = returnTo;
 
-    // Persistimos la sesión antes del redirect para evitar la carrera en la que
-    // el browser vuelve del CAS antes de que el session store haya escrito.
     await new Promise((resolve, reject) => {
       req.session.save((err) => (err ? reject(err) : resolve()));
     });
@@ -86,9 +124,6 @@ router.get("/api/auth/cas/login", async (req, res) => {
   }
 });
 
-/* ═══════════════════════════════════════════════════════════════════
- * 2. CAS CALLBACK
- * ═══════════════════════════════════════════════════════════════════ */
 router.get("/api/auth/cas/callback", async (req, res) => {
   console.log("[CAS CALLBACK] start", {
     hasCode: !!req.query.code,
@@ -161,8 +196,6 @@ router.get("/api/auth/cas/callback", async (req, res) => {
       return res.status(500).send("CAS no devolvió identificador de usuario (upvLogin).");
     }
 
-    // Upsert contra Postgres. Los campos pasados como updateFields se
-    // sobrescriben si el usuario existe; los de insertFields solo se usan al crear.
     console.log("[CAS CALLBACK] upsert usuario", { upvLogin });
     const usuario = await usuarioRepo.upsertByUpvLogin(
       upvLogin,
@@ -171,7 +204,6 @@ router.get("/api/auth/cas/callback", async (req, res) => {
     );
     console.log("[CAS CALLBACK] usuario OK", { id: usuario.id, upvLogin: usuario.upvLogin });
 
-    // Actualiza last_login_at (non-blocking; si falla no rompe el login)
     usuarioRepo.updateById(usuario.id, { lastLoginAt: new Date() }).catch((e) => {
       console.warn("[CAS CALLBACK] updateById lastLoginAt failed (ignoring):", e.message);
     });
@@ -186,7 +218,6 @@ router.get("/api/auth/cas/callback", async (req, res) => {
       mode: "cas",
     };
 
-    // Guarda la sesión explícitamente antes del redirect
     await new Promise((resolve, reject) => {
       req.session.save((err) => (err ? reject(err) : resolve()));
     });
@@ -195,11 +226,6 @@ router.get("/api/auth/cas/callback", async (req, res) => {
     delete req.session.oauthState;
     delete req.session.returnTo;
 
-    // Diagnostic: surface the Set-Cookie that we are about to emit and the
-    // session id we persisted. If after the browser follows the redirect
-    // /api/auth/me returns 401, comparing this sid against the cookie on
-    // that next request tells you whether the cookie is being lost in
-    // transit (proxy/path issue) vs. never being persisted.
     const setCookieHeader = res.getHeader && res.getHeader("set-cookie");
     console.log("[CAS CALLBACK] session saved + redirect", {
       sessionId: req.sessionID,
@@ -225,20 +251,8 @@ router.get("/api/auth/cas/callback", async (req, res) => {
   }
 });
 
-/* ═══════════════════════════════════════════════════════════════════
- * 3. ENDPOINTS DE SESIÓN
- * ═══════════════════════════════════════════════════════════════════ */
 router.get("/api/auth/me", (req, res) => {
   if (!req.session?.user) {
-    // Targeted diagnostic for the post-CAS 401: tells you whether the
-    // browser sent ANY cookie and whether express-session was able to
-    // load a session for it. The expected sequence after a successful
-    // CAS login is:
-    //   /callback → emits Set-Cookie sid_irene=<x>;
-    //   /me       → req.headers.cookie contains "sid_irene=<x>",
-    //               req.sessionID === <x>, req.session.user populated.
-    // Any mismatch points to where the cookie is being lost (proxy
-    // path, SameSite, secure flag, etc.).
     console.warn("[AUTH /me] 401 not authenticated", {
       sessionId: req.sessionID,
       hasCookieHeader: Boolean(req.headers && req.headers.cookie),
@@ -261,9 +275,13 @@ router.get("/api/auth/logout", (req, res) => {
   });
 });
 
-/* ═══════════════════════════════════════════════════════════════════
- * 4. MIDDLEWARE PARA RUTAS PROTEGIDAS
- * ═══════════════════════════════════════════════════════════════════ */
+/*
+ Obj, Obj, Fn -> ____|_______________
+                | requireAuth() | -> void
+                 ---------------
+    Route guard for protected endpoints: responds 401 when there is no
+    session user, otherwise passes control to the next handler.
+*/
 function requireAuth(req, res, next) {
   if (!req.session?.user) {
     return res.status(401).json({ error: "No autenticado" });
@@ -271,9 +289,6 @@ function requireAuth(req, res, next) {
   next();
 }
 
-/* ═══════════════════════════════════════════════════════════════════
- * 5. MODO DEMO (sin CAS) — POST /api/auth/dev-login
- * ═══════════════════════════════════════════════════════════════════ */
 router.post("/api/auth/dev-login", async (req, res) => {
   if (DEV_BYPASS_AUTH !== "true") {
     return res.status(403).json({ error: "DEV_BYPASS_AUTH deshabilitado en el servidor" });

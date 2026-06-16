@@ -3,33 +3,53 @@
 const AgentInterface = require("./base/AgentInterface");
 const { matchACs, getPatternsForExercise } = require("../services/acRegistry");
 
-/**
- * AcDetectorAgent: dos cómputos deterministas por turno.
- *
- *   1. detectedACs — cruza proposed/negated contra los acPatterns del
- *      ejercicio (delega en acRegistry.matchACs). Lista ordenada por
- *      confianza, consumida por tutorAgent para el banner [AC DETECTADA].
- *
- *   2. turnVerdict (NS-30) — descomposición canónica per-elemento contra
- *      la respuesta correcta del ejercicio:
- *        hits    = proposed ∩ correctAnswer
- *        errors  = proposed \ correctAnswer
- *        missing = correctAnswer \ proposed (ignorando negated)
- *        verdict ∈ {correct, partial_correct, incorrect, only_negation}
- *      Esta descomposición es la "verdad estructurada" que el banner
- *      [VEREDICTO DEL TURNO] entrega al LLM para que cumpla el protocolo
- *      pedagógico de Irene (afirmar hits + cuestionar errors + pista para
- *      missing) sin tener que deducirlo del prompt en prosa.
- *
- * Se ejecuta DESPUÉS de classifierAgent y ANTES de tutorAgent.
- * Puro: no I/O, no LLM. Coste despreciable.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    ACDETECTORAGENT                    |
+            |  Pipeline agent that runs two deterministic per-turn  |
+            |  computations: the confidence-ranked detectedACs list |
+            |  (matching proposed/negated against the exercise AC   |
+            |  patterns) and the canonical per-element turnVerdict  |
+            |  (NS-30) against the correct answer. Pure: no I/O, no  |
+            |  LLM. Runs after ClassifierAgent and before TutorAgent.|
+        ____|________________                                       |
+   Obj -> | constructor() | -> AcDetectorAgent       (writes attrs) |
+          -----------------                                         |
+            |                                                       |
+            |   name: Txt            deps: Obj                      |
+        ____|_____________________________                          |
+ AgentContext -> | canSkip() | -> T/F                               |
+                 ------------                                       |
+        ____|_____________________________                          |
+ AgentContext -> | execute() | -> Promise<void>                     |
+                 ------------                                        |
+            |_______________________________________________________|
+
+   Module-level helpers (pure functions):
+     -> | _traceAcDetection() | -> void
+     -> | _computeStateMismatches() | -> [Obj]
+     Txt -> | _norm() | -> Txt
+     [Txt],[Txt],[Txt] -> | _computeVerdict() | -> Obj
+------------------------------------------------------------------------------*/
 class AcDetectorAgent extends AgentInterface {
+  /*
+   Obj -> ____|________________
+         | constructor() | -> AcDetectorAgent    (writes attributes name (Txt),
+          -----------------                       deps (Obj))
+      Stores the (currently unused) deps object, defaulting to {}.
+  */
   constructor(deps) {
     super("acDetectorAgent");
     this.deps = deps || {};
   }
 
+  /*
+ AgentContext -> ____|___________
+                | canSkip() | -> T/F
+                 -----------
+      Skips when there is no classification, or when neither a proposed
+      nor a negated element was detected this turn.
+  */
   canSkip(context) {
     if (!context.classification) return true;
     const proposed = context.classification.proposed || [];
@@ -37,12 +57,17 @@ class AcDetectorAgent extends AgentInterface {
     return proposed.length === 0 && negated.length === 0;
   }
 
+  /*
+ AgentContext -> ____|___________
+                | execute() | -> Promise<void>
+                 -----------
+      Always computes stateMismatches first (so an opposite-state
+      attribution like "R3 en corto" is flagged even when the only
+      signal is a negation), then, when not skipping, matches the
+      exercise AC patterns into detectedACs and the per-element
+      turnVerdict, writing both onto the context.
+  */
   async execute(context) {
-    // State-confusion detection (2026-06-15) runs BEFORE the proposed/negated
-    // skip gate, because a turn like "R3 en cortocircuito" must be flagged even
-    // when the only signal is a (correctly-excluding) negation. Derives each
-    // element's true state from the exercise netlist + expert reasoning and
-    // flags an opposite-state attribution ("R3 en corto" when R3 is open).
     context.stateMismatches = _computeStateMismatches(context);
 
     if (this.canSkip(context)) {
@@ -62,7 +87,6 @@ class AcDetectorAgent extends AgentInterface {
     const negated = (context.classification.negated || []).map(_norm).filter(Boolean);
     const correct = (correctAnswer || []).map(_norm).filter(Boolean);
 
-    // 1. AC matches (existing behaviour)
     const patterns = exerciseNum != null ? getPatternsForExercise(exerciseNum) : [];
     if (patterns.length > 0) {
       context.detectedACs = matchACs(patterns, proposed, negated, correct);
@@ -70,7 +94,6 @@ class AcDetectorAgent extends AgentInterface {
       context.detectedACs = [];
     }
 
-    // 2. NS-30 — turn verdict (deterministic)
     context.turnVerdict = _computeVerdict(proposed, negated, correct);
 
     _traceAcDetection(context, context.detectedACs, context.turnVerdict,
@@ -78,11 +101,14 @@ class AcDetectorAgent extends AgentInterface {
   }
 }
 
-// Temporary diagnostic trace (2026-05-11): visibilizar en logs qué ACs
-// se detectan por turno y qué descomposición arroja el turnVerdict. Sin
-// esto, el log sólo mostraba [PER-ELEMENT ANALYSIS] al final del prompt
-// (recortado en logs largos) y no había forma de confirmar si el banner
-// [AC DETECTADA] estaba inyectándose. Quitar cuando se valide en prod.
+/*
+ AgentContext,[Obj],Obj,Txt -> ____|_____________________
+                              | _traceAcDetection() | -> void
+                               ---------------------
+      Diagnostic logger: prints the detected ACs and the turnVerdict
+      decomposition for the turn. Never throws, so a logging failure
+      can never break the pipeline flow.
+*/
 function _traceAcDetection(context, detectedACs, verdict, reason) {
   try {
     const reqId = (context && context.reqId) || "";
@@ -105,9 +131,17 @@ function _traceAcDetection(context, detectedACs, verdict, reason) {
       + " verdict=" + v
       + " reason=" + reason
     );
-  } catch (_) { /* nunca romper el flujo por una traza */ }
+  } catch (_) { }
 }
 
+/*
+ AgentContext -> ____|_____________________________
+                | _computeStateMismatches() | -> [Obj]
+                 ---------------------------
+      Derives each element's true state from the exercise netlist and
+      expert reasoning, then flags any opposite-state attribution in the
+      user message. Returns [] on any error or when there is no context.
+*/
 function _computeStateMismatches(context) {
   try {
     const { deriveElementStates, detectStateMismatch } = require("../services/rag/elementStates");
@@ -120,11 +154,27 @@ function _computeStateMismatches(context) {
   }
 }
 
+/*
+   Txt -> ____|________
+         | _norm() | -> Txt
+          ---------
+      Normalises an element label to uppercase with whitespace removed;
+      returns "" for non-string input.
+*/
 function _norm(x) {
   if (typeof x !== "string") return "";
   return x.toUpperCase().replace(/\s+/g, "");
 }
 
+/*
+ [Txt],[Txt],[Txt] -> ____|__________________
+                     | _computeVerdict() | -> Obj
+                      -------------------
+      Canonical per-element decomposition of the turn: splits proposed
+      into hits/errors against the correct set, computes missing and
+      wronglyNegated, and labels the verdict as correct, partial_correct,
+      incorrect or only_negation.
+*/
 function _computeVerdict(proposed, negated, correct) {
   const correctSet = new Set(correct);
   const proposedSet = new Set(proposed);
@@ -140,7 +190,6 @@ function _computeVerdict(proposed, negated, correct) {
   for (const c of correct) {
     if (!proposedSet.has(c) && !negatedSet.has(c)) missing.push(c);
   }
-  // Negated elements that ARE in the correct answer = wrong rejections.
   const wronglyNegated = [];
   for (const n of negated) {
     if (correctSet.has(n)) wronglyNegated.push(n);

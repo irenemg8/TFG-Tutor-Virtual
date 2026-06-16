@@ -1,19 +1,43 @@
 "use strict";
 
-// Unified pipeline debug/trace logger.
-// Enable with DEBUG_PIPELINE=1. When disabled, every call is a no-op.
-//
-// Prefix: [TRACE] for the request-level flow trace (one line per stage)
-// Prefix: [DEBUG_PIPELINE] kept for backward compat with agent calls
-//
-// Grep usage:
-//   Full trace:       grep "TRACE"
-//   Only decisions:   grep "TRACE.*decision\|TRACE.*fallthrough\|TRACE.*gate"
-//   Only errors:      grep "TRACE.*ERROR\|TRACE.*fallthrough"
-//   Legacy pipeline:  grep "DEBUG_PIPELINE"
-//   Per-guardrail:    grep "GUARDRAIL_CHECK\|SURGICAL_FIX\|LLM_RETRY"
-//   Budget:           grep "BUDGET"
-//   Stage timing:     grep "STAGE"
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  PIPELINEDEBUGLOGGER                  |
+            |  Unified pipeline debug/trace logger. Enabled with     |
+            |  DEBUG_PIPELINE=1; otherwise every call is a no-op.    |
+            |  Emits [TRACE] request-flow lines plus mirrored JSON   |
+            |  audit events, keeping [DEBUG_PIPELINE] legacy lines   |
+            |  for backward compatibility with agent calls.          |
+            |                                                       |
+            |          | isOn() | -> T/F                            |
+            |   Txt, Obj -> | traceRequestStart() | -> Txt          |
+            |   Txt, Obj -> | traceRequestEnd() | -> void           |
+            |   Txt, Z -> | traceBudgetSet() | -> void              |
+            |   Txt, Txt, Txt -> | traceBudgetCheckpoint() | -> Obj |
+            |   Txt, Txt, Z, Obj -> | traceStage() | -> void        |
+            |   Txt, Txt, Obj -> | traceRagGate() | -> void         |
+            |   Txt, Obj -> | traceRagAccepted() | -> void          |
+            |   Txt, Obj -> | traceSecurity() | -> void             |
+            |   Txt, Obj -> | traceClassify() | -> void             |
+            |   Txt, Obj -> | traceLoopState() | -> void            |
+            |   Txt, Obj -> | traceDeterministicFinish() | -> void  |
+            |   Txt, Txt, Obj -> | traceLlmCall() | -> void         |
+            |   Txt, Txt, Z, Obj -> | traceLlmRetry() | -> void     |
+            |   Txt, Txt, Obj -> | traceGuardrailCheck() | -> void  |
+            |   Txt, Txt, Obj -> | traceSurgicalFix() | -> void     |
+            |   Txt, Obj -> | traceGuardrails() | -> void           |
+            |   Txt, Txt, Txt, Txt -> | traceFallback() | -> void   |
+            |   Txt, Obj -> | traceResponse() | -> void             |
+            |   Txt, Txt, Error -> | traceError() | -> void         |
+            |   Txt, Txt, Obj -> | traceRouteHandler() | -> void    |
+            |   Txt, Obj -> | logSecurity() | -> void               |
+            |   Txt, Obj -> | logClassify() | -> void               |
+            |   Txt, Txt -> | logPrompt() | -> void                 |
+            |   Txt -> | logLlmOut() | -> void                      |
+            |   Obj, Txt -> | logGuardrail() | -> void              |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const TAG = "[TRACE]";
 const jsonAudit = require("./jsonAuditLogger");
@@ -22,29 +46,50 @@ function isOn() {
   return process.env.DEBUG_PIPELINE === "1";
 }
 
+/*
+   Txt, Z -> ____|____________
+            | shortStr() | -> Txt
+             -----------
+      Truncates s to max chars, appending a "(+N)" overflow marker.
+*/
 function shortStr(s, max) {
   if (typeof s !== "string") return "";
   if (s.length <= max) return s;
   return s.substring(0, max) + "...(+" + (s.length - max) + ")";
 }
 
+/*
+   Txt, Z -> ____|___________
+            | tailStr() | -> Txt
+             ----------
+      Keeps only the last max chars of s, prefixing a "before" marker.
+*/
 function tailStr(s, max) {
   if (typeof s !== "string") return "";
   if (s.length <= max) return s;
   return "...(" + (s.length - max) + " before)..." + s.substring(s.length - max);
 }
 
+/*
+   Txt -> ____|___________
+         | oneLine() | -> Txt
+          ----------
+      Collapses newlines and runs of whitespace into a single line.
+*/
 function oneLine(s) {
   if (typeof s !== "string") return "";
   return s.replace(/\r?\n/g, " | ").replace(/\s+/g, " ").trim();
 }
 
-// ─── Per-request context state ───────────────────────────────────────────────
-// Tracks time budget, accumulated LLM calls, guardrail timings per request.
-// Lives in-memory; cleared on traceRequestEnd. Enables aggregate summary.
-
 const _reqCtx = Object.create(null);
 
+/*
+   Txt -> ____|________
+         | _ctx() | -> Obj | null    (reads/writes module map _reqCtx (Obj))
+          -------
+      Returns the in-memory context for reqId, lazily creating it. Tracks
+      time budget, LLM calls, guardrail timings and stages per request.
+*/
 function _ctx(reqId) {
   if (!reqId) return null;
   if (!_reqCtx[reqId]) {
@@ -53,33 +98,40 @@ function _ctx(reqId) {
       budgetMs: null,
       llmCalls: 0,
       llmTotalMs: 0,
-      guardrailChecks: [],      // { name, violated, checkMs }
-      surgicalFixes: [],         // { name, applied, durationMs }
-      llmRetries: [],            // { reason, attempt, durationMs, succeeded }
-      stages: [],                // { name, durationMs }
-      fallbacks: [],             // { primary, fallback, reason }
+      guardrailChecks: [],
+      surgicalFixes: [],
+      llmRetries: [],
+      stages: [],
+      fallbacks: [],
     };
   }
   return _reqCtx[reqId];
 }
 
+/*
+   Txt -> ____|_____________
+         | _clearCtx() | -> void    (writes module map _reqCtx (Obj))
+          ------------
+      Discards the in-memory context for reqId.
+*/
 function _clearCtx(reqId) {
   if (reqId && _reqCtx[reqId]) delete _reqCtx[reqId];
 }
 
-// ─── Request lifecycle ───────────────────────────────────────────────────────
-
 let _reqSeq = 0;
 
-/**
- * Start tracing a new request. Returns a reqId for correlation.
- * Logs: handler identification + basic params.
- */
+/*
+   Txt, Obj -> ____|_____________________
+              | traceRequestStart() | -> Txt    (reads/writes module counter _reqSeq (Z))
+               --------------------
+      Starts tracing a new request, logging the handler and basic params,
+      and returns the generated reqId used to correlate later events.
+*/
 function traceRequestStart(handler, params) {
   if (!isOn()) return "";
   _reqSeq++;
   var id = "req" + _reqSeq;
-  _ctx(id); // initialize
+  _ctx(id);
   console.log(
     TAG + " [" + id + "] ▶ START handler=" + handler
     + " userId=" + (params.userId || "-")
@@ -92,6 +144,13 @@ function traceRequestStart(handler, params) {
   return id;
 }
 
+/*
+   Txt, Obj -> ____|___________________
+              | traceRequestEnd() | -> void    (reads/writes module map _reqCtx (Obj))
+               ------------------
+      Logs the request outcome plus an aggregate summary line, mirrors both
+      to the JSON audit log, and clears the request context.
+*/
 function traceRequestEnd(reqId, outcome) {
   if (!isOn()) return;
   console.log(
@@ -103,7 +162,6 @@ function traceRequestEnd(reqId, outcome) {
     + (outcome.decision ? " decision=" + outcome.decision : "")
     + (outcome.guardrailTriggered ? " guardrail=YES" : "")
   );
-  // Emit aggregate summary line for easy grep/analysis
   var c = _reqCtx[reqId];
   if (c) {
     console.log(
@@ -144,13 +202,13 @@ function traceRequestEnd(reqId, outcome) {
   _clearCtx(reqId);
 }
 
-// ─── Time budget ─────────────────────────────────────────────────────────────
-
-/**
- * Declare a time budget for this request. All subsequent LLM calls and
- * guardrail retries should respect it. Phase-0 instrumentation only — does
- * not enforce. Phase-3 (GuardrailPipeline) will actually enforce.
- */
+/*
+   Txt, Z -> ____|________________
+            | traceBudgetSet() | -> void    (writes module map _reqCtx (Obj))
+             -----------------
+      Records a time budget for the request. Instrumentation only; it does
+      not enforce the budget.
+*/
 function traceBudgetSet(reqId, budgetMs) {
   var c = _ctx(reqId);
   if (c) c.budgetMs = budgetMs;
@@ -159,10 +217,13 @@ function traceBudgetSet(reqId, budgetMs) {
   jsonAudit.write({ reqId: reqId, event: "budget_set", budgetMs: budgetMs });
 }
 
-/**
- * Checkpoint the budget: how much time has been spent, how much remains.
- * Emit at key decision points (before LLM call, before retry, etc.)
- */
+/*
+   Txt, Txt, Txt -> ____|_______________________
+                   | traceBudgetCheckpoint() | -> Obj    (reads module map _reqCtx (Obj))
+                    ------------------------
+      Reports elapsed and remaining time at a decision point and returns
+      { elapsedMs, remainingMs, exceeded }.
+*/
 function traceBudgetCheckpoint(reqId, phase, action) {
   var c = _ctx(reqId);
   if (!c) return;
@@ -180,12 +241,13 @@ function traceBudgetCheckpoint(reqId, phase, action) {
   return { elapsedMs: elapsed, remainingMs: remaining, exceeded: remaining != null && remaining <= 0 };
 }
 
-// ─── Per-stage timing ────────────────────────────────────────────────────────
-
-/**
- * Record a stage duration (e.g., "classify", "retrieve", "prompt_build").
- * Pass name and durationMs. Accumulates in request context.
- */
+/*
+   Txt, Txt, Z, Obj -> ____|______________
+                      | traceStage() | -> void    (writes module map _reqCtx (Obj))
+                       -------------
+      Records a named stage duration (e.g. "classify", "retrieve") in the
+      request context and logs it.
+*/
 function traceStage(reqId, name, durationMs, metadata) {
   var c = _ctx(reqId);
   if (c) c.stages.push({ name: name, durationMs: durationMs });
@@ -198,11 +260,12 @@ function traceStage(reqId, name, durationMs, metadata) {
   jsonAudit.write({ reqId: reqId, event: "stage", name: name, durationMs: durationMs, metadata: metadata });
 }
 
-// ─── RAG Middleware gates ────────────────────────────────────────────────────
-
-/**
- * Log why the ragMiddleware decided to fall through (call next()).
- */
+/*
+   Txt, Txt, Obj -> ____|________________
+                   | traceRagGate() | -> void
+                    ---------------
+      Logs why the ragMiddleware fell through (called next()).
+*/
 function traceRagGate(reqId, reason, details) {
   if (!isOn()) return;
   console.log(
@@ -212,6 +275,13 @@ function traceRagGate(reqId, reason, details) {
   jsonAudit.write({ reqId: reqId, event: "rag_fallthrough", reason: reason, details: details });
 }
 
+/*
+   Txt, Obj -> ____|_____________________
+              | traceRagAccepted() | -> void
+               -------------------
+      Logs that the ragMiddleware accepted the request, with exercise and
+      correct-answer details.
+*/
 function traceRagAccepted(reqId, details) {
   if (!isOn()) return;
   console.log(
@@ -224,8 +294,12 @@ function traceRagAccepted(reqId, details) {
   jsonAudit.write({ reqId: reqId, event: "rag_accepted", ...details });
 }
 
-// ─── Pipeline stages (ragMiddleware) ─────────────────────────────────────────
-
+/*
+   Txt, Obj -> ____|________________
+              | traceSecurity() | -> void
+               ----------------
+      Logs the security-check verdict (safe, category, matched pattern).
+*/
 function traceSecurity(reqId, result) {
   if (!isOn()) return;
   console.log(
@@ -237,6 +311,13 @@ function traceSecurity(reqId, result) {
   jsonAudit.write({ reqId: reqId, event: "security", safe: result.safe, category: result.category, matchedPattern: result.matchedPattern });
 }
 
+/*
+   Txt, Obj -> ____|________________
+              | traceClassify() | -> void
+               ----------------
+      Logs the classifier output (type, decision, proposed/negated elements,
+      concepts).
+*/
 function traceClassify(reqId, classification) {
   if (!isOn()) return;
   var c = classification || {};
@@ -252,6 +333,13 @@ function traceClassify(reqId, classification) {
   jsonAudit.write({ reqId: reqId, event: "classify", ...c });
 }
 
+/*
+   Txt, Obj -> ____|_________________
+              | traceLoopState() | -> void
+               -----------------
+      Logs the tutoring loop state (correct/wrong streaks, repetition,
+      frustration and hint flags).
+*/
 function traceLoopState(reqId, state) {
   if (!isOn()) return;
   console.log(
@@ -267,6 +355,13 @@ function traceLoopState(reqId, state) {
   jsonAudit.write({ reqId: reqId, event: "loop_state", ...state });
 }
 
+/*
+   Txt, Obj -> ____|___________________________
+              | traceDeterministicFinish() | -> void
+               --------------------------
+      Logs that the pipeline finished deterministically (without an LLM call),
+      with classification and source.
+*/
 function traceDeterministicFinish(reqId, details) {
   if (!isOn()) return;
   console.log(
@@ -279,8 +374,13 @@ function traceDeterministicFinish(reqId, details) {
   jsonAudit.write({ reqId: reqId, event: "deterministic_finish", ...details });
 }
 
-// ─── LLM calls ───────────────────────────────────────────────────────────────
-
+/*
+   Txt, Txt, Obj -> ____|_______________
+                   | traceLlmCall() | -> void    (writes module map _reqCtx (Obj))
+                    ---------------
+      Logs an LLM call start or end (phase "start"|"end"). On end it
+      accumulates the call count and total LLM time in the request context.
+*/
 function traceLlmCall(reqId, phase, details) {
   if (phase === "start") {
     if (!isOn()) return;
@@ -316,10 +416,13 @@ function traceLlmCall(reqId, phase, details) {
   }
 }
 
-/**
- * Record that an LLM retry was triggered by a specific guardrail.
- * Pair with traceLlmCall(end) that follows. This one records the CAUSE.
- */
+/*
+   Txt, Txt, Z, Obj -> ____|________________
+                      | traceLlmRetry() | -> void    (writes module map _reqCtx (Obj))
+                       ----------------
+      Records the cause of an LLM retry (which guardrail and attempt number)
+      in the request context. Pair with the traceLlmCall(end) that follows.
+*/
 function traceLlmRetry(reqId, reason, attempt, details) {
   var c = _ctx(reqId);
   if (c) c.llmRetries.push({ reason: reason, attempt: attempt, durationMs: (details && details.durationMs) || 0, succeeded: !!(details && details.succeeded) });
@@ -333,15 +436,13 @@ function traceLlmRetry(reqId, reason, attempt, details) {
   jsonAudit.write({ reqId: reqId, event: "llm_retry", reason: reason, attempt: attempt, ...(details || {}) });
 }
 
-// ─── Guardrails (granular) ───────────────────────────────────────────────────
-
-/**
- * Record a single guardrail check (one of N run in parallel or sequentially).
- * name: "solution_leak", "false_confirmation", etc.
- * violated: bool
- * checkMs: time to run the check (not the fix, not the retry)
- * evidence: free-text reason (pattern matched, etc.)
- */
+/*
+   Txt, Txt, Obj -> ____|______________________
+                   | traceGuardrailCheck() | -> void    (writes module map _reqCtx (Obj))
+                    ---------------------
+      Records one guardrail check (name, violated, checkMs, evidence) in the
+      request context and logs it. checkMs times the check, not the fix.
+*/
 function traceGuardrailCheck(reqId, name, result) {
   var c = _ctx(reqId);
   if (c) c.guardrailChecks.push({ name: name, violated: !!result.violated, checkMs: result.checkMs || 0 });
@@ -355,12 +456,13 @@ function traceGuardrailCheck(reqId, name, result) {
   jsonAudit.write({ reqId: reqId, event: "guardrail_check", name: name, violated: !!result.violated, checkMs: result.checkMs, evidence: result.evidence });
 }
 
-/**
- * Record a surgical fix attempt (deterministic, no LLM).
- * applied: did the fix actually modify the response?
- * durationMs: how long the fix took (usually <1ms)
- * before/after: text snippets (heads only, capped)
- */
+/*
+   Txt, Txt, Obj -> ____|___________________
+                   | traceSurgicalFix() | -> void    (writes module map _reqCtx (Obj))
+                    ------------------
+      Records a deterministic (no-LLM) surgical fix attempt (name, applied,
+      durationMs, before/after heads) in the request context and logs it.
+*/
 function traceSurgicalFix(reqId, name, result) {
   var c = _ctx(reqId);
   if (c) c.surgicalFixes.push({ name: name, applied: !!result.applied, durationMs: result.durationMs || 0 });
@@ -380,10 +482,13 @@ function traceSurgicalFix(reqId, name, result) {
   });
 }
 
-/**
- * Legacy: aggregated guardrail trace (kept for compat with ragMiddleware).
- * New code should prefer traceGuardrailCheck + traceSurgicalFix + traceLlmRetry.
- */
+/*
+   Txt, Obj -> ____|__________________
+              | traceGuardrails() | -> void
+               -----------------
+      Legacy aggregated guardrail trace kept for ragMiddleware compatibility.
+      New code prefers traceGuardrailCheck + traceSurgicalFix + traceLlmRetry.
+*/
 function traceGuardrails(reqId, results) {
   if (!isOn()) return;
   var flags = [];
@@ -409,8 +514,13 @@ function traceGuardrails(reqId, results) {
   });
 }
 
-// ─── Fallbacks (e.g., semantic → BM25-only) ──────────────────────────────────
-
+/*
+   Txt, Txt, Txt, Txt -> ____|________________
+                        | traceFallback() | -> void    (writes module map _reqCtx (Obj))
+                         ----------------
+      Records a fallback (e.g. semantic to BM25-only) in the request context
+      and logs the primary, fallback and reason.
+*/
 function traceFallback(reqId, primary, fallback, reason) {
   var c = _ctx(reqId);
   if (c) c.fallbacks.push({ primary: primary, fallback: fallback, reason: reason });
@@ -423,8 +533,12 @@ function traceFallback(reqId, primary, fallback, reason) {
   jsonAudit.write({ reqId: reqId, event: "fallback", primary: primary, fallback: fallback, reason: reason });
 }
 
-// ─── Response and errors ─────────────────────────────────────────────────────
-
+/*
+   Txt, Obj -> ____|________________
+              | traceResponse() | -> void
+               ----------------
+      Logs the response sent to the client (length, FIN marker, head).
+*/
 function traceResponse(reqId, details) {
   if (!isOn()) return;
   console.log(
@@ -440,6 +554,12 @@ function traceResponse(reqId, details) {
   });
 }
 
+/*
+   Txt, Txt, Error -> ____|_____________
+                     | traceError() | -> void
+                      -------------
+      Logs an error raised at a given pipeline stage (message and code).
+*/
 function traceError(reqId, stage, error) {
   if (!isOn()) return;
   console.log(
@@ -454,8 +574,12 @@ function traceError(reqId, stage, error) {
   });
 }
 
-// ─── Route handler specific ──────────────────────────────────────────────────
-
+/*
+   Txt, Txt, Obj -> ____|____________________
+                   | traceRouteHandler() | -> void
+                    --------------------
+      Logs a route-handler-specific event with optional details.
+*/
 function traceRouteHandler(reqId, event, details) {
   if (!isOn()) return;
   console.log(
@@ -465,8 +589,12 @@ function traceRouteHandler(reqId, event, details) {
   jsonAudit.write({ reqId: reqId, event: "route_handler", handler_event: event, ...(details || {}) });
 }
 
-// ─── Legacy compatibility (agents use these) ─────────────────────────────────
-
+/*
+   Txt, Obj -> ____|______________
+              | logSecurity() | -> void
+               --------------
+      Legacy [DEBUG_PIPELINE] security log line kept for agent compatibility.
+*/
 function logSecurity(userMessage, result) {
   if (!isOn()) return;
   var line = "[DEBUG_PIPELINE] stage=security"
@@ -477,6 +605,12 @@ function logSecurity(userMessage, result) {
   console.log(line);
 }
 
+/*
+   Txt, Obj -> ____|______________
+              | logClassify() | -> void
+               --------------
+      Legacy [DEBUG_PIPELINE] classify log line kept for agent compatibility.
+*/
 function logClassify(userMessage, classification) {
   if (!isOn()) return;
   var c = classification || {};
@@ -490,6 +624,13 @@ function logClassify(userMessage, classification) {
   console.log(line);
 }
 
+/*
+   Txt, Txt -> ____|____________
+              | logPrompt() | -> void
+               ------------
+      Legacy [DEBUG_PIPELINE] prompt log line; emits the augmented prompt
+      tail and total length for the given classification type.
+*/
 function logPrompt(augmentedPrompt, classificationType) {
   if (!isOn()) return;
   var len = typeof augmentedPrompt === "string" ? augmentedPrompt.length : 0;
@@ -502,6 +643,12 @@ function logPrompt(augmentedPrompt, classificationType) {
   );
 }
 
+/*
+   Txt -> ____|____________
+         | logLlmOut() | -> void
+          ------------
+      Legacy [DEBUG_PIPELINE] log line for the raw LLM output head.
+*/
 function logLlmOut(response) {
   if (!isOn()) return;
   var head = shortStr(response || "", 400);
@@ -512,6 +659,13 @@ function logLlmOut(response) {
   );
 }
 
+/*
+   Obj, Txt -> ____|______________
+              | logGuardrail() | -> void
+               --------------
+      Legacy [DEBUG_PIPELINE] guardrail log line listing the four legacy
+      guardrail flags and the final response head.
+*/
 function logGuardrail(triggered, finalResponse) {
   if (!isOn()) return;
   var t = triggered || {};
@@ -524,8 +678,13 @@ function logGuardrail(triggered, finalResponse) {
   console.log(line);
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
+/*
+   Obj -> ____|________________
+         | formatDetails() | -> Txt
+          ----------------
+      Renders a details object as a "key=value" string, JSON-quoting strings
+      (capped) and objects and skipping null/undefined entries.
+*/
 function formatDetails(obj) {
   if (!obj) return "";
   var parts = [];
@@ -545,50 +704,38 @@ function formatDetails(obj) {
 }
 
 module.exports = {
-  // Activation check
   isOn: isOn,
 
-  // Request lifecycle
   traceRequestStart: traceRequestStart,
   traceRequestEnd: traceRequestEnd,
 
-  // Time budget
   traceBudgetSet: traceBudgetSet,
   traceBudgetCheckpoint: traceBudgetCheckpoint,
 
-  // Per-stage timing
   traceStage: traceStage,
 
-  // RAG middleware decisions
   traceRagGate: traceRagGate,
   traceRagAccepted: traceRagAccepted,
 
-  // Pipeline stages
   traceSecurity: traceSecurity,
   traceClassify: traceClassify,
   traceLoopState: traceLoopState,
   traceDeterministicFinish: traceDeterministicFinish,
 
-  // LLM
   traceLlmCall: traceLlmCall,
   traceLlmRetry: traceLlmRetry,
 
-  // Guardrails (granular)
   traceGuardrailCheck: traceGuardrailCheck,
   traceSurgicalFix: traceSurgicalFix,
-  traceGuardrails: traceGuardrails, // legacy aggregate
+  traceGuardrails: traceGuardrails,
 
-  // Fallbacks
   traceFallback: traceFallback,
 
-  // Response
   traceResponse: traceResponse,
   traceError: traceError,
 
-  // Route handler
   traceRouteHandler: traceRouteHandler,
 
-  // Legacy (backward compat with agents)
   logSecurity: logSecurity,
   logClassify: logClassify,
   logPrompt: logPrompt,

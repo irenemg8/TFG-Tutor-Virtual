@@ -1,75 +1,151 @@
 "use strict";
 
-/**
- * Port interface for Interaccion persistence.
- * Note: Messages are handled by IMessageRepository, not here.
- * Implementations: MongoInteraccionRepository, PgInteraccionRepository
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                IINTERACCIONREPOSITORY                 |
+            |  Port/interface defining the persistence contract for |
+            |  Interaccion entities. Messages are handled by        |
+            |  IMessageRepository, not here. Adapters (Mongo,       |
+            |  Postgres) implement it; the methods here just throw. |
+            |                                                       |
+        ____|____________                                          |
+   Txt -> | findById() | -> Promise<Interaccion>                   |
+          -------------                                            |
+        ____|__________                                            |
+   Obj -> | create() | -> Promise<Interaccion>                     |
+          -----------                                              |
+        ____|________________                                      |
+   Txt -> | deleteById() | -> Promise<void>                        |
+          ----------------                                         |
+        ____|__________                                            |
+   Txt -> | exists() | -> Promise<T/F>                             |
+          -----------                                              |
+        ____|_________________                                     |
+   Txt, Txt -> | existsForUser() | -> Promise<T/F>                |
+              -----------------                                    |
+        ____|__________________                                    |
+   Txt, Date -> | updateEndTime() | -> Promise<void>              |
+                -----------------                                  |
+        ____|_________________                                     |
+   Txt -> | findByUserId() | -> Promise<[Interaccion]>             |
+          ------------------                                       |
+        ____|________________________________                      |
+   Txt, Txt -> | findLatestByExerciseAndUser() |                  |
+              ---------------------------------                    |
+              -> Promise<Interaccion | null>                       |
+        ____|________________                                      |
+   N -> | findRecent() | -> Promise<[Interaccion]>                 |
+        ----------------                                           |
+        ____|__________________                                    |
+   Obj -> | findByFilter() | -> Promise<[Interaccion]>             |
+          ------------------                                       |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class IInteraccionRepository {
-  /** @returns {Promise<import('../../entities/Interaccion')>} */
+  /*
+   Txt -> ____|____________
+         | findById() | -> Promise<Interaccion>
+          -------------
+      Contract: resolve the interaccion with the given id. Abstract here.
+  */
   async findById(id) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * @param {object} data - { userId, exerciseId }
-   * @returns {Promise<import('../../entities/Interaccion')>}
-   */
+  /*
+   Obj -> ____|__________
+         | create() | -> Promise<Interaccion>
+          -----------
+      Contract: create an interaccion from { userId, exerciseId } and
+      resolve it. Abstract here.
+  */
   async create(data) {
     throw new Error("Not implemented");
   }
 
-  /** @returns {Promise<void>} */
+  /*
+   Txt -> ____|________________
+         | deleteById() | -> Promise<void>
+          ----------------
+      Contract: remove the interaccion with the given id. Abstract here.
+  */
   async deleteById(id) {
     throw new Error("Not implemented");
   }
 
-  /** @returns {Promise<boolean>} */
+  /*
+   Txt -> ____|__________
+         | exists() | -> Promise<T/F>
+          -----------
+      Contract: resolve true when an interaccion with the id exists.
+      Abstract here.
+  */
   async exists(id) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Check if an interaccion exists AND belongs to the given user.
-   * @returns {Promise<boolean>}
-   */
+  /*
+   Txt, Txt -> ____|_________________
+              | existsForUser() | -> Promise<T/F>
+               -----------------
+      Contract: resolve true when the interaccion exists AND belongs to
+      the given user. Abstract here.
+  */
   async existsForUser(id, userId) {
     throw new Error("Not implemented");
   }
 
-  /** @returns {Promise<void>} */
+  /*
+   Txt, Date -> ____|_________________
+                | updateEndTime() | -> Promise<void>
+                 -----------------
+      Contract: set the end time of the given interaccion. Abstract here.
+  */
   async updateEndTime(id, endTime) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Find all interactions for a user, sorted by endTime DESC.
-   * @returns {Promise<import('../../entities/Interaccion')[]>}
-   */
+  /*
+   Txt -> ____|_________________
+         | findByUserId() | -> Promise<[Interaccion]>
+          ------------------
+      Contract: resolve all interactions for a user, sorted by endTime
+      DESC. Abstract here.
+  */
   async findByUserId(userId) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Find the latest interaction for a user + exercise pair.
-   * @returns {Promise<import('../../entities/Interaccion')|null>}
-   */
+  /*
+   Txt, Txt -> ____|________________________________
+              | findLatestByExerciseAndUser() | -> Promise<Interaccion | null>
+               ---------------------------------
+      Contract: resolve the latest interaction for a user + exercise
+      pair, or null. Abstract here.
+  */
   async findLatestByExerciseAndUser(exerciseId, userId) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Find recent interactions (admin/test endpoint).
-   * @returns {Promise<import('../../entities/Interaccion')[]>}
-   */
+  /*
+   N -> ____|________________
+       | findRecent() | -> Promise<[Interaccion]>
+        ----------------
+      Contract: resolve recent interactions (admin/test endpoint).
+      Abstract here.
+  */
   async findRecent(limit) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Find by filter (for export).
-   * @returns {Promise<import('../../entities/Interaccion')[]>}
-   */
+  /*
+   Obj -> ____|__________________
+         | findByFilter() | -> Promise<[Interaccion]>
+          ------------------
+      Contract: resolve interactions matching a filter (for export).
+      Abstract here.
+  */
   async findByFilter(filter) {
     throw new Error("Not implemented");
   }

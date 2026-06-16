@@ -1,39 +1,71 @@
 #!/usr/bin/env node
 "use strict";
 
-/**
- * E2E Playwright multi-ejercicio.
- *
- * Recorre la sidebar del frontend, abre cada chat de ejercicio (1..N) y
- * ejecuta una conversación de 13 turnos por chat (los mismos turnos que
- * el smoke programático `multiExerciseHarness.js`). Captura screenshot
- * tras cada respuesta del tutor y verifica reglas pedagógicas básicas:
- *   - sin script no-latino (BUG-002)
- *   - sin leak semántico anafórico (BUG-005)
- *   - sin placeholder roto gramaticalmente (BUG-004)
- *   - termina con pregunta cuando se espera
- *   - el LLM sostiene EN tras switch (BUG-003)
- *
- * Pre-requisitos:
- *   - Backend en :3030 (USE_ORCHESTRATOR=1, DEV_BYPASS_AUTH=true)
- *   - Frontend Vite en :5173
- *   - Ollama up con qwen2.5
- *   - Playwright disponible (busca en paths estándar)
- *
- * Uso:
- *   node tests/e2e/multiExerciseHarness.playwright.js
- *   E2E_LIMIT=2 ...                   # solo primeros 2 ejercicios
- *   E2E_TURNS_LIMIT=4 ...              # solo primeros 4 turnos
- *
- * Output:
- *   - screenshots en .playwright-mcp/multi-ej-{N}-{tag}.png
- *   - resumen JSON en /tmp/e2e-multi-summary.json
- *   - exit 0 si adherencia >= 80%
- */
-
 const path = require("path");
 const fs = require("fs");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |              MULTI-EXERCISE E2E HARNESS               |
+            |  Playwright multi-exercise runner. Walks the sidebar, |
+            |  opens each exercise chat and plays a 13-turn          |
+            |  conversation, screenshotting every tutor reply and   |
+            |  asserting the core pedagogical rules per turn.       |
+        ____|________________                                       |
+   void -> | loadPlaywright() | -> Obj                              |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt,T/F,Txt -> | check() | -> void                              |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt,[Txt] -> | listsAllCorrectInAffirmation() | -> T/F          |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | hasNonLatinScript() | -> T/F                           |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | hasPlaceholderLeak() | -> T/F                          |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | hasMultiQuestion() | -> T/F                            |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | endsWithQuestion() | -> T/F                            |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | hasFalseConfirmOpener() | -> T/F                       |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | looksEnglish() | -> T/F                                |
+          -----------------                                         |
+        ____|________________                                       |
+   [Txt],[Txt] -> | buildTurns() | -> [Obj]                        |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt,Txt,Obj -> | turnAssertions() | -> [[Txt,T/F]]              |
+          -----------------                                         |
+        ____|________________                                       |
+   page -> | listExerciseButtons() | -> Promise<[Txt]>             |
+          -----------------                                         |
+        ____|________________                                       |
+   page,Txt -> | clickExercise() | -> Promise<void>                |
+          -----------------                                         |
+        ____|________________                                       |
+   page,Txt -> | sendTurn() | -> Promise<Txt>                      |
+          -----------------                                         |
+        ____|________________                                       |
+   page -> | fetchExercises() | -> Promise<[Obj]|null>             |
+          -----------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+   void -> ____|________
+        | loadPlaywright() | -> Obj
+         ----------
+      Resolves the playwright module from several standard paths.
+   */
 function loadPlaywright() {
   const candidates = [
     path.join(process.env.HOME, ".dev-browser/node_modules/playwright"),
@@ -42,7 +74,7 @@ function loadPlaywright() {
     "playwright",
   ];
   for (const c of candidates) {
-    try { return require(c); } catch (_) { /* try next */ }
+    try { return require(c); } catch (_) {}
   }
   console.error(
     "ERROR: playwright no está disponible. Instálalo con:\n" +
@@ -63,13 +95,24 @@ if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const passes = [];
 const failures = [];
+/*
+   Txt,T/F,Txt -> ____|________
+        | check() | -> void
+         ----------
+      Logs a pass/fail line and records it in the passes/failures lists.
+   */
 function check(label, ok, evidence) {
   const tag = (ok ? "✓ " : "✗ ") + label;
   console.log(tag + (evidence ? "\n    " + evidence : ""));
   (ok ? passes : failures).push({ label, evidence: ok ? null : evidence });
 }
 
-// ─── Predicates (mismos que smoke) ───────────────────────────────────────────
+/*
+   Txt,[Txt] -> ____|________
+        | listsAllCorrectInAffirmation() | -> T/F
+         ----------
+      True when a non-question sentence lists every correct element.
+   */
 function listsAllCorrectInAffirmation(text, correct) {
   if (!text || !Array.isArray(correct) || correct.length === 0) return false;
   if (!correct.every((c) => /^R\d+$/i.test(c))) return false;
@@ -80,22 +123,58 @@ function listsAllCorrectInAffirmation(text, correct) {
   }
   return false;
 }
+/*
+   Txt -> ____|________
+        | hasNonLatinScript() | -> T/F
+         ----------
+      True when the text contains non-Latin script characters (BUG-002).
+   */
 function hasNonLatinScript(text) {
   if (!text) return false;
   return /[Ѐ-ӿԀ-ԯ԰-֏֐-׿؀-ۿ܀-ݏऀ-ॿ฀-๿぀-ゟ゠-ヿ㄀-ㄯ㐀-䶿一-鿿가-힯＀-￯豈-﫿]/.test(text);
 }
+/*
+   Txt -> ____|________
+        | hasPlaceholderLeak() | -> T/F
+         ----------
+      True when the text contains the anaphoric placeholder leak (BUG-005).
+   */
 function hasPlaceholderLeak(text) {
   if (!text) return false;
   return /(esos|esas|aquellos)\s+(elementos|resistencias|componentes)\s+son\s+(los|las)\s+que\s+contribuyen/i.test(text)
       || /ese conjunto de elementos\s+son\s+los\s+que/i.test(text);
 }
+/*
+   Txt -> ____|________
+        | hasMultiQuestion() | -> T/F
+         ----------
+      True when the text contains two or more question marks.
+   */
 function hasMultiQuestion(text) { return ((text || "").match(/\?/g) || []).length >= 2; }
+/*
+   Txt -> ____|________
+        | endsWithQuestion() | -> T/F
+         ----------
+      True when the trimmed text ends with a question mark.
+   */
 function endsWithQuestion(text) { return /\?\s*$/.test((text || "").trim()); }
+/*
+   Txt -> ____|________
+        | hasFalseConfirmOpener() | -> T/F
+         ----------
+      True when the text opens with a false-confirmation interjection.
+   */
 function hasFalseConfirmOpener(text) {
   if (!text) return false;
   const head = text.replace(/^[¡¿!\s]+/, "").slice(0, 80).toLowerCase();
   return /^(perfecto|exacto|correcto|excelente|muy bien|así es)[\s,.!]/i.test(head);
 }
+/*
+   Txt -> ____|________
+        | looksEnglish() | -> T/F
+         ----------
+      True when the text has at least three common English stopwords.
+   */
 function looksEnglish(text) {
   if (!text) return false;
   const tokens = text.toLowerCase().match(/\b[a-z]+\b/g) || [];
@@ -105,7 +184,12 @@ function looksEnglish(text) {
   return hits >= 3;
 }
 
-// ─── Turn templates compartidos ─────────────────────────────────────────────
+/*
+   [Txt],[Txt] -> ____|________
+        | buildTurns() | -> [Obj]
+         ----------
+      Builds the shared 13-turn conversation script for one exercise.
+   */
 function buildTurns(correct, evaluables) {
   const isResistorAnswer = correct.every((c) => /^R\d+$/i.test(c));
   const oneWrong = isResistorAnswer && Array.isArray(evaluables)
@@ -131,6 +215,12 @@ function buildTurns(correct, evaluables) {
   ];
 }
 
+/*
+   Txt,Txt,Obj -> ____|________
+        | turnAssertions() | -> [[Txt,T/F]]
+         ----------
+      Returns the label/result assertion pairs for a given turn tag.
+   */
 function turnAssertions(tag, reply, ctx) {
   const correct = ctx.correctAnswer;
   const out = [];
@@ -139,8 +229,6 @@ function turnAssertions(tag, reply, ctx) {
   out.push(["NO multi-pregunta", !hasMultiQuestion(reply)]);
   if (tag === "T1_greeting") out.push(["greeting genera respuesta no-vacía", reply.trim().length > 10]);
   if (tag === "T2_dont_know") {
-    // NS-22b: tras dont_know, NO debe leakear toda la respuesta correcta
-    // ni nombrar elementos de la pista pedagógica clave (cortocircuito/abierto).
     out.push(["NO leakea respuesta completa", !listsAllCorrectInAffirmation(reply, correct)]);
     out.push(["responde con pregunta", endsWithQuestion(reply)]);
   }
@@ -161,17 +249,19 @@ function turnAssertions(tag, reply, ctx) {
   return out;
 }
 
-// ─── DOM helpers ────────────────────────────────────────────────────────────
+/*
+   page -> ____|________
+        | listExerciseButtons() | -> Promise<[Txt]>
+         ----------
+      Returns the deduped "Ejercicio N" labels present in the sidebar.
+   */
 async function listExerciseButtons(page) {
-  // Busca cualquier elemento clickeable cuyo innerText empiece por "Ejercicio N".
-  // El frontend puede renderizarlos como <button>, <a>, o <div role="button">.
   const labels = await page.evaluate(() => {
     const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], li, div'))
       .map((b) => (b.innerText || "").trim())
       .filter((t) => /^Ejercicio\s+\d+/m.test(t));
     return candidates;
   });
-  // Extrae primer "Ejercicio N" de cada label, dedupe.
   const seen = {};
   const uniq = [];
   for (const t of labels) {
@@ -183,9 +273,13 @@ async function listExerciseButtons(page) {
   return uniq;
 }
 
+/*
+   page,Txt -> ____|________
+        | clickExercise() | -> Promise<void>
+         ----------
+      Clicks the sidebar entry matching the label and waits for the input.
+   */
 async function clickExercise(page, label) {
-  // Selector amplio: cualquier elemento clickeable que contenga el label.
-  // Algunos frontends usan div[role="button"], li, a — no sólo button.
   const loc = page
     .locator(':is(button, a, li, [role="button"], div)')
     .filter({ hasText: new RegExp("^\\s*" + label.replace(/\s+/g, "\\s+") + "\\b", "m") })
@@ -196,11 +290,16 @@ async function clickExercise(page, label) {
   await page.waitForTimeout(500);
 }
 
+/*
+   page,Txt -> ____|________
+        | sendTurn() | -> Promise<Txt>
+         ----------
+      Sends one message and returns the newly appended tutor reply.
+   */
 async function sendTurn(page, msg) {
   const input = page.locator('textarea, input[placeholder*="mensaje"]').first();
   await input.fill(msg);
   await page.locator('button', { hasText: 'Enviar' }).first().click();
-  // Capture and reset previous content to extract NEW reply.
   const before = await page.evaluate(() => (document.querySelector('main') || document.body).innerText);
   const start = Date.now();
   let lastLen = before.length;
@@ -221,9 +320,13 @@ async function sendTurn(page, msg) {
     .trim();
 }
 
-// ─── Backend metadata fetch ──────────────────────────────────────────────────
+/*
+   page -> ____|________
+        | fetchExercises() | -> Promise<[Obj]|null>
+         ----------
+      Fetches the exercise list from the backend reusing the session cookie.
+   */
 async function fetchExercises(page) {
-  // Reuse cookie from /interacciones flow.
   const data = await page.evaluate(async (backend) => {
     const r = await fetch(backend + "/api/ejercicios", { credentials: "include" });
     if (!r.ok) return null;
@@ -232,7 +335,6 @@ async function fetchExercises(page) {
   return data;
 }
 
-// ─── Runner ─────────────────────────────────────────────────────────────────
 (async () => {
   console.log(`=== E2E MULTI-EXERCISE — frontend ${FRONTEND} backend ${BACKEND} ===\n`);
   const browser = await chromium.launch({ headless: true });
@@ -246,28 +348,20 @@ async function fetchExercises(page) {
   };
 
   try {
-    // Auto-login modo demo: vamos primero a /login, click en "Entrar como
-    // usuario demo" — esto setea la cookie de sesión.
     await page.goto(FRONTEND + "/login");
     try {
       const demoBtn = page.locator('button', { hasText: 'Entrar como usuario demo' });
       await demoBtn.first().click({ timeout: 6000 });
       await page.waitForTimeout(1500);
-    } catch (_) {
-      // Cookie persistida; seguimos.
-    }
-    // Tras login, lleva a /interacciones (raíz). Forzamos la ruta para
-    // asegurar que la cookie quedó establecida correctamente.
+    } catch (_) {}
     await page.goto(FRONTEND + "/interacciones");
     await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
 
-    // Lista de ejercicios desde el API (siempre completa: 7 elementos).
     const ejs = (await fetchExercises(page)) || [];
     if (!ejs.length) {
       console.error("La API no devolvió ejercicios — auth fallida?");
       process.exit(2);
     }
-    // Ordenar por número y limitar.
     const ejsSorted = ejs
       .map((e) => ({
         meta: e,
@@ -294,7 +388,6 @@ async function fetchExercises(page) {
       };
 
       console.log(`\n┌─ ${label} (correct=${JSON.stringify(correctAnswer)})`);
-      // Navegar directamente al chat de ese ejercicio por exerciseId.
       await page.goto(FRONTEND + "/interacciones?id=" + ejMeta._id);
       await page.waitForSelector('textarea, input[placeholder*="mensaje"]', { timeout: 15000 });
       await page.waitForTimeout(800);

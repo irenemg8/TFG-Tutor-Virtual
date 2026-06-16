@@ -1,12 +1,31 @@
 "use strict";
 
-// Verifies the pipeline now returns surgicalFixDetails — a chronological
-// list of {guardrailId, before, after, durationMs, phase} entries.
-// Without this list the export endpoint can only show a boolean flag per
-// guardrail; with it analysts can see the LLM's pre-fix sentence.
-
 const GuardrailPipeline = require("../../src/domain/services/GuardrailPipeline");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |          GUARDRAIL PIPELINE - FIX DETAILS             |
+            |  Test suite verifying the pipeline returns            |
+            |  surgicalFixDetails — a chronological list of         |
+            |  {guardrailId, before, after, durationMs, phase}      |
+            |  entries. Without it the export endpoint shows only a |
+            |  boolean flag per guardrail; with it analysts can see |
+            |  the LLM's pre-fix sentence.                          |
+        ____|____________                                           |
+   void -> | mockLogger() | -> Obj                                  |
+           --------------                                           |
+        ____|________________                                       |
+   [Txt] -> | mockLlm() | -> Obj                                    |
+            -----------                                             |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+     void -> ____|____________
+            | mockLogger() | -> Obj
+             --------------
+        Builds a no-op logger exposing the trace hooks the pipeline calls.
+*/
 function mockLogger() {
   return {
     traceGuardrailCheck() {},
@@ -17,6 +36,13 @@ function mockLogger() {
   };
 }
 
+/*
+     [Txt] -> ____|________________
+             | mockLlm() | -> Obj
+              -----------
+        Builds a fake LLM service whose chatCompletion replays the scripted
+        responses in order.
+*/
 function mockLlm(responses) {
   let i = 0;
   return {
@@ -24,11 +50,18 @@ function mockLlm(responses) {
   };
 }
 
+/*
+     Obj -> ____|________________
+           | StubGuardrail() | -> Obj
+            -----------------
+        Configurable stub guardrail: drives check(), surgicalFix() and
+        buildRetryHint() from the options passed to the constructor.
+*/
 class StubGuardrail {
   constructor(opts) {
     this._id = opts.id;
     this._violates = opts.violates;
-    this._fix = opts.fix; // (currentResponse, ctx) => FixResult | null
+    this._fix = opts.fix;
     this._retryHint = opts.retryHint || "";
   }
   get id() { return this._id; }
@@ -67,7 +100,6 @@ describe("GuardrailPipeline — surgicalFixDetails capture", () => {
         after: "Has acertado con ese conjunto de elementos.",
       }),
     });
-    // After the fix, re-check returns no violation (we toggle the stub).
     let firstCallDone = false;
     guardrail.check = function (response) {
       const violated = !firstCallDone;
@@ -97,9 +129,6 @@ describe("GuardrailPipeline — surgicalFixDetails capture", () => {
   });
 
   test("budget_exhausted still carries the fix details from Phase B", async () => {
-    // Surgical fix in Phase B doesn't fully resolve (still violated after).
-    // Pipeline tries to retry but budget is exhausted, so it returns
-    // budget_exhausted — the partial Phase B details must still be present.
     const guardrail = new StubGuardrail({
       id: "false_confirmation",
       violates: true,
@@ -115,7 +144,7 @@ describe("GuardrailPipeline — surgicalFixDetails capture", () => {
       guardrails: [guardrail],
       llmService: mockLlm([]),
       logger: mockLogger(),
-      budgetMs: 0, // immediately under minRetryBudgetMs
+      budgetMs: 0,
       minRetryBudgetMs: 1,
     });
     const result = await pipeline.validate("praise wrong answer", {}, { messages: [] });
@@ -127,13 +156,10 @@ describe("GuardrailPipeline — surgicalFixDetails capture", () => {
   });
 
   test("falls back to currentResponse / fix.text when adapter omits before/after", async () => {
-    // Some legacy adapters return {applied,text} without before/after.
-    // The pipeline should fill them from the surrounding state so analysts
-    // never see undefined fields.
     const guardrail = new StubGuardrail({
       id: "legacy_fix",
       violates: true,
-      fix: () => ({ applied: true, text: "patched" }), // no before/after
+      fix: () => ({ applied: true, text: "patched" }),
     });
     let calls = 0;
     guardrail.check = function () {

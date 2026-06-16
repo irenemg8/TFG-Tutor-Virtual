@@ -1,98 +1,132 @@
 "use strict";
 
-/**
- * Port interface for Message persistence.
- * This is the KEY abstraction that decouples business logic from MongoDB's
- * embedded conversacion[] array pattern.
- *
- * MongoDB adapter: wraps $push/$slice on Interaccion.conversacion[]
- * PostgreSQL adapter: operates on the normalized messages table
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  IMESSAGEREPOSITORY                   |
+            |  Port/interface defining the persistence contract for |
+            |  conversation Messages. It is the KEY abstraction     |
+            |  that decouples business logic from MongoDB's         |
+            |  embedded conversacion[] array, letting a normalized   |
+            |  Postgres messages table back the same contract.      |
+            |  Adapters implement it; the methods here just throw.  |
+            |                                                       |
+        ____|____________________                                  |
+   Txt, Message -> | appendMessage() | -> Promise<void>           |
+                   -----------------                               |
+        ____|______________________                                |
+   Txt, N -> | getLastMessages() | -> Promise<[Message]>          |
+             -------------------                                   |
+        ____|_____________________                                 |
+   Txt -> | getAllMessages() | -> Promise<[Message]>               |
+          ------------------                                       |
+        ____|______________________________                        |
+   Txt, [Txt] -> | countConsecutiveFromEnd() | -> Promise<N>      |
+                 ---------------------------                       |
+        ____|____________________________                          |
+   Txt -> | countAssistantMessages() | -> Promise<N>               |
+          --------------------------                               |
+        ____|______________________________                        |
+   Txt, N -> | getLastAssistantMessages() | -> Promise<[Message]> |
+             ----------------------------                          |
+        ____|_____________________                                 |
+   Txt -> | getLastMessage() | -> Promise<Message | null>          |
+          ------------------                                       |
+        ____|___________________________                           |
+   Txt -> | getAcEvidenceByUserId() | -> Promise<Obj>              |
+          -------------------------                                |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class IMessageRepository {
-  /**
-   * Append a message to a conversation.
-   * MongoDB: $push to conversacion[] + $set fin
-   * PostgreSQL: INSERT into messages with next sequence_num
-   * @param {string} interaccionId
-   * @param {import('../../entities/Message')} message
-   * @returns {Promise<void>}
-   */
+  /*
+   Txt, Message -> ____|____________________
+                  | appendMessage() | -> Promise<void>
+                   -----------------
+      Contract: append a message to a conversation. Mongo adapter does
+      $push to conversacion[] plus $set fin; Postgres adapter INSERTs
+      into messages with the next sequence_num. Abstract here.
+  */
   async appendMessage(interaccionId, message) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Load the last N messages for an interaccion.
-   * MongoDB: .slice("conversacion", -N).lean()
-   * PostgreSQL: SELECT ... ORDER BY sequence_num DESC LIMIT N, then reverse
-   * @param {string} interaccionId
-   * @param {number} count
-   * @returns {Promise<import('../../entities/Message')[]>}
-   */
+  /*
+   Txt, N -> ____|______________________
+            | getLastMessages() | -> Promise<[Message]>
+             -------------------
+      Contract: load the last N messages for an interaccion. Mongo uses
+      .slice("conversacion", -N); Postgres orders by sequence_num DESC,
+      limits N, then reverses. Abstract here.
+  */
   async getLastMessages(interaccionId, count) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Get all messages for an interaccion (for export, finalize).
-   * @param {string} interaccionId
-   * @returns {Promise<import('../../entities/Message')[]>}
-   */
+  /*
+   Txt -> ____|_____________________
+         | getAllMessages() | -> Promise<[Message]>
+          ------------------
+      Contract: resolve every message for an interaccion (for export
+      and finalize). Abstract here.
+  */
   async getAllMessages(interaccionId) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Count consecutive messages from the end with given classification types.
-   * Used for wrong streak detection (loop breaking).
-   * @param {string} interaccionId
-   * @param {string[]} classificationTypes
-   * @returns {Promise<number>}
-   */
+  /*
+   Txt, [Txt] -> ____|______________________________
+                | countConsecutiveFromEnd() | -> Promise<N>
+                 ---------------------------
+      Contract: count consecutive messages from the end whose
+      classification matches the given types. Used for wrong-streak
+      detection (loop breaking). Abstract here.
+  */
   async countConsecutiveFromEnd(interaccionId, classificationTypes) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Count total assistant messages.
-   * @param {string} interaccionId
-   * @returns {Promise<number>}
-   */
+  /*
+   Txt -> ____|____________________________
+         | countAssistantMessages() | -> Promise<N>
+          --------------------------
+      Contract: count the total assistant messages. Abstract here.
+  */
   async countAssistantMessages(interaccionId) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Get last N assistant messages (for tutor repetition detection).
-   * @param {string} interaccionId
-   * @param {number} count
-   * @returns {Promise<import('../../entities/Message')[]>}
-   */
+  /*
+   Txt, N -> ____|______________________________
+            | getLastAssistantMessages() | -> Promise<[Message]>
+             ----------------------------
+      Contract: resolve the last N assistant messages (for tutor
+      repetition detection). Abstract here.
+  */
   async getLastAssistantMessages(interaccionId, count) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Get the last message of any role (for student response time calculation).
-   * @param {string} interaccionId
-   * @returns {Promise<import('../../entities/Message')|null>}
-   */
+  /*
+   Txt -> ____|_____________________
+         | getLastMessage() | -> Promise<Message | null>
+          ------------------
+      Contract: resolve the last message of any role (for student
+      response-time calculation), or null. Abstract here.
+  */
   async getLastMessage(interaccionId) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Aggregate AC evidence (concept counts + classification counts) across
-   * ALL of a user's interactions — open, closed, or abandoned. Used by
-   * AcTrackerAgent to surface recurring misconceptions even when no final
-   * Resultado was persisted.
-   *
-   * @param {string} userId
-   * @returns {Promise<{
-   *   concepts: Array<{ concept: string, count: number }>,
-   *   classifications: Array<{ classification: string, count: number }>,
-   * }>}
-   */
+  /*
+   Txt -> ____|___________________________
+         | getAcEvidenceByUserId() | -> Promise<Obj>
+          -------------------------
+      Contract: aggregate AC evidence (concept counts plus
+      classification counts) across ALL of a user's interactions —
+      open, closed or abandoned — so AcTrackerAgent can surface
+      recurring misconceptions even when no final Resultado was
+      persisted. Resolves { concepts, classifications }. Abstract here.
+  */
   async getAcEvidenceByUserId(userId) {
     throw new Error("Not implemented");
   }

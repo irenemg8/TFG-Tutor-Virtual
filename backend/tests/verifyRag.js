@@ -1,45 +1,96 @@
-// Verification script for the Agentic RAG system
-// Run: cd backend && node tests/verifyRag.js
-
 var path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 var fs = require("fs");
 var axios = require("axios");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                       VERIFY RAG                      |
+            |  End-to-end verification script for the Agentic RAG    |
+            |  system. Runs phased checks over prerequisites, each   |
+            |  module, ingestion, hybrid search and the full pipeline,|
+            |  tallying pass/fail/skip results.                      |
+        ____|________________                                       |
+   Txt -> | pass() | -> void                                        |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | fail() | -> void                                        |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | skip() | -> void                                        |
+          -----------------                                         |
+        ____|________________                                       |
+   void -> | summary() | -> void                                    |
+          -----------------                                         |
+        ____|________________                                       |
+   void -> | main() | -> Promise<Obj>                               |
+          -----------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 var passed = 0;
 var failed = 0;
 var skipped = 0;
 
-// Track which prerequisites passed
 var ollamaOk = false;
 var chromaOk = false;
 var filesOk = false;
 
+/*
+   IN -> ____|________
+        | pass() | -> void
+         ----------
+      Logs a passing step and increments the pass counter (Txt, Txt).
+   */
 function pass(step, msg) {
   console.log("[PASS] " + step + " — " + msg);
   passed = passed + 1;
 }
 
+/*
+   IN -> ____|________
+        | fail() | -> void
+         ----------
+      Logs a failing step and increments the fail counter (Txt, Txt).
+   */
 function fail(step, msg) {
   console.log("[FAIL] " + step + " — " + msg);
   failed = failed + 1;
 }
 
+/*
+   IN -> ____|________
+        | skip() | -> void
+         ----------
+      Logs a skipped step and increments the skip counter (Txt, Txt).
+   */
 function skip(step, msg) {
   console.log("[SKIP] " + step + " — " + msg);
   skipped = skipped + 1;
 }
 
+/*
+   IN -> ____|___________
+        | summary() | -> void
+         -------------
+      Prints the final pass/fail/skip tally.
+   */
 function summary() {
   console.log("\n========================================");
   console.log("PASSED: " + passed + "  FAILED: " + failed + "  SKIPPED: " + skipped);
   console.log("========================================");
 }
 
+/*
+   IN -> ____|________
+        | main() | -> Promise<Obj>
+         ----------
+      Runs all verification phases and returns the prerequisite flags.
+   */
 async function main() {
   console.log("=== FASE 0: Prerrequisitos ===\n");
 
-  // --- Paso 0.1: Dependencias npm ---
   var depsOk = true;
   var depNames = ["chromadb", "axios", "mongoose"];
   for (var i = 0; i < depNames.length; i++) {
@@ -54,7 +105,6 @@ async function main() {
     pass("0.1", "Dependencias npm (chromadb, axios, mongoose) cargadas");
   }
 
-  // --- Paso 0.2: Ollama disponible (via PoliGPT server) ---
   var config = require("../src/rag/config");
   var ollamaUrl = config.OLLAMA_EMBED_URL.replace(/\/$/, "");
   try {
@@ -89,7 +139,6 @@ async function main() {
     fail("0.2", "Ollama not available at " + ollamaUrl + " — " + e.message);
   }
 
-  // --- Paso 0.3: ChromaDB disponible ---
   try {
     var chromaUrl = config.CHROMA_URL.replace(/\/$/, "");
     var r = await axios.get(chromaUrl + "/api/v2/heartbeat", { timeout: 5000 });
@@ -103,10 +152,8 @@ async function main() {
     fail("0.3", "ChromaDB no disponible en http://localhost:8000 — " + e.message);
   }
 
-  // --- Paso 0.4: Data files exist ---
   var allFilesExist = true;
 
-  // Check datasets
   var exerciseNums = Object.keys(config.EXERCISE_DATASET_MAP);
   var checkedFiles = {};
   for (var i = 0; i < exerciseNums.length; i++) {
@@ -122,7 +169,6 @@ async function main() {
     }
   }
 
-  // Check knowledge graph
   if (!fs.existsSync(config.KG_PATH)) {
     fail("0.4", "Knowledge graph no encontrado: " + config.KG_PATH);
     allFilesExist = false;
@@ -133,10 +179,8 @@ async function main() {
     filesOk = true;
   }
 
-  // =============================================
   console.log("\n=== FASE 1: Individual modules ===\n");
 
-  // --- Step 1.1: config.js ---
   try {
     var requiredKeys = [
       "CHROMA_URL", "EMBEDDING_MODEL", "OLLAMA_EMBED_URL", "OLLAMA_CHAT_URL",
@@ -159,7 +203,6 @@ async function main() {
     fail("1.1", "config.js error: " + e.message);
   }
 
-  // --- Step 1.2: embeddings.js ---
   if (ollamaOk) {
     try {
       var embeddings = require("../src/rag/embeddings");
@@ -187,14 +230,12 @@ async function main() {
     skip("1.2", "Ollama not available, cannot test embeddings");
   }
 
-  // --- Step 1.3: chromaClient.js ---
   if (chromaOk && ollamaOk) {
     try {
       var chroma = require("../src/rag/chromaClient");
       var client = await chroma.getClient();
       var testCollection = await chroma.getCollection("test_verify_temp");
 
-      // Add a test document
       var embModule = require("../src/rag/embeddings");
       var testEmb = await embModule.generateEmbedding("test document for verification");
       await testCollection.add({
@@ -204,7 +245,6 @@ async function main() {
         metadatas: [{ source: "verify" }],
       });
 
-      // Search
       var queryEmb = await embModule.generateEmbedding("test document");
       var results = await testCollection.query({
         queryEmbeddings: [queryEmb],
@@ -217,7 +257,6 @@ async function main() {
         fail("1.3", "chromaClient.js: search returned no results after adding document");
       }
 
-      // Cleanup
       await client.deleteCollection({ name: "test_verify_temp" });
     } catch (e) {
       fail("1.3", "chromaClient.js error: " + e.message);
@@ -226,7 +265,6 @@ async function main() {
     skip("1.3", "ChromaDB or Ollama not available, cannot test chromaClient");
   }
 
-  // --- Step 1.4: bm25.js ---
   try {
     var bm25 = require("../src/rag/bm25");
     var testPairs = [
@@ -245,7 +283,6 @@ async function main() {
     fail("1.4", "bm25.js error: " + e.message);
   }
 
-  // --- Step 1.5: knowledgeGraph.js ---
   if (filesOk) {
     try {
       var kg = require("../src/rag/knowledgeGraph");
@@ -264,15 +301,12 @@ async function main() {
     skip("1.5", "Data files not available, cannot test knowledgeGraph");
   }
 
-  // --- Step 1.6: queryClassifier.js ---
   try {
     var classifier = require("../src/rag/queryClassifier");
 
     var testCases = [
       { msg: "hola", correctAnswer: ["R1"], expected: "greeting" },
       { msg: "no sé", correctAnswer: ["R1"], expected: "dont_know" },
-      // After removing the "single_word" bucket, short messages without
-      // elements and without tutor-context fall into wrong_answer.
       { msg: "todas", correctAnswer: ["R1", "R2", "R4"], expected: "wrong_answer" },
     ];
 
@@ -286,7 +320,6 @@ async function main() {
       }
     }
 
-    // Test extractResistances
     var resistances = classifier.extractResistances("R1, R2 y R4");
     var expectedR = ["R1", "R2", "R4"];
     var resistOk = resistances.length === expectedR.length;
@@ -309,15 +342,12 @@ async function main() {
     fail("1.6", "queryClassifier.js error: " + e.message);
   }
 
-  // --- Step 1.7: guardrails.js ---
   try {
     var guardrails = require("../src/rag/guardrails");
     var correctAnswer = ["R1", "R2", "R4"];
 
-    // Safe response (mentions some resistances but no reveal phrase)
     var safeCheck = guardrails.checkSolutionLeak("¿Por qué crees que R1 está en serie?", correctAnswer);
 
-    // Leaking response (mentions ALL correct resistances + reveal phrase)
     var leakCheck = guardrails.checkSolutionLeak("Las resistencias son R1, R2 y R4, la respuesta correcta es esa", correctAnswer);
 
     var strongerInst = guardrails.getStrongerInstruction();
@@ -331,7 +361,6 @@ async function main() {
     fail("1.7", "guardrails.js error: " + e.message);
   }
 
-  // --- Step 1.8: logger.js ---
   try {
     var logger = require("../src/rag/logger");
     logger.logInteraction({
@@ -347,7 +376,6 @@ async function main() {
       timing: { total: 0 },
     });
 
-    // Check that the log file was created
     var today = new Date().toISOString().split("T")[0];
     var logPath = path.join(config.LOG_DIR, today + ".jsonl");
     if (fs.existsSync(logPath)) {
@@ -366,12 +394,10 @@ async function main() {
     fail("1.8", "logger.js error: " + e.message);
   }
 
-  // =============================================
   console.log("\n=== FASE 2: Ingestion verification ===\n");
 
   var ingestOk = false;
 
-  // --- Step 2.2: Verify ChromaDB collections ---
   if (chromaOk && ollamaOk) {
     try {
       var chroma = require("../src/rag/chromaClient");
@@ -405,7 +431,6 @@ async function main() {
       }
 
       if (allFound) {
-        // Check that collections have documents
         var emptyCols = [];
         for (var i = 0; i < expectedCollections.length; i++) {
           var col = await chroma.getCollection(expectedCollections[i]);
@@ -431,7 +456,6 @@ async function main() {
     skip("2.2", "ChromaDB or Ollama not available");
   }
 
-  // --- Step 2.3: Verify BM25 index from dataset ---
   if (filesOk) {
     try {
       var bm25 = require("../src/rag/bm25");
@@ -452,14 +476,11 @@ async function main() {
     skip("2.3", "Data files not available");
   }
 
-  // =============================================
   console.log("\n=== FASE 3: Hybrid search ===\n");
 
-  // --- Step 3.1: hybridSearch.js ---
   if (ingestOk && ollamaOk) {
     try {
       var hybridSearch = require("../src/rag/hybridSearch");
-      // Load BM25 index for exercise 1 (needed for hybrid search)
       var bm25 = require("../src/rag/bm25");
       var datasetPath = path.join(config.DATASETS_DIR, "dataset_exercise_1.json");
       var rawData = fs.readFileSync(datasetPath, "utf-8");
@@ -469,11 +490,9 @@ async function main() {
       var hsResults = await hybridSearch.hybridSearch("resistencia en serie", 1, 3);
 
       if (Array.isArray(hsResults) && hsResults.length > 0) {
-        // Check result structure
         var first = hsResults[0];
         var hasFields = first.student != null && first.tutor != null && first.score != null;
 
-        // Check sorted descending
         var sorted = true;
         for (var i = 1; i < hsResults.length; i++) {
           if (hsResults[i].score > hsResults[i - 1].score) {
@@ -499,15 +518,12 @@ async function main() {
     skip("3.1", "Ingestion or Ollama not available");
   }
 
-  // =============================================
   console.log("\n=== FASE 4: Full pipeline ===\n");
 
-  // --- Step 4.1: ragPipeline.js basic call ---
   if (ingestOk && ollamaOk) {
     try {
       var pipeline = require("../src/rag/ragPipeline");
 
-      // Load BM25 indices for all exercises (pipeline needs them)
       var bm25 = require("../src/rag/bm25");
       var kg = require("../src/rag/knowledgeGraph");
       kg.loadKG();
@@ -549,20 +565,17 @@ async function main() {
     skip("4.1", "Ingestion or Ollama not available");
   }
 
-  // --- Step 4.2: Different classification routes ---
   if (ingestOk && ollamaOk) {
     try {
       var pipeline = require("../src/rag/ragPipeline");
       var routesOk = true;
 
-      // 4.2a: Greeting -> no_rag
       var greetResult = await pipeline.runFullPipeline("hola", 1, ["R1", "R2", "R4"], null);
       if (greetResult.decision !== "no_rag") {
         fail("4.2", "greeting should produce no_rag, got: " + greetResult.decision);
         routesOk = false;
       }
 
-      // 4.2b: Dont know -> scaffold
       var dkResult = await pipeline.runFullPipeline("no sé", 1, ["R1", "R2", "R4"], null);
       if (dkResult.decision !== "scaffold") {
         fail("4.2", "dont_know should produce scaffold, got: " + dkResult.decision);
@@ -573,7 +586,6 @@ async function main() {
         routesOk = false;
       }
 
-      // 4.2c: Wrong answer -> rag_examples with sources
       var waResult = await pipeline.runFullPipeline("R1 y R5", 1, ["R1", "R2", "R4"], null);
       if (waResult.decision !== "rag_examples") {
         fail("4.2", "wrong_answer should produce rag_examples, got: " + waResult.decision);
@@ -594,10 +606,8 @@ async function main() {
     skip("4.2", "Ingestion or Ollama not available");
   }
 
-  // --- Summary ---
   summary();
 
-  // Return flags for next phases
   return { ollamaOk: ollamaOk, chromaOk: chromaOk, filesOk: filesOk, ingestOk: ingestOk };
 }
 

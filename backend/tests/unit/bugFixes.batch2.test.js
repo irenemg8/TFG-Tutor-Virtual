@@ -1,15 +1,5 @@
 "use strict";
 
-/**
- * Tests dedicados a los fixes de la batería adversarial 2026-05-03:
- *   - BUG-002 (LanguageDriftGuardrail) — detecta scripts no-latinos.
- *   - BUG-003 (detectLanguageHeuristic + resolveLanguage) — sostiene EN.
- *   - BUG-004 (fixPlaceholderAgreement) — corrige concordancia placeholder/verbo.
- *   - BUG-005 (SolutionLeakGuardrail semantic leak) — afirmación tras redacción.
- *
- * NO requiere LLM/BD/servers. Sólo lógica determinista.
- */
-
 const SolutionLeakGuardrail = require("../../src/infrastructure/guardrails/SolutionLeakGuardrail");
 const LanguageDriftGuardrail = require("../../src/infrastructure/guardrails/LanguageDriftGuardrail");
 const {
@@ -21,7 +11,18 @@ const {
   fixPlaceholderAgreement,
 } = require("../../src/domain/services/rag/guardrails");
 
-// ─── BUG-002 — LanguageDriftGuardrail ────────────────────────────────────────
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |   ADVERSARIAL FIX BATCH 2 — UNIT TESTS                |
+            |  Deterministic regressions for the 2026-05-03         |
+            |  adversarial battery: BUG-002 non-Latin script drift,  |
+            |  BUG-003 sustained-language heuristic, BUG-004         |
+            |  placeholder/verb agreement, BUG-005 anaphoric         |
+            |  semantic leak, BUG-006 implicit yes/no on wrong Rn,   |
+            |  and BUG-007 tutor-stuck-on-same-Rn detection. No LLM, |
+            |  DB or servers required.                              |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("LanguageDriftGuardrail (BUG-002 — drift a chino/cirílico)", () => {
   const g = new LanguageDriftGuardrail();
@@ -63,7 +64,6 @@ describe("LanguageDriftGuardrail (BUG-002 — drift a chino/cirílico)", () => {
     expect(fix).toBeTruthy();
     expect(fix.applied).toBe(true);
     expect(/[一-鿿]/u.test(fix.text)).toBe(false);
-    // El "?" final debe sobrevivir (la frase interrogativa no tenía CJK).
     expect(fix.text).toMatch(/\?/);
   });
 
@@ -79,8 +79,6 @@ describe("LanguageDriftGuardrail (BUG-002 — drift a chino/cirílico)", () => {
     expect(g.buildRetryHint("val")).toMatch(/no-llatí|llatí/i);
   });
 });
-
-// ─── BUG-003 — detectLanguageHeuristic + resolveLanguage ─────────────────────
 
 describe("detectLanguageHeuristic (BUG-003 — idioma sostenido sin switch explícito)", () => {
   test("input EN claro detecta 'en'", () => {
@@ -104,7 +102,6 @@ describe("detectLanguageHeuristic (BUG-003 — idioma sostenido sin switch expl�
   });
 
   test("input ambiguo → null", () => {
-    // Sólo Rn + signos: ninguna stopword.
     expect(detectLanguageHeuristic("R1 R2 R3 R4 R5 R6")).toBeNull();
   });
 });
@@ -137,8 +134,6 @@ describe("resolveLanguage usa heurística cuando no hay switch explícito", () =
     expect(lang).toBe("es");
   });
 });
-
-// ─── BUG-004 — fixPlaceholderAgreement ────────────────────────────────────────
 
 describe("fixPlaceholderAgreement (BUG-004 — concordancia placeholder/verbo)", () => {
   test("'ese conjunto de elementos contribuyen' → 'esos elementos contribuyen'", () => {
@@ -177,17 +172,12 @@ describe("fixPlaceholderAgreement (BUG-004 — concordancia placeholder/verbo)",
   test("integración con redactElementMentions → respuesta gramatical", () => {
     const input = "Sí, R1, R2 y R4 contribuyen al voltaje.";
     const { text } = redactElementMentions(input, ["R1", "R2", "R4"], "es");
-    // No debe haber concordancia rota: 'ese conjunto de elementos contribuyen'.
     expect(text).not.toMatch(/ese conjunto de elementos\s+contribuyen/);
-    // Y el placeholder coherente debe estar.
     expect(text).toMatch(/(esos elementos|esas resistencias|ese conjunto de elementos)/);
   });
 });
 
-// ─── BUG-007 — tutor stuck on same Rn ───────────────────────────────────────
-
 describe("contextAgent _detectStuckOnElement (BUG-007)", () => {
-  // Carga directa para no construir un container completo.
   const ContextAgent = require("../../src/domain/agents/contextAgent");
   const ca = Object.create(ContextAgent.prototype);
 
@@ -224,7 +214,6 @@ describe("contextAgent _detectStuckOnElement (BUG-007)", () => {
   });
 
   test("ignora menciones FUERA de la pregunta interrogativa", () => {
-    // En la frase introductoria menciona R1, pero la pregunta es sobre R3.
     const messages = [
       { content: "R1 está bien. ¿Cómo R3 afecta el voltaje?" },
       { content: "Vale R1 controlado. ¿Y R3 cómo participa?" },
@@ -240,8 +229,6 @@ describe("contextAgent _detectStuckOnElement (BUG-007)", () => {
     expect(ca._detectStuckOnElement(messages)).toBeNull();
   });
 });
-
-// ─── BUG-006 — yes/no implícito sobre Rn equivocado ─────────────────────────
 
 const { classifyQuery } = require("../../src/domain/services/rag/queryClassifier");
 
@@ -301,7 +288,6 @@ describe("classifyQuery yes/no implícito (BUG-006 — false_confirmation)", () 
       evaluableElements,
       "¿Crees que todas las resistencias influyen en la diferencia de potencial?"
     );
-    // Sin Rn explícita en la pregunta de cierre, conserva flujo socrático.
     expect(res.type).toBe("correct_no_reasoning");
   });
 
@@ -315,8 +301,6 @@ describe("classifyQuery yes/no implícito (BUG-006 — false_confirmation)", () 
     expect(res.type).toBe("closed_answer");
   });
 });
-
-// ─── BUG-005 — SolutionLeakGuardrail semantic leak ───────────────────────────
 
 describe("SolutionLeakGuardrail (BUG-005 — leak semántico anafórico post-redaction)", () => {
   const g = new SolutionLeakGuardrail();
@@ -391,7 +375,6 @@ describe("SolutionLeakGuardrail (BUG-005 — leak semántico anafórico post-red
   test("surgicalFix devuelve null cuando todo se eliminaría (forza retry)", () => {
     const bad = "Sí, esas resistencias son las que contribuyen.";
     const fix = g.surgicalFix(bad, { correctAnswer: ["R1", "R2", "R4"], lang: "es" });
-    // Pipeline se encarga de retry cuando devolvemos null.
     expect(fix).toBeNull();
   });
 });

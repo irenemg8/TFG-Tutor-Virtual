@@ -1,19 +1,37 @@
 "use strict";
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                       RESULTADO                       |
+            |  Domain entity holding the outcome of a finished       |
+            |  tutoring session: counters, the AI analysis/advice    |
+            |  and the list of detected AC errors.                   |
+        ____|________________                                       |
+   Obj -> | constructor() | -> Resultado            (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   id: Txt              userId: Txt                    |
+            |   exerciseId: Txt      interactionId: Txt             |
+            |   messageCount: Z      solvedOnFirstAttempt: T/F      |
+            |   aiAnalysis: Txt|null aiAdvice: Txt | null           |
+            |   date: Date           errors: [ErrorEntry]           |
+        ____|___________                                            |
+        | toJSON() | -> Obj                          (reads attrs)  |
+        ------------                                                |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class Resultado {
-  /**
-   * @param {object} props
-   * @param {string}    props.id
-   * @param {string}    props.userId
-   * @param {string}    props.exerciseId
-   * @param {string}    props.interactionId
-   * @param {number}   [props.messageCount]
-   * @param {boolean}  [props.solvedOnFirstAttempt]
-   * @param {string}   [props.aiAnalysis]
-   * @param {string}   [props.aiAdvice]
-   * @param {Date}     [props.date]
-   * @param {Array}    [props.errors]
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> Resultado    (writes attributes id (Txt),
+          -----------------                 userId (Txt), exerciseId (Txt),
+                                            interactionId (Txt), messageCount (Z),
+                                            solvedOnFirstAttempt (T/F), aiAnalysis (Txt|null),
+                                            aiAdvice (Txt|null), date (Date), errors ([ErrorEntry]))
+      Builds the result from a plain props object, wrapping each raw error
+      into an ErrorEntry and defaulting counters and date.
+  */
   constructor(props) {
     this.id = props.id;
     this.userId = props.userId;
@@ -29,7 +47,15 @@ class Resultado {
     );
   }
 
-  /** Legacy Mongo JSON shape for frontend compat. */
+  /*
+       ____|___________
+      | toJSON() | -> Obj    (reads attributes id (Txt), userId (Txt),
+       ------------          exerciseId (Txt), interactionId (Txt),
+                             messageCount (Z), solvedOnFirstAttempt (T/F),
+                             aiAnalysis (Txt|null), aiAdvice (Txt|null),
+                             date (Date), errors ([ErrorEntry]))
+      Serializes to the legacy Mongo shape consumed by the frontend.
+  */
   toJSON() {
     return {
       _id: this.id,

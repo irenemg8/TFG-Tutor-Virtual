@@ -1,37 +1,38 @@
 "use strict";
 
-/**
- * Port: ISecurityService
- *
- * Analyzes the student's raw input to decide whether it is safe to let
- * the tutoring pipeline process it. Two main threats:
- *   - prompt injection (attempts to rewrite/override the tutor's role)
- *   - off-topic (requests unrelated to electric circuits)
- *
- * Adapters:
- *   - HeuristicSecurityAdapter (regex + keyword based, deterministic)
- *   - (future) LlmSecurityAdapter (LLM-as-a-judge, for ambiguous cases)
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  ISECURITYSERVICE                     |
+            |  Port/interface defining the contract for screening   |
+            |  the student's raw input before the tutoring pipeline |
+            |  processes it. Guards against two threats: prompt     |
+            |  injection (rewriting/overriding the tutor's role)    |
+            |  and off-topic requests (unrelated to electric        |
+            |  circuits). Adapters: HeuristicSecurityAdapter        |
+            |  (regex + keyword, deterministic) and a future        |
+            |  LlmSecurityAdapter. The method here just throws.     |
+            |                                                       |
+        ____|_____________________                                 |
+   Txt, Obj -> | analyzeInput() | -> Obj                          |
+              ----------------                                     |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class ISecurityService {
-  /**
-   * @param {string} userMessage - Raw student input
-   * @param {object} ctx
-   * @param {string} ctx.lang    - "es" | "en" | "val"
-   * @param {object} [ctx.exercise]
-   * @param {string[]} [ctx.evaluableElements]
-   * @returns {SecurityAnalysis}
-   */
+  /*
+   Txt, Obj -> ____|_____________________
+              | analyzeInput() | -> Obj
+               ----------------
+      Contract: analyze the raw student input against ctx (lang,
+      optional exercise, optional evaluableElements) and return a
+      SecurityAnalysis object: { safe (T/F), category
+      ("safe"|"injection"|"off_topic"), matchedPattern? (Txt, for
+      debug/logging), redirectMessage? (Txt, localized student
+      message) }. Abstract here.
+  */
   analyzeInput(userMessage, ctx) {
     throw new Error("ISecurityService.analyzeInput not implemented");
   }
 }
-
-/**
- * @typedef {object} SecurityAnalysis
- * @property {boolean} safe
- * @property {"safe"|"injection"|"off_topic"} category
- * @property {string}  [matchedPattern] - The pattern id that triggered (debug/logging)
- * @property {string}  [redirectMessage] - Localized message to show to the student
- */
 
 module.exports = ISecurityService;

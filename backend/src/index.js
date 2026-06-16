@@ -1,4 +1,12 @@
-// backend/src/index.js
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                 INDEX / SERVER ENTRYPOINT             |
+            |  Boots the Express app: CORS, sessions on PostgreSQL, |
+            |  static assets, auth middleware, API routes and SPA   |
+            |  fallback. Starts the internal HTTP server, then       |
+            |  initializes the hex DI container and Ollama warmup.  |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
@@ -7,8 +15,6 @@ const cors = require("cors");
 const session = require("express-session");
 const PgSession = require("connect-pg-simple")(session);
 const fs = require("fs");
-
-// Rutas
 
 
 
@@ -25,14 +31,12 @@ const resultadoRoutes = require("./interfaces/http/routes/resultados");
 const progresoRoutes = require("./interfaces/http/routes/progresoRoutes");
 const exportRoutes = require("./interfaces/http/routes/exportRoutes");
 
-// Auth (CAS + demo)
 const { router: authRouter, requireAuth } = require("./interfaces/http/routes/auth");
 const { globalAuth, requireRole } = require("./interfaces/http/middleware/authMiddleware");
 
 const app = express();
 console.log("✅ BACKEND INDEX CARGADO:", __filename);
 
-// ====== SAFEGUARD: DEV_BYPASS_AUTH in production ======
 if (
   process.env.DEV_BYPASS_AUTH === "true" &&
   process.env.NODE_ENV === "production"
@@ -45,10 +49,8 @@ if (
 
 const port = Number(process.env.PORT || 3000);
 
-// ✅ Si estás detrás de Nginx (HTTPS fuera), esto es obligatorio para cookies secure
 app.set("trust proxy", 1);
 
-// ====== CORS ======
 app.use(
   cors({
     origin: [
@@ -61,11 +63,8 @@ app.use(
   })
 );
 
-// ====== Middlewares base ======
 app.use(express.json());
 
-// ====== Static (imágenes ejercicios) ======
-// Tus imágenes están en: backend/src/static
 const staticDir = path.join(__dirname, "static");
 console.log("STATIC DIR =", staticDir);
 console.log("STATIC EXISTS =", fs.existsSync(staticDir));
@@ -73,7 +72,6 @@ if (fs.existsSync(staticDir)) {
   console.log("STATIC FILES =", fs.readdirSync(staticDir).slice(0, 50));
 }
 
-// Endpoint de debug (NO está bajo /static para que no lo intercepte express.static)
 app.get("/api/debug/static", (_req, res) => {
   res.json({
     ok: true,
@@ -83,36 +81,14 @@ app.get("/api/debug/static", (_req, res) => {
   });
 });
 
-// Servido real de estáticos
 app.use("/static", express.static(staticDir, { fallthrough: false }));
 
-// (La conexión a PostgreSQL la gestiona container.initialize() en el callback de listen.)
-
-// ====== Sesión (PostgreSQL) ======
-// La tabla `sessions` es creada por la migración 006_create_sessions.sql.
-// connect-pg-simple gestiona su propio pool interno usando PG_CONNECTION_STRING.
 const pgStore = new PgSession({
   conString: process.env.PG_CONNECTION_STRING,
   tableName: "sessions",
   createTableIfMissing: false,
-  // Emit errors visibly so we can diagnose session store failures (before this,
-  // a failing store could silently hang CAS login — errors must not be silent).
   errorLog: function (msg) { console.error("[SESSION STORE]", msg); },
 });
-// Cookie hardening:
-//   - secure → true in production (HTTPS via Nginx) so the browser only
-//     sends it over TLS. In dev (NODE_ENV !== "production" OR
-//     DEV_BYPASS_AUTH=true) we set false so plain HTTP works.
-//   - sameSite=lax is required for the OAuth/CAS callback redirect: the
-//     browser arrives back at /api/auth/cas/callback as a top-level GET,
-//     and lax allows the cookie to be sent in that case. "strict" would
-//     drop it.
-//   - path="/" (explicit) so the cookie is sent for the frontend SPA
-//     routes too, not just /api/*. Critical when Nginx serves both under
-//     the same host.
-//   - maxAge: 24h. Shorter than express-session's "session cookie"
-//     default (browser-session) so we don't keep stale sids around for
-//     weeks; long enough to cover a normal teaching day.
 const isProduction = process.env.NODE_ENV === "production";
 const devBypass = process.env.DEV_BYPASS_AUTH === "true";
 app.use(
@@ -132,24 +108,15 @@ app.use(
   })
 );
 
-// ====== Healthcheck ======
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
-// ====== Auth ======
 app.use(authRouter);
 
-// ====== Global Auth Middleware (BEFORE all API routes) ======
-// Rejects unauthenticated requests to all /api/* except whitelisted public routes.
-// Sets req.userId and req.userRole from session (NEVER from client).
 app.use("/api", globalAuth);
 
-// ====== API ======
 app.use("/api/usuarios", userRoutes);
 app.use("/api/ejercicios", ejerciciosRoutes);
 app.use("/api/interacciones", interaccionesRoutes);
-// Orchestrator handles all chat requests. ragMiddleware is DEPRECATED and kept
-// only as a last-resort fallback while USE_ORCHESTRATOR=1 ramps to 100%.
-// TODO: delete ragMiddleware once the E2E test suite confirms 100% coverage.
 app.use("/api/ollama", orchestratorMiddleware);
 app.use("/api/ollama", (req, res, next) => {
   if (req.path === "/chat/stream") {
@@ -170,13 +137,9 @@ app.post("/api/llm/query", requireAuth, (req, res) => {
   res.json({ ok: true, user: req.session.user });
 });
 
-// ====== Servir FRONTEND (React build) ======
 const frontendDist = path.join(__dirname, "..", "..", "frontend", "dist");
 console.log("FRONTEND DIST =", frontendDist);
 
-// Assets con caché largo (fingerprinted por Vite); index.html SIN caché.
-// Los headers anti-caché son agresivos para evitar que nginx, navegadores o
-// proxies sirvan un index.html viejo que referencie hashes que ya no existen.
 app.use(
   express.static(frontendDist, {
     immutable: true,
@@ -192,13 +155,8 @@ app.use(
   })
 );
 
-// SPA fallback: solo devolver index.html para rutas de NAVEGACIÓN (sin extensión).
-// Requests a archivos con extensión (.js, .css, .png, .map...) que no se encuentren
-// deben devolver 404, NO el index.html (evita el error "MIME type text/html" en módulos
-// ES cuando el navegador tiene cacheado un hash antiguo de Vite que ya no existe).
 app.get(/^\/(?!api\/|static\/).*/, (req, res, next) => {
   if (path.extname(req.path)) {
-    // Es una petición a un archivo concreto que no encontró express.static → 404 honesto
     return res.status(404).type("text/plain").send("Not found");
   }
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
@@ -208,12 +166,9 @@ app.get(/^\/(?!api\/|static\/).*/, (req, res, next) => {
   res.sendFile(path.join(frontendDist, "index.html"));
 });
 
-// ====== Arranque servidor HTTP interno (Nginx hará HTTPS fuera) ======
 const server = app.listen(port, "0.0.0.0", () => {
   console.log(`✅ Backend (HTTP interno) escuchando en puerto ${port}`);
 
-  // Initialize DI container for hex architecture (USE_ORCHESTRATOR=1 route)
-  // Non-blocking: if it fails, the legacy ragMiddleware still serves requests.
   container.initialize()
     .then(() => {
       console.log("[Startup] Hex container ready. USE_ORCHESTRATOR=" + (process.env.USE_ORCHESTRATOR === "1" ? "ON" : "OFF"));
@@ -222,11 +177,15 @@ const server = app.listen(port, "0.0.0.0", () => {
       console.error("[Startup] Container initialization FAILED — orchestrator route disabled:", err.message);
     });
 
-  // Warmup Ollama (no bloquea). Only runs when LLM_PROVIDER=ollama;
-  // skipped entirely when using PoliGPT (where the chat goes through
-  // PoliGptLlmAdapter and Ollama UPV is not in the request path).
   const axios = require("axios");
 
+  /*
+       ____|________
+      | warmupOllamaUPV() | -> Promise<void>
+       -------------
+      Pings the UPV Ollama endpoint to preload the model. No-op unless
+      LLM_PROVIDER=ollama and a UPV URL is configured.
+  */
   async function warmupOllamaUPV() {
     if ((process.env.LLM_PROVIDER || "ollama").toLowerCase() !== "ollama") {
       console.log("[OLLAMA] Warmup SKIP (LLM_PROVIDER=" + process.env.LLM_PROVIDER + ").");

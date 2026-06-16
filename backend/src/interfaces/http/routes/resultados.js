@@ -1,4 +1,3 @@
-// backend/src/interfaces/http/routes/resultados.js
 const express = require("express");
 const axios = require("axios");
 const https = require("https");
@@ -6,8 +5,6 @@ const https = require("https");
 const container = require("../../../container");
 const { canAccessUserData } = require("../middleware/authMiddleware");
 
-// Canonical location: backend/src/data/alternative_conceptions.json.
-// El duplicado en src/ se eliminó (md5 idéntico, era código legacy).
 const acData = require("../../../data/alternative_conceptions.json");
 const AC_MAP = acData?.alternative_conceptions || {};
 const ALLOWED_AC_IDS = Object.keys(AC_MAP);
@@ -15,6 +12,40 @@ const ALLOWED_AC_IDS_TEXT = ALLOWED_AC_IDS.join(", ");
 
 const router = express.Router();
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   RESULTADOS ROUTES                   |
+            |  Express router that lists a student's completed       |
+            |  exercises and finalizes a result. On finalize it     |
+            |  runs an LLM classifier over the conversation to       |
+            |  detect alternative conceptions (AC) and persists the |
+            |  analysis. Mounted under /api/resultados. Endpoints:  |
+            |     GET  /completed          -> [Txt]                 |
+            |     GET  /completed/:userId   -> [Txt]  (role-gated)   |
+            |     POST /finalizar          -> Obj                   |
+        ____|____________                                            |
+   Obj -> | repos() | -> Obj | null                (reads container) |
+          -----------                                                |
+        ____|_____________                                           |
+   Txt -> | isValidId() | -> T/F                   (pure check)      |
+          -------------                                              |
+        ____|___________________                                     |
+   Txt -> | extractJsonObject() | -> Obj | null    (pure parse)      |
+          ---------------------                                      |
+        ____|_________________                                       |
+   Obj -> | callClassifier() | -> Promise<Txt>     (calls Ollama)    |
+          ------------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+ Obj -> ____|____________
+       | repos() | -> Obj | null    (reads container (Obj))
+        -----------
+    Resolves resultado + interaccion + message repositories from the
+    container. Sends a 503 and returns null when persistence is not ready.
+*/
 function repos(res) {
   if (!container._initialized) {
     res.status(503).json({ error: "service_unavailable" });
@@ -27,6 +58,12 @@ function repos(res) {
   };
 }
 
+/*
+ Txt -> ____|_____________
+       | isValidId() | -> T/F
+        -------------
+    True when the value is a legacy ObjectId (24 hex) or a UUID.
+*/
 function isValidId(v) {
   if (typeof v !== "string") return false;
   if (/^[a-f0-9]{24}$/i.test(v)) return true;
@@ -34,7 +71,6 @@ function isValidId(v) {
   return false;
 }
 
-// Ollama classifier config (unchanged)
 const OLLAMA_BASE_URL =
   process.env.OLLAMA_API_URL_UPV ||
   process.env.OLLAMA_UPV_URL ||
@@ -51,6 +87,14 @@ const ollama = axios.create({
   httpsAgent,
 });
 
+/*
+ Txt -> ____|___________________
+       | extractJsonObject() | -> Obj | null
+        ---------------------
+    Best-effort parse of a JSON object out of an LLM reply: strips code
+    fences, then tries the whole string and finally the first {...} match.
+    Returns null when nothing parses.
+*/
 function extractJsonObject(text) {
   if (typeof text !== "string") return null;
   const s = text.trim();
@@ -64,6 +108,13 @@ function extractJsonObject(text) {
   try { return JSON.parse(match[0]); } catch { return null; }
 }
 
+/*
+ Obj -> ____|_________________
+       | callClassifier() | -> Promise<Txt>
+        ------------------
+    Calls the Ollama /api/chat classifier (temperature 0, JSON format)
+    with the given model and prompt, returning the raw message content.
+*/
 async function callClassifier({ model, prompt }) {
   const r = await ollama.post("/api/chat", {
     model,
@@ -75,7 +126,6 @@ async function callClassifier({ model, prompt }) {
   return r?.data?.message?.content;
 }
 
-// GET /api/resultados/completed
 router.get("/completed", async (req, res) => {
   const r = repos(res); if (!r) return;
   try {
@@ -87,7 +137,6 @@ router.get("/completed", async (req, res) => {
   }
 });
 
-// LEGACY
 router.get("/completed/:userId", async (req, res) => {
   const r = repos(res); if (!r) return;
   try {
@@ -104,7 +153,6 @@ router.get("/completed/:userId", async (req, res) => {
   }
 });
 
-// POST /api/resultados/finalizar
 router.post("/finalizar", async (req, res) => {
   const r = repos(res); if (!r) return;
   try {
@@ -123,7 +171,6 @@ router.post("/finalizar", async (req, res) => {
       return res.status(404).json({ message: "Interacción no encontrada." });
     }
 
-    // Carga todos los mensajes de la interacción (ahora viven en tabla messages)
     const messages = await r.messageRepo.getAllMessages(interaccionId);
     const numMensajes = messages.length;
 

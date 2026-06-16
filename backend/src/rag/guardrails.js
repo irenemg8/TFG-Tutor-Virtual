@@ -1,6 +1,66 @@
-// Checks if the LLM response reveals the correct answer
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                        GUARDRAILS                     |
+            |  Post-generation safety checks for the tutor LLM. Each |
+            |  checker inspects a response and reports whether it    |
+            |  leaks the solution, falsely confirms, reveals element |
+            |  states, directs the student, introduces new elements  |
+            |  or mixes languages; paired getters return the         |
+            |  corrective instruction to append on a retry.          |
+            |  LEGACY duplicate kept under src/rag/ for A/B testing   |
+            |  against the hexagonal guardrail pipeline.             |
+        ____|_____________________                                   |
+   Txt -> | extractResistances() | -> [Txt]                          |
+          ------------------------                                   |
+        ____|___________                                             |
+ [Txt],[Txt] -> | sameSet() | -> T/F                                 |
+          -------------                                              |
+        ____|_______________                                         |
+ [Txt],[Txt] -> | containsAll() | -> T/F                             |
+          -----------------                                          |
+        ____|___________________                                     |
+ Txt,[Txt] -> | checkSolutionLeak() | -> Obj                         |
+          ----------------------                                     |
+        ____|_________________________                               |
+ Txt,Txt -> | checkFalseConfirmation() | -> Obj                      |
+          ---------------------------                                |
+        ____|________________________________                        |
+        | getFalseConfirmationInstruction() | -> Txt                 |
+          ------------------------------------                       |
+        ____|_______________________                                 |
+   Txt -> | checkStateReveal() | -> Obj                              |
+          --------------------                                       |
+        ____|_____________________________                           |
+        | getStateRevealInstruction() | -> Txt                       |
+          ------------------------------                             |
+        ____|_________________________                               |
+        | getStrongerInstruction() | -> Txt                          |
+          ---------------------------                                |
+        ____|_______________________                                 |
+   Txt -> | getForbiddenScripts() | -> [Txt]                         |
+          ------------------------                                   |
+        ____|____________________                                    |
+ Txt,Txt -> | checkLanguageMix() | -> Obj                            |
+          --------------------                                       |
+        ____|______________________________                          |
+        | getLanguageMixInstruction() | -> Txt                       |
+          ------------------------------                             |
+        ____|_________________________                               |
+ Txt,[Txt] -> | checkAnswerDirective() | -> Obj                      |
+          ------------------------                                   |
+        ____|_________________________________                       |
+        | getAnswerDirectiveInstruction() | -> Txt                   |
+          ----------------------------------                         |
+        ____|______________________________                          |
+ Txt,[Txt],[Txt] -> | checkNewElementIntroduction() | -> Obj         |
+          --------------------------------                           |
+        ____|______________________________________                  |
+        | getNewElementIntroductionInstruction() | -> Txt            |
+          -----------------------------------------                  |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-// Phrases that indicate the tutor is revealing the solution directly
 const revealPhrases = [
   "la respuesta es", "la respuesta correcta es", "las resistencias son", "las resistencias correctas son", "la solución es",
   "deberías responder", "la respuesta sería", "las resistencias por las que circula corriente son",
@@ -10,7 +70,13 @@ const revealPhrases = [
   "las resistencias que afectan", "las resistencias correctas son", "la respuesta correcta sería",
 ];
 
-// Extract all resistance mentions (R1, R2, ...) 
+/*
+   IN -> ____|________________
+        | extractResistances() | -> [Txt]
+         ------------------------
+      Returns the unique, upper-cased resistance tokens (R1, R2, ...)
+      found in the text, preserving first-seen order.
+*/
 function extractResistances(text) {
   const matches = text.match(/R\d+/gi);
   if (matches == null) {
@@ -29,7 +95,12 @@ function extractResistances(text) {
   return unique;
 }
 
-// Check if two arrays contain the same elements (order doesn't matter)
+/*
+   IN -> ____|________
+        | sameSet() | -> T/F
+         -------------
+      True when both arrays hold the same elements regardless of order.
+*/
 function sameSet(a, b) {
   if (a.length !== b.length) {
     return false;
@@ -44,7 +115,12 @@ function sameSet(a, b) {
   return true;
 }
 
-// Check if all elements of subset exist in superset
+/*
+   IN -> ____|____________
+        | containsAll() | -> T/F
+         ----------------
+      True when every element of subset is present in superset.
+*/
 function containsAll(superset, subset) {
   for (let i = 0; i < subset.length; i++) {
     var found = false;
@@ -59,12 +135,18 @@ function containsAll(superset, subset) {
   return true;
 }
 
-// Check if the response reveals the correct answer
+/*
+   IN -> ____|_________________
+        | checkSolutionLeak() | -> Obj
+         ----------------------
+      Reports { leaked, details }: flags a leak when the response names
+      all correct resistances together with a reveal phrase, or lists
+      them all in one affirmative (non-question) sentence.
+*/
 function checkSolutionLeak(response, correctAnswer) {
   const lower = response.toLowerCase();
   const mentioned = extractResistances(response);
 
-  // If the response doesn't mention all correct resistances, no leak possible
   if (!containsAll(mentioned, correctAnswer)) {
     return {
       leaked: false,
@@ -72,7 +154,6 @@ function checkSolutionLeak(response, correctAnswer) {
     };
   }
 
-  // Check 1: explicit reveal phrase + all correct resistances mentioned
   for (let i = 0; i < revealPhrases.length; i++) {
     if (lower.includes(revealPhrases[i])) {
       return {
@@ -82,19 +163,14 @@ function checkSolutionLeak(response, correctAnswer) {
     }
   }
 
-  // Check 2: all correct resistances listed together in one sentence (e.g. "R1, R2 y R4")
-  // Build pattern like "R1,?\s*(R2)?\s*y\s*R4" to catch "R1, R2 y R4" style listings
   if (correctAnswer.length >= 2) {
     const sorted = correctAnswer.slice().sort();
-    // Build a regex: R1[,\s]+R2[,\s]+...[\sy]+Rn
     let pattern = sorted[0];
     for (let i = 1; i < sorted.length; i++) {
       pattern += "[,\\s]+(y\\s+)?" + sorted[i];
     }
     const regex = new RegExp(pattern, "i");
     if (regex.test(response)) {
-      // Only flag if the sentence is affirmative (not a question)
-      // Find the sentence containing the match
       const sentences = response.split(/[.!?\n]/);
       for (let i = 0; i < sentences.length; i++) {
         if (regex.test(sentences[i]) && !sentences[i].includes("?")) {
@@ -110,7 +186,6 @@ function checkSolutionLeak(response, correctAnswer) {
   return { leaked: false, details: "" };
 }
 
-// Affirmative phrases that indicate the tutor is confirming a student's statement
 const confirmPhrases = [
   "perfecto", "correcto", "exacto", "exactamente", "muy bien",
   "eso es", "así es", "bien hecho", "en efecto", "efectivamente",
@@ -118,7 +193,14 @@ const confirmPhrases = [
   "buena observación", "buen trabajo",
 ];
 
-// Check if the tutor is incorrectly confirming a wrong answer
+/*
+   IN -> ____|_____________________
+        | checkFalseConfirmation() | -> Obj
+         --------------------------
+      Reports { confirmed, details }: when the classification is a wrong
+      answer/concept/single word, flags a confirmation phrase appearing
+      in the first 60 characters of the response.
+*/
 function checkFalseConfirmation(response, classification) {
   const checkTypes = ["wrong_answer", "wrong_concept", "single_word"];
   var shouldCheck = false;
@@ -134,7 +216,6 @@ function checkFalseConfirmation(response, classification) {
 
   const lower = response.toLowerCase().trim();
 
-  // Check if response starts with or contains a confirmation phrase in the first 60 chars
   const firstPart = lower.substring(0, 60);
   for (let i = 0; i < confirmPhrases.length; i++) {
     if (firstPart.includes(confirmPhrases[i])) {
@@ -148,7 +229,12 @@ function checkFalseConfirmation(response, classification) {
   return { confirmed: false, details: "" };
 }
 
-// Instruction to append when a false confirmation is detected
+/*
+       ____|____________________________
+      | getFalseConfirmationInstruction() | -> Txt
+       ------------------------------------
+      Corrective instruction appended on a false-confirmation retry.
+*/
 function getFalseConfirmationInstruction() {
   return (
     "\n\nCRÍTICO: Tu respuesta anterior CONFIRMÓ como correcto algo que el alumno dijo MAL. " +
@@ -158,9 +244,8 @@ function getFalseConfirmationInstruction() {
   );
 }
 
-// Phrases that reveal the state of a specific resistance (internal topology info)
 const stateRevealPatterns = [
-  "está cortocircuitad",    // cortocircuitada/cortocircuitado
+  "está cortocircuitad",
   "está en cortocircuito",
   "está en circuito abierto",
   "está en abierto",
@@ -179,8 +264,14 @@ const stateRevealPatterns = [
   "mismo punto",
 ];
 
-// Check if the response reveals the internal state of a specific resistance
-// e.g. "R5 está cortocircuitada" or "recuerda que R3 está en circuito abierto"
+/*
+   IN -> ____|_______________
+        | checkStateReveal() | -> Obj
+         --------------------
+      Reports { revealed, details }: flags an affirmative sentence that
+      names a resistance together with a state-reveal phrase. Questions
+      are allowed.
+*/
 function checkStateReveal(response) {
   const lower = response.toLowerCase();
   const resistances = extractResistances(response);
@@ -189,11 +280,9 @@ function checkStateReveal(response) {
     return { revealed: false, details: "" };
   }
 
-  // Split into sentences
   const sentences = response.split(/[.!?\n]/);
   for (let i = 0; i < sentences.length; i++) {
     const sentLower = sentences[i].toLowerCase();
-    // Check if this sentence contains a resistance AND a state reveal phrase
     const sentResistances = extractResistances(sentences[i]);
     if (sentResistances.length === 0) {
       continue;
@@ -201,7 +290,6 @@ function checkStateReveal(response) {
 
     for (let j = 0; j < stateRevealPatterns.length; j++) {
       if (sentLower.includes(stateRevealPatterns[j])) {
-        // Allow if it's a question (the tutor is asking, not telling)
         if (sentences[i].trim().endsWith("?") || sentLower.includes("¿")) {
           continue;
         }
@@ -216,7 +304,12 @@ function checkStateReveal(response) {
   return { revealed: false, details: "" };
 }
 
-// Instruction to append when the tutor reveals the state of a resistance
+/*
+       ____|_______________________
+      | getStateRevealInstruction() | -> Txt
+       ------------------------------
+      Corrective instruction appended on a state-reveal retry.
+*/
 function getStateRevealInstruction() {
   return (
     "\n\nCRÍTICO: Tu respuesta anterior REVELÓ el estado de una resistencia directamente (cortocircuitada, abierto, etc.). " +
@@ -227,7 +320,12 @@ function getStateRevealInstruction() {
   );
 }
 
-// Instruction to append to the prompt when a leak is detected, so the LLM regenerates without revealing
+/*
+       ____|____________________
+      | getStrongerInstruction() | -> Txt
+       --------------------------
+      Corrective instruction appended on a solution-leak retry.
+*/
 function getStrongerInstruction() {
   return (
     "\n\nCRÍTICO: Tu respuesta anterior reveló la solución directamente. " +
@@ -237,9 +335,6 @@ function getStrongerInstruction() {
   );
 }
 
-// --- Language mixing guardrail ---
-
-// Unicode script patterns for detecting unexpected characters in responses
 var SCRIPT_PATTERNS = {
   cjk: /[\u4E00-\u9FFF\u3400-\u4DBF]/g,
   cyrillic: /[\u0400-\u04FF]/g,
@@ -250,13 +345,19 @@ var SCRIPT_PATTERNS = {
   kana: /[\u3040-\u309F\u30A0-\u30FF]/g,
 };
 
-// Languages that use Latin script
 var LATIN_LANGS = {
   af:1, ca:1, cs:1, cy:1, da:1, de:1, en:1, es:1, et:1, eu:1, fi:1, fr:1,
   ga:1, gl:1, hr:1, hu:1, id:1, is:1, it:1, lt:1, lv:1, ms:1, nl:1, no:1,
   pl:1, pt:1, ro:1, sk:1, sl:1, sq:1, sv:1, tl:1, tr:1, vi:1,
 };
 
+/*
+   IN -> ____|___________________
+        | getForbiddenScripts() | -> [Txt]
+         ------------------------
+      Returns the Unicode-script names that must not appear in a
+      response written in the given language code.
+*/
 function getForbiddenScripts(langCode) {
   if (LATIN_LANGS[langCode]) {
     return ["cjk", "cyrillic", "arabic", "thai", "devanagari", "hangul", "kana"];
@@ -270,7 +371,14 @@ function getForbiddenScripts(langCode) {
   return [];
 }
 
-// Check if the response contains characters from scripts that don't match the user's language
+/*
+   IN -> ____|________________
+        | checkLanguageMix() | -> Obj
+         --------------------
+      Reports { mixed, details, detectedScript }: flags a response that
+      contains 2+ characters from a script forbidden for the user's
+      language.
+*/
 function checkLanguageMix(response, userLangCode) {
   if (!userLangCode || typeof response !== "string") {
     return { mixed: false, details: "" };
@@ -294,7 +402,12 @@ function checkLanguageMix(response, userLangCode) {
   return { mixed: false, details: "" };
 }
 
-// Instruction to append when language mixing is detected
+/*
+       ____|______________________
+      | getLanguageMixInstruction() | -> Txt
+       ------------------------------
+      Corrective instruction appended on a language-mix retry.
+*/
 function getLanguageMixInstruction() {
   return (
     "\n\nCRITICAL: Your previous response MIXED LANGUAGES — you switched to a completely different language mid-response. " +
@@ -304,54 +417,47 @@ function getLanguageMixInstruction() {
   );
 }
 
-// --- Answer directive guardrail ---
-// Detects when the tutor tells/suggests the student to consider, analyze, or look at
-// a specific element of the correct answer — this gives away part of the solution.
-// Generic: works for any topic (resistances, capacitors, voltages, concepts, etc.)
-
 const directivePhrases = [
-  // Spanish — affirmative
   "no olvides", "no te olvides", "recuerda que", "recuerda considerar",
   "considera ", "analiza ", "piensa en ", "ten en cuenta ",
   "fíjate en ", "también deberías", "deberías considerar", "deberías analizar",
   "no dejes de considerar", "hay que tener en cuenta",
-  // Spanish — question form (equally bad: directs to specific element)
   "por qué no consideraste", "por qué no has considerado", "por qué no incluyes",
   "por qué no mencionaste", "por qué no has mencionado", "por qué no incluiste",
   "qué pasa con ", "qué ocurre con ", "qué hay de ", "y qué hay de ",
   "has pensado en ", "has considerado ",
-  // English — affirmative
   "don't forget", "do not forget", "don\u2019t forget", "consider ",
   "analyze ", "analyse ", "think about ", "look at ",
   "take into account", "remember that ", "you should also",
   "you should consider", "also consider", "keep in mind",
-  // English — question form
   "why didn't you consider", "why didn't you include", "why didn't you mention",
   "what about ", "what happens with ", "have you considered ",
   "have you thought about ", "did you consider ",
-  // French — affirmative
   "n'oublie pas", "ne oublie pas", "n'oubliez pas", "ne oubliez pas",
   "consid\u00e8re ", "consid\u00e9rer ", "pense \u00e0 ", "pensez \u00e0 ",
   "regarde ", "regardez ", "analyse ", "analysez ",
   "tiens compte", "tenez compte", "tu devrais aussi", "vous devriez aussi",
   "rappele", "rappelle", "il faut aussi", "il faut consid\u00e9rer",
-  // French — question form
   "pourquoi tu n'as pas considéré", "pourquoi n'as-tu pas", "qu'en est-il de ",
   "et pour ", "as-tu pensé à ",
-  // German
   "vergiss nicht", "denk an ", "denke an ", "betrachte ",
   "analysiere ", "ber\u00fccksichtige ", "du solltest auch",
   "was ist mit ", "hast du an ",
-  // Italian
   "non dimenticare", "non dimenticarti", "considera ", "analizza ",
   "pensa a ", "ricorda ", "ricordati di", "tieni conto",
   "che ne dici di ", "hai considerato ",
-  // Catalan
   "no oblidis", "considera ", "analitza ", "pensa en ", "recorda ",
   "per què no has considerat", "què passa amb ",
 ];
 
-// answerElements: array of correct answer items (e.g. ["R1","R2","R4"], ["C1","C3"], etc.)
+/*
+   IN -> ____|_____________________
+        | checkAnswerDirective() | -> Obj
+         ------------------------
+      Reports { directed, details }: flags a sentence that names a
+      correct-answer element together with a directive phrase, in any
+      supported language and including question forms.
+*/
 function checkAnswerDirective(response, answerElements) {
   if (!Array.isArray(answerElements) || answerElements.length === 0) {
     return { directed: false, details: "" };
@@ -362,7 +468,6 @@ function checkAnswerDirective(response, answerElements) {
     lowerElements.push(String(answerElements[k]).toLowerCase());
   }
 
-  // Split into sentences but preserve the delimiter so we can check question marks
   var sentences = response.split(/[.\n]/);
   for (var i = 0; i < sentences.length; i++) {
     var sentLower = sentences[i].toLowerCase();
@@ -376,8 +481,6 @@ function checkAnswerDirective(response, answerElements) {
     }
     if (!foundElement) continue;
 
-    // Check directive phrases — do NOT skip questions, because
-    // "¿por qué no consideraste R4?" is just as bad as "no olvides R4"
     for (var j = 0; j < directivePhrases.length; j++) {
       if (sentLower.includes(directivePhrases[j])) {
         return {
@@ -391,6 +494,12 @@ function checkAnswerDirective(response, answerElements) {
   return { directed: false, details: "" };
 }
 
+/*
+       ____|__________________________
+      | getAnswerDirectiveInstruction() | -> Txt
+       ----------------------------------
+      Corrective instruction appended on an answer-directive retry.
+*/
 function getAnswerDirectiveInstruction() {
   return (
     "\n\nCR\u00cdTICO: Tu respuesta anterior LE DIJO al alumno qu\u00e9 elemento considerar o analizar. " +
@@ -402,10 +511,14 @@ function getAnswerDirectiveInstruction() {
   );
 }
 
-// --- New element introduction guardrail ---
-// Detects when the tutor names an answer element that the student has never mentioned.
-// studentMentioned: array of elements the student has mentioned across the conversation (e.g. ["R1", "R2"])
-// answerElements: the correct answer elements (e.g. ["R1", "R2", "R4"])
+/*
+   IN -> ____|____________________________
+        | checkNewElementIntroduction() | -> Obj
+         --------------------------------
+      Reports { introduced, details }: flags the response when it names
+      a correct-answer element, or any R-token, that the student has
+      never mentioned.
+*/
 function checkNewElementIntroduction(response, studentMentioned, answerElements) {
   if (!Array.isArray(answerElements) || answerElements.length === 0) {
     return { introduced: false, details: "" };
@@ -418,7 +531,6 @@ function checkNewElementIntroduction(response, studentMentioned, answerElements)
     }
   }
 
-  // Check all answer elements: if the tutor names one the student hasn't mentioned, flag it
   var responseLower = response.toLowerCase();
   for (var j = 0; j < answerElements.length; j++) {
     var elem = String(answerElements[j]).toUpperCase().trim();
@@ -430,7 +542,6 @@ function checkNewElementIntroduction(response, studentMentioned, answerElements)
     }
   }
 
-  // Also check non-answer resistances (R\d+) that the student never mentioned
   var responseResistances = extractResistances(response);
   for (var k = 0; k < responseResistances.length; k++) {
     if (!mentionedSet[responseResistances[k]]) {
@@ -444,6 +555,12 @@ function checkNewElementIntroduction(response, studentMentioned, answerElements)
   return { introduced: false, details: "" };
 }
 
+/*
+       ____|________________________________
+      | getNewElementIntroductionInstruction() | -> Txt
+       -----------------------------------------
+      Corrective instruction appended on a new-element retry.
+*/
 function getNewElementIntroductionInstruction() {
   return (
     "\n\nCR\u00cdTICO: Tu respuesta anterior NOMBR\u00d3 una resistencia que el alumno NUNCA ha mencionado. " +

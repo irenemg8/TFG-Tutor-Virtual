@@ -1,42 +1,79 @@
 #!/usr/bin/env node
 "use strict";
 
-/**
- * MODEL BENCHMARK E2E — TFG-Tutor-Virtual
- *
- * Compara un set de modelos LLM PoliGPT en una conversación de 7 turnos
- * (basada en la traza real reportada). Para cada modelo:
- *   1. Edita .env con OLLAMA_MODEL=<modelo>.
- *   2. Reinicia el backend y espera al warmup.
- *   3. Login dev → cookie.
- *   4. Crea interacción nueva sobre Ejercicio 1.
- *   5. Ejecuta los 7 turnos midiendo latencia, chunks, response.
- *   6. Cierra backend y agrega métricas por modelo desde el log.
- *
- * Al final genera:
- *   /tmp/model-benchmark-summary.json
- *   /tmp/model-benchmark-report.md
- *
- * Uso:
- *   node tests/benchmarks/modelBenchmark.js
- *
- * Variables de entorno:
- *   BENCHMARK_MODELS  CSV de modelos (default: qwen2.5:latest,qwen3:8b,llama3.1:8b,gemma3:27b,llama3.3:70b)
- *   BENCHMARK_BACKEND URL backend (default http://localhost:3030)
- *   BENCHMARK_EJ_ID   exerciseId (default: el primer Ejercicio 1 disponible)
- *   BENCHMARK_TIMEOUT timeout SSE por turno en ms (default 180000)
- *
- * Pre-requisitos:
- *   - Backend NO corriendo (el script lo levanta y mata por modelo).
- *   - Frontend ya levantado o no se necesita: el script habla HTTP directo.
- *   - Postgres + Chroma activos (no se reinician).
- *   - DEV_BYPASS_AUTH=true en .env para login dev rápido.
- */
-
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                     MODEL BENCHMARK                   |
+            |  End-to-end harness that compares a set of PoliGPT LLM |
+            |  models over a fixed 7-turn conversation. Per model it |
+            |  swaps OLLAMA_MODEL in .env, restarts the backend,     |
+            |  logs in, runs the turns measuring latency and flags,  |
+            |  then aggregates metrics and writes JSON + Markdown.   |
+        ____|________________                                       |
+   Txt -> | req() | -> Promise<Obj>                                 |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | reqSSE() | -> Promise<Obj>                              |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | parseSetCookie() | -> Txt | null                        |
+          -----------------                                         |
+        ____|________________                                       |
+   void -> | backupEnv() | -> void                                  |
+          -----------------                                         |
+        ____|________________                                       |
+   void -> | restoreEnv() | -> void                                 |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | setEnvModel() | -> void                                 |
+          -----------------                                         |
+        ____|________________                                       |
+   void -> | killExistingBackend() | -> Promise<void>               |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | startBackend() | -> Promise<Obj>                        |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | detectFlags() | -> Obj                                  |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | parseLogStats() | -> [Obj]                              |
+          -----------------                                         |
+        ____|________________                                       |
+   [R] -> | median() | -> R | null                                 |
+          -----------------                                         |
+        ____|________________                                       |
+   [R] -> | p95() | -> R | null                                    |
+          -----------------                                         |
+        ____|________________                                       |
+   [R] -> | avg() | -> R | null                                    |
+          -----------------                                         |
+        ____|________________                                       |
+   N -> | rate() | -> R                                             |
+          -----------------                                         |
+        ____|________________                                       |
+   [Obj] -> | aggregate() | -> Obj                                  |
+          -----------------                                         |
+        ____|________________                                       |
+   R -> | fmtMs() | -> Txt                                          |
+          -----------------                                         |
+        ____|________________                                       |
+   R -> | fmtPct() | -> Txt                                         |
+          -----------------                                         |
+        ____|________________                                       |
+   Obj -> | buildReport() | -> Txt                                  |
+          -----------------                                         |
+        ____|________________                                       |
+   Txt -> | runOneModel() | -> Promise<Obj>                         |
+          -----------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const ENV_PATH = path.join(ROOT, ".env");
@@ -52,10 +89,7 @@ const MODELS = (process.env.BENCHMARK_MODELS ||
 const C = { ok: "\x1b[32m", fail: "\x1b[31m", warn: "\x1b[33m", reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m", cyan: "\x1b[36m" };
 const c = (s, k) => (C[k] || "") + s + C.reset;
 
-// ─── Conversación fija  ──────────
-
 const TURNS = [
-  // Warmup descartado del aggregate (mide cold-start del cluster).
   { tag: "T0_warmup",      msg: "hola",                                     warmup: true },
   { tag: "T1_partial_R1",  msg: "R1" },
   { tag: "T2_concept",     msg: "Está en un divisor de tensión" },
@@ -66,8 +100,12 @@ const TURNS = [
   { tag: "T7_zero",        msg: "A 0" },
 ];
 
-// ─── HTTP helpers ──────────────────────────────────────────────────────────
-
+/*
+   IN -> ____|____
+        | req() | -> Promise<Obj>
+         ----------
+      Performs a buffered HTTP request and resolves status, headers and body (Txt, Txt, Obj).
+   */
 function req(method, urlStr, opts) {
   opts = opts || {};
   const u = new URL(urlStr);
@@ -88,6 +126,12 @@ function req(method, urlStr, opts) {
   });
 }
 
+/*
+   IN -> ____|________
+        | reqSSE() | -> Promise<Obj>
+         -----------
+      Streams an SSE chat response and collects latency, chunks and accumulated text (Txt, Obj).
+   */
 function reqSSE(urlStr, opts) {
   opts = opts || {};
   const u = new URL(urlStr);
@@ -132,14 +176,24 @@ function reqSSE(urlStr, opts) {
   });
 }
 
+/*
+   IN -> ____|______________
+        | parseSetCookie() | -> Txt | null
+         -----------------
+      Collapses a Set-Cookie header into a single cookie string (Txt | [Txt]).
+   */
 function parseSetCookie(h) {
   if (!h) return null;
   const arr = Array.isArray(h) ? h : [h];
   return arr.map((c) => c.split(";")[0]).join("; ");
 }
 
-// ─── .env management ───────────────────────────────────────────────────────
-
+/*
+   IN -> ____|___________
+        | backupEnv() | -> void
+         -------------
+      Copies .env to a one-time backup so it can be restored after the run.
+   */
 function backupEnv() {
   if (!fs.existsSync(ENV_BACKUP_PATH)) {
     fs.copyFileSync(ENV_PATH, ENV_BACKUP_PATH);
@@ -147,6 +201,12 @@ function backupEnv() {
   }
 }
 
+/*
+   IN -> ____|____________
+        | restoreEnv() | -> void
+         --------------
+      Restores .env from the backup and deletes the backup file.
+   */
 function restoreEnv() {
   if (fs.existsSync(ENV_BACKUP_PATH)) {
     fs.copyFileSync(ENV_BACKUP_PATH, ENV_PATH);
@@ -155,6 +215,12 @@ function restoreEnv() {
   }
 }
 
+/*
+   IN -> ____|_____________
+        | setEnvModel() | -> void
+         ---------------
+      Writes OLLAMA_MODEL=<model> into .env, replacing or appending it (Txt).
+   */
 function setEnvModel(model) {
   let txt = fs.readFileSync(ENV_PATH, "utf8");
   if (/^OLLAMA_MODEL=/m.test(txt)) {
@@ -165,8 +231,12 @@ function setEnvModel(model) {
   fs.writeFileSync(ENV_PATH, txt);
 }
 
-// ─── Backend lifecycle ─────────────────────────────────────────────────────
-
+/*
+   IN -> ____|____________________
+        | killExistingBackend() | -> Promise<void>
+         ----------------------
+      Kills any process listening on the backend port.
+   */
 async function killExistingBackend() {
   try {
     await new Promise((resolve) => {
@@ -176,6 +246,12 @@ async function killExistingBackend() {
   } catch (_) {}
 }
 
+/*
+   IN -> ____|______________
+        | startBackend() | -> Promise<Obj>
+         ----------------
+      Spawns the backend detached and waits for health plus warmup (Txt).
+   */
 async function startBackend(model) {
   const logPath = path.join(BACKEND_LOG_DIR, "backend-bench-" + model.replace(/[:\/]/g, "_") + ".log");
   const out = fs.openSync(logPath, "w");
@@ -183,7 +259,6 @@ async function startBackend(model) {
     cwd: ROOT, detached: true, stdio: ["ignore", out, out],
   });
   child.unref();
-  // Wait for health 200 + warmup
   const start = Date.now();
   let warmedUp = false;
   while (Date.now() - start < 90000) {
@@ -202,9 +277,13 @@ async function startBackend(model) {
   return { pid: child.pid, logPath, warmedUp };
 }
 
-// ─── Per-turn metrics derived from response text ───────────────────────────
-
 const NON_LATIN_RE = /[Ѐ-ӿԀ-ԯ԰-֏֐-׿؀-ۿ܀-ݏऀ-ॿ฀-๿぀-ゟ゠-ヿ㄀-ㄯ㐀-䶿一-鿿가-힯＀-￯豈-﫿]/;
+/*
+   IN -> ____|_____________
+        | detectFlags() | -> Obj
+         ---------------
+      Derives per-turn heuristics (multi-question, non-Latin, English, length) from text (Txt).
+   */
 function detectFlags(text) {
   if (!text) return { multiQuestion: false, nonLatin: false, looksEnglish: false, len: 0, qCount: 0 };
   const qCount = (text.match(/\?/g) || []).length;
@@ -221,14 +300,16 @@ function detectFlags(text) {
   };
 }
 
-// ─── Aggregation from backend log ──────────────────────────────────────────
-
+/*
+   IN -> ____|_______________
+        | parseLogStats() | -> [Obj]
+         -----------------
+      Parses backend log lines into per-request metrics for one interaction (Txt, Txt).
+   */
 function parseLogStats(logPath, interaccionId) {
   if (!fs.existsSync(logPath)) return [];
   const log = fs.readFileSync(logPath, "utf8");
   const lines = log.split("\n");
-  // Index by reqId all lines mentioning that req. Group SUMMARY lines per
-  // reqId for the interaccionId we care about.
   const byReq = {};
   for (const ln of lines) {
     const m = ln.match(/\[req(\d+)\]/);
@@ -269,25 +350,53 @@ function parseLogStats(logPath, interaccionId) {
   });
 }
 
-// ─── Aggregate stats ───────────────────────────────────────────────────────
-
+/*
+   IN -> ____|_______
+        | median() | -> R | null
+         ----------
+      Returns the median of a numeric array, or null when empty ([R]).
+   */
 function median(arr) {
   if (arr.length === 0) return null;
   const s = arr.slice().sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
   return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
 }
+/*
+   IN -> ____|____
+        | p95() | -> R | null
+         -------
+      Returns the 95th-percentile value of a numeric array, or null when empty ([R]).
+   */
 function p95(arr) {
   if (arr.length === 0) return null;
   const s = arr.slice().sort((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
 }
+/*
+   IN -> ____|____
+        | avg() | -> R | null
+         -------
+      Returns the arithmetic mean of a numeric array, or null when empty ([R]).
+   */
 function avg(arr) {
   if (arr.length === 0) return null;
   return arr.reduce((s, v) => s + v, 0) / arr.length;
 }
+/*
+   IN -> ____|_____
+        | rate() | -> R
+         --------
+      Returns num/den, or 0 when den is 0 (N, N).
+   */
 function rate(num, den) { return den === 0 ? 0 : num / den; }
 
+/*
+   IN -> ____|__________
+        | aggregate() | -> Obj
+         ------------
+      Aggregates measured turns into latency, retry, violation and drift stats ([Obj]).
+   */
 function aggregate(turns) {
   const measured = turns.filter((t) => !t.warmup && t.ok);
   const lat = measured.map((t) => t.totalMs).filter((x) => x != null);
@@ -320,11 +429,27 @@ function aggregate(turns) {
   };
 }
 
-// ─── Markdown report ───────────────────────────────────────────────────────
-
+/*
+   IN -> ____|______
+        | fmtMs() | -> Txt
+         ---------
+      Formats a millisecond value, using an em dash for null (R).
+   */
 function fmtMs(v) { return v == null ? "—" : Math.round(v) + "ms"; }
+/*
+   IN -> ____|_______
+        | fmtPct() | -> Txt
+         ----------
+      Formats a 0..1 ratio as a whole-number percentage, em dash for null (R).
+   */
 function fmtPct(v) { return v == null ? "—" : (v * 100).toFixed(0) + "%"; }
 
+/*
+   IN -> ____|____________
+        | buildReport() | -> Txt
+         --------------
+      Builds the full Markdown benchmark report from the summary object (Obj).
+   */
 function buildReport(summary) {
   const lines = [];
   lines.push("# Model Benchmark — TFG-Tutor-Virtual");
@@ -391,8 +516,12 @@ function buildReport(summary) {
   return lines.join("\n");
 }
 
-// ─── Main ──────────────────────────────────────────────────────────────────
-
+/*
+   IN -> ____|______________
+        | runOneModel() | -> Promise<Obj>
+         ----------------
+      Runs the full benchmark for a single model and returns its result (Txt, Txt).
+   */
 async function runOneModel(model, ejId) {
   console.log(c("\n══════ MODEL: " + model + " ══════", "bold"));
   setEnvModel(model);
@@ -403,7 +532,6 @@ async function runOneModel(model, ejId) {
     return { name: model, error: "backend warmup timeout", logPath, turns: [] };
   }
 
-  // Login
   let cookie;
   try {
     const login = await req("POST", BACKEND + "/api/auth/dev-login", {
@@ -417,7 +545,6 @@ async function runOneModel(model, ejId) {
     return { name: model, error: "login error " + e.message, logPath, turns: [] };
   }
 
-  // Resolve exerciseId
   let exerciseId = ejId;
   if (!exerciseId) {
     try {
@@ -430,7 +557,6 @@ async function runOneModel(model, ejId) {
   }
   console.log(c("[bench] exerciseId=" + exerciseId, "dim"));
 
-  // Run turns
   const turns = [];
   let interaccionId = null;
   for (let i = 0; i < TURNS.length; i++) {
@@ -457,15 +583,11 @@ async function runOneModel(model, ejId) {
     });
   }
 
-  // Pull log stats per req for this interaccion
   const reqStats = parseLogStats(logPath, interaccionId);
-  // Match by order — assume reqs in log appear in the same order as turns,
-  // since this script is the only client during the run.
   for (let i = 0; i < turns.length && i < reqStats.length; i++) {
     Object.assign(turns[i], reqStats[i]);
   }
 
-  // Stop backend
   await killExistingBackend();
 
   return {
@@ -499,9 +621,7 @@ async function runOneModel(model, ejId) {
     let ejId = null;
     for (const model of MODELS) {
       const result = await runOneModel(model, ejId);
-      // Cache exerciseId from the first successful run.
       if (!ejId && result.turns.length > 0 && result.warmedUp) {
-        // We didn't capture exerciseId in result; first model resolves it.
       }
       summary.models.push(result);
       const a = result.aggregate;
@@ -525,7 +645,6 @@ async function runOneModel(model, ejId) {
   console.log(c("\n✔ JSON  → " + jsonPath, "ok"));
   console.log(c("✔ Report → " + mdPath, "ok"));
   console.log("");
-  // Print quick summary table to stdout too
   const lines = buildReport(summary).split("\n");
   const tableStart = lines.findIndex((l) => l.startsWith("| Modelo"));
   if (tableStart >= 0) {

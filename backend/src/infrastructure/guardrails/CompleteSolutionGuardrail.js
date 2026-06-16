@@ -13,29 +13,38 @@ const {
 
 const confirmPhrases = getAllPatterns(confirmDict);
 
-/**
- * Semantic guardrail: blocks the tutor from validating a wrong PART of the
- * student's answer, even when the response doesn't open with a generic
- * confirmation phrase.
- *
- * Triggers when EITHER of these holds:
- *   1. The student NEGATED an element that IS in the correct answer
- *      (e.g. "R4 no contribuye" when correctAnswer includes R4).
- *   2. The student PROPOSED an element that is NOT in the correct answer
- *      (e.g. "R3" when correctAnswer = ["R1","R2","R4"]).
- *
- * In either case, ANY opening confirmation in the tutor response is wrong —
- * the tutor must redirect with a Socratic question, not validate.
- *
- * Difference vs FalseConfirmationGuardrail: FalseConfirmation only fires when
- * the WHOLE answer is wrong (classification = wrong_answer). This one fires
- * when ANY PART is wrong — which catches cases the classifier marks as
- * partial_correct or wrong_answer with partial elements right.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |               COMPLETESOLUTIONGUARDRAIL              |
+            |  Guardrail adapter (IGuardrail). Catches the tutor     |
+            |  validating a wrong PART of the answer: the student    |
+            |  negated a correct element or proposed a wrong one,    |
+            |  yet the response opens with a confirmation. Fires on  |
+            |  partial errors that FalseConfirmation (whole-wrong)   |
+            |  misses.                                               |
+        ____|_____________________                                   |
+        | check() | -> Obj    (reads correctAnswer, proposed, negated)|
+        -----------                                                  |
+        ____|_______________________                                 |
+        | surgicalFix() | -> Obj | null          (reads response)    |
+        -----------------                                            |
+        ____|___________________                                     |
+        | buildRetryHint() | -> Txt              (reads ctx)         |
+        --------------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class CompleteSolutionGuardrail extends IGuardrail {
   get id() { return "complete_solution"; }
   get severity() { return "high"; }
 
+  /*
+   Txt, Obj -> ____|_________
+              | check() | -> Obj
+               -----------
+      True (violated) when, given a wrongly-negated or wrongly-proposed
+      element, the response head opens with a non-negated confirmation.
+  */
   check(response, ctx) {
     if (typeof response !== "string") return { violated: false };
     const correctAnswer = (ctx && ctx.correctAnswer) || [];
@@ -44,12 +53,6 @@ class CompleteSolutionGuardrail extends IGuardrail {
     const proposed = (ctx && Array.isArray(ctx.proposed)) ? ctx.proposed : [];
     const negated = (ctx && Array.isArray(ctx.negated)) ? ctx.negated : [];
 
-    // BUG-G3 (2026-06-10): membership was tested with raw case-sensitive
-    // indexOf, so a correctly-proposed element whose casing differed from
-    // correctAnswer (e.g. proposed "r4" vs correct "R4" — happens if an
-    // exercise stores its answer in lower/mixed case) was mis-read as
-    // "wrongly proposed" and fired a false positive. Normalize both sides
-    // (uppercase + trim) before comparing; keep original casing in the output.
     const norm = function (x) { return typeof x === "string" ? x.toUpperCase().trim() : x; };
     const correctSet = correctAnswer.map(norm);
     const wronglyNegated = negated.filter(function (e) {
@@ -88,9 +91,15 @@ class CompleteSolutionGuardrail extends IGuardrail {
     return { violated: false };
   }
 
+  /*
+   Txt, Obj -> ____|_______________
+              | surgicalFix() | -> Obj | null
+               -----------------
+      Strips the opening confirmation and prepends a "wrong" intermediate
+      phrase. Idempotent: bails out if already prefixed or nothing stripped.
+  */
   surgicalFix(response, ctx) {
     if (typeof response !== "string") return null;
-    // NS-34: idempotency — same rationale as FalseConfirmationGuardrail.
     if (startsWithIntermediatePhrase(response)) return { applied: false, text: response };
     const lang = (ctx && ctx.lang) || "es";
     const { removeOpeningConfirmation } = require("../../domain/services/rag/guardrails");
@@ -104,11 +113,14 @@ class CompleteSolutionGuardrail extends IGuardrail {
     return { applied: true, text: fixed, before: response, after: fixed };
   }
 
+  /*
+   Txt, Obj -> ____|___________________
+              | buildRetryHint() | -> Txt
+               --------------------
+      Derives the wrongly-negated/proposed sets from ctx (the same cross
+      check() performs) and returns the complete-solution instruction.
+  */
   buildRetryHint(lang, ctx) {
-    // Review C9 (2026-06-11): ctx.wronglyNegated/wronglyProposed were never
-    // populated by guardrailAgent, so the retry hint always degraded to the
-    // generic wording. Derive them here from what the ctx DOES carry — the
-    // same cross check() performs.
     const correct = ((ctx && ctx.correctAnswer) || []).map(function (x) { return String(x).toUpperCase(); });
     const proposed = ((ctx && ctx.proposed) || []).map(function (x) { return String(x).toUpperCase(); });
     const negated = ((ctx && ctx.negated) || []).map(function (x) { return String(x).toUpperCase(); });

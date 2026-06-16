@@ -1,33 +1,6 @@
 #!/usr/bin/env node
 "use strict";
 
-/**
- * Smoke E2E para los acceptance criteria de NS-1..NS-5.
- *
- * Requisitos previos:
- *   - Backend corriendo en http://localhost:3030 con DEV_BYPASS_AUTH=true,
- *     DEBUG_DUMP_CONTEXT=1, DEBUG_DUMP_PATH=/tmp/tv_dump.
- *   - PostgreSQL re-seedado con seed_ejercicios_local.js --reset.
- *   - Ollama UPV alcanzable (la primera ronda calienta el modelo).
- *
- * El script:
- *   1. dev-login para crear usuario demo + cookie de sesión.
- *   2. lista ejercicios.
- *   3. para cada ejercicio (1..7) abre /api/ollama/chat/stream con un
- *      mensaje neutro, mide:
- *         - timeToFirstChunk    (NS-2)
- *         - chunksReceived      (NS-2)
- *         - sawReplaceEnvelope  (NS-2)
- *         - sawDoneEnvelope     (NS-2)
- *         - finalText length    (NS-1+NS-2 sanity)
- *   4. inspecciona el último dump _prompt.txt y _summary.txt:
- *         - NS-1: ningún '(not defined)'
- *         - NS-3: retrievalTimedOut + budgetMs trazados
- *   5. resume PASS/FAIL por NS y termina con código != 0 si algo falla.
- *
- * Uso:  node tests/smoke/ns-1-5-acceptance.js
- */
-
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -36,7 +9,51 @@ const BACKEND = process.env.SMOKE_BACKEND || "http://localhost:3030";
 const DUMP_DIR = process.env.SMOKE_DUMP || "/tmp/tv_dump";
 const FIRST_TOKEN_BUDGET_MS = Number(process.env.SMOKE_FTB_MS || 5000);
 
-// minimal http helpers (no third-party deps to keep the smoke self-contained)
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                NS-1..NS-5 SMOKE ACCEPTANCE            |
+            |  End-to-end smoke for the NS-1..NS-5 acceptance        |
+            |  criteria. Logs in, lists exercises, streams a neutral |
+            |  message per exercise measuring chunk timing, then     |
+            |  inspects the prompt/summary dumps and rolls up        |
+            |  PASS/FAIL per NS.                                     |
+        ____|________________                                       |
+   Txt -> | req() | -> Promise<Obj>                                 |
+          -----------------                                         |
+        ____|________________                                       |
+        | reqSSE() | -> Promise<Obj>                                |
+        ----------------------                                      |
+        ____|________________                                       |
+        | parseSetCookie() | -> Txt | null                          |
+        ----------------------                                      |
+        ____|________________                                       |
+        | findLatestDump() | -> Obj                                 |
+        ----------------------                                      |
+        ____|________________                                       |
+        | login() | -> Promise<Obj>                                 |
+        ----------------------                                      |
+        ____|________________                                       |
+        | listExercises() | -> Promise<[Obj]>                       |
+        ----------------------                                      |
+        ____|________________                                       |
+        | chat() | -> Promise<Obj>                                  |
+        ----------------------                                      |
+        ____|________________                                       |
+        | color() | -> Txt                                          |
+        ----------------------                                      |
+        ____|________________                                       |
+        | main() | -> Promise<void>                                 |
+        ----------------------                                      |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+   IN -> ____|________
+        | req() | -> Promise<Obj>
+         ----------
+      Performs a buffered HTTP request and resolves with status, headers and body.
+   */
 function req(method, urlStr, opts) {
   opts = opts || {};
   const u = new URL(urlStr);
@@ -67,7 +84,12 @@ function req(method, urlStr, opts) {
   });
 }
 
-// SSE consumer that surfaces per-envelope events with timing info.
+/*
+   IN -> ____|________
+        | reqSSE() | -> Promise<Obj>
+         ----------
+      Consumes a streaming SSE response, surfacing per-envelope events with timing info.
+   */
 function reqSSE(urlStr, opts) {
   opts = opts || {};
   const u = new URL(urlStr);
@@ -143,6 +165,12 @@ function reqSSE(urlStr, opts) {
   });
 }
 
+/*
+   IN -> ____|________
+        | parseSetCookie() | -> Txt | null
+         ----------
+      Joins the cookie name=value pairs from a Set-Cookie header into a single Cookie string.
+   */
 function parseSetCookie(header) {
   if (!header) return null;
   const arr = Array.isArray(header) ? header : [header];
@@ -151,6 +179,12 @@ function parseSetCookie(header) {
   return pieces.join("; ");
 }
 
+/*
+   IN -> ____|________
+        | findLatestDump() | -> Obj
+         ----------
+      Finds the prompt and summary dump filenames matching a given request id.
+   */
 function findLatestDump(reqId) {
   const files = fs.readdirSync(DUMP_DIR).filter((f) => f.includes(reqId));
   return {
@@ -159,6 +193,12 @@ function findLatestDump(reqId) {
   };
 }
 
+/*
+   IN -> ____|________
+        | login() | -> Promise<Obj>
+         ----------
+      Performs dev-login and resolves with the session cookie and user object.
+   */
 async function login() {
   const r = await req("POST", `${BACKEND}/api/auth/dev-login`, {
     headers: { "Content-Type": "application/json" },
@@ -170,6 +210,12 @@ async function login() {
   return { cookie, user };
 }
 
+/*
+   IN -> ____|________
+        | listExercises() | -> Promise<[Obj]>
+         ----------
+      Fetches and parses the list of exercises for the authenticated session.
+   */
 async function listExercises(cookie) {
   const r = await req("GET", `${BACKEND}/api/ejercicios`, {
     headers: { cookie },
@@ -178,6 +224,12 @@ async function listExercises(cookie) {
   return JSON.parse(r.body);
 }
 
+/*
+   IN -> ____|________
+        | chat() | -> Promise<Obj>
+         ----------
+      Opens the streaming chat endpoint for an exercise and resolves with the SSE stats.
+   */
 async function chat(cookie, exerciseId, userMessage) {
   return await reqSSE(`${BACKEND}/api/ollama/chat/stream`, {
     headers: {
@@ -193,11 +245,23 @@ async function chat(cookie, exerciseId, userMessage) {
   });
 }
 
+/*
+   IN -> ____|________
+        | color() | -> Txt
+         ----------
+      Wraps a string in the ANSI escape codes for the named color.
+   */
 function color(s, c) {
   const C = { ok: "\x1b[32m", fail: "\x1b[31m", warn: "\x1b[33m", reset: "\x1b[0m", dim: "\x1b[2m" };
   return (C[c] || "") + s + C.reset;
 }
 
+/*
+   IN -> ____|________
+        | main() | -> Promise<void>
+         ----------
+      Orchestrates the full acceptance run and exits non-zero on any failure.
+   */
 (async function main() {
   console.log("\n=== NS-1..NS-5 SMOKE ACCEPTANCE ===\n");
   const session = await login();
@@ -233,24 +297,16 @@ function color(s, c) {
       continue;
     }
 
-    // Drop the partial: events that aren't proper chunks; the relevant
-    // metric is time to first {chunk} — what the user perceives as the
-    // tutor "starting to type".
     const pass = {
       streamHttp200: stats.status === 200,
       sawDone: stats.sawDone,
       hasFinalText: stats.acc.length > 0 || (stats.doneFullText && stats.doneFullText.length > 0),
-      // NS-2: time to first chunk should be well under the 10-25s of the
-      // pre-fix path. We allow 5s of slack for cold UPV.
       firstChunkUnderBudget:
         stats.firstChunkMs != null && stats.firstChunkMs <= FIRST_TOKEN_BUDGET_MS,
-      // NS-2: streaming should produce many small chunks (vs one big one)
       streamedMultipleChunks: stats.chunkCount > 5,
     };
 
     const dumps = findLatestDump("");
-    // We don't know reqId from the outside — pick the most recent prompt file
-    // by mtime.
     let promptText = "";
     let summary = null;
     try {
@@ -284,7 +340,6 @@ function color(s, c) {
     results.push({ ej: exerciseNum, ok: allOk, stats, pass, summary });
   }
 
-  // Per-NS roll-up
   console.log("\n=== ROLL-UP POR NS ===");
   const ns1 = results.every((r) => r.pass && r.pass.noNotDefined);
   const ns2firstToken = results.every((r) => r.pass && r.pass.firstChunkUnderBudget);
@@ -297,7 +352,6 @@ function color(s, c) {
   console.log(`NS-2 envelope {done:true} llega:                   ${ns2done ? color("PASS", "ok") : color("FAIL", "fail")}`);
   console.log(`NS-3 budget retrievalSliceMs trazado en summary:    ${ns3 ? color("PASS", "ok") : color("FAIL", "fail")}`);
 
-  // NS-4 / NS-5 are static checks done outside this script (git/grep).
   console.log("\n=== ESTADÍSTICAS ===");
   const fchunks = results.filter((r) => r.stats && r.stats.firstChunkMs != null).map((r) => r.stats.firstChunkMs);
   if (fchunks.length > 0) {

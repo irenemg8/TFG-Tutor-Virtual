@@ -7,6 +7,26 @@ const crypto = require("crypto");
 const Ejercicio = require("../../src/domain/entities/Ejercicio");
 const { buildTutorSystemPrompt } = require("../../src/domain/services/promptBuilder");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |            TUTOR CONTEXT DATA-QUALITY SUITE           |
+            |  Validates the production tutorContext JSON and the   |
+            |  Ejercicio.hasValidTutorContext / buildTutorSystemPrompt|
+            |  defenses: required pedagogical fields, no clones and |
+            |  no leaked "(not defined)" placeholders.              |
+        ____|________________                                       |
+   void -> | loadCtxArr() | -> [Obj]                                |
+          -----------------                                         |
+        ____|________________                                       |
+   Obj -> | adaptTutorContextLegacy() | -> Obj                      |
+          -----------------                                         |
+        ____|________________                                       |
+   Obj -> | buildEjercicio() | -> Ejercicio                         |
+          -----------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 const CTX_JSON = path.join(
   __dirname,
   "..",
@@ -17,16 +37,22 @@ const CTX_JSON = path.join(
   "tutorContext_por_ejercicio.json"
 );
 
+/*
+   void -> ____|________
+        | loadCtxArr() | -> [Obj]
+         ----------
+      Reads and parses the production tutorContext JSON file.
+   */
 function loadCtxArr() {
   return JSON.parse(fs.readFileSync(CTX_JSON, "utf8"));
 }
 
-// The JSON file `tutorContext_por_ejercicio.json` is a legacy artifact that
-// still uses Spanish keys (objetivo, modoExperto, respuestaCorrecta, ac_refs).
-// The domain entity TutorContext was renamed to English in commit e2df56e.
-// We translate the legacy keys here so the test loads the production JSON
-// without rewriting the data file or adding a permanent compat shim to the
-// domain entity.
+/*
+   Obj -> ____|________
+        | adaptTutorContextLegacy() | -> Obj
+         ----------
+      Translates the legacy Spanish tutorContext keys into the English ones.
+   */
 function adaptTutorContextLegacy(tc) {
   if (!tc || typeof tc !== "object") return tc;
   return {
@@ -40,6 +66,12 @@ function adaptTutorContextLegacy(tc) {
   };
 }
 
+/*
+   Obj -> ____|________
+        | buildEjercicio() | -> Ejercicio
+         ----------
+      Builds an Ejercicio from a JSON item using the legacy adapter.
+   */
 function buildEjercicio(item) {
   return new Ejercicio({
     id: String(item.ejercicio),
@@ -92,7 +124,6 @@ describe("tutorContext_por_ejercicio.json — pedagogical data quality", () => {
       const ej = buildEjercicio(item);
       const prompt = buildTutorSystemPrompt(ej, "es");
       expect(prompt).not.toMatch(/\(not defined\)/i);
-      // Block headers must appear because every exercise now has data.
       expect(prompt).toContain("OBJECTIVE:");
       expect(prompt).toContain("EXPERT REASONING");
       expect(prompt).toContain("CORRECT ANSWER (ELEMENTS):");
@@ -124,6 +155,12 @@ describe("tutorContext_por_ejercicio.json — pedagogical data quality", () => {
 });
 
 describe("Ejercicio.hasValidTutorContext — completeness checks", () => {
+  /*
+     Obj -> ____|________
+          | build() | -> Ejercicio
+           ----------
+        Builds an Ejercicio with the given tutorContext and fixed metadata.
+     */
   function build(tutorContext) {
     return new Ejercicio({
       id: "x",

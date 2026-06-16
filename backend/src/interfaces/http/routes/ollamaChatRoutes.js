@@ -1,4 +1,3 @@
-// routes/ollamaChatRoutes
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
@@ -9,7 +8,37 @@ const container = require("../../../container");
 const Message = require("../../../domain/entities/Message");
 const { buildTutorSystemPrompt } = require("../../../domain/services/promptBuilder");
 
-// Helper: repos from container (fallback path — orchestrator handles most cases)
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                 OLLAMA CHAT ROUTES                    |
+            |  Legacy Ollama chat router and fallback path used when |
+            |  RAG / the orchestrator do not handle a turn. Exposes  |
+            |  a model warmup, a health check, an SSE streaming chat |
+            |  with a deterministic exact-answer finish, and a non-  |
+            |  streaming start-exercise endpoint. Mounted under      |
+            |  /api/ollama. Endpoints:                              |
+            |     POST /warmup              -> Obj                  |
+            |     GET  /health              -> Obj                  |
+            |     POST /chat/stream         -> SSE void             |
+            |     POST /chat/start-exercise -> Obj                  |
+        ____|________                                                |
+        | repos() | -> Obj | null                  (reads container) |
+        ----------                                                   |
+            |   Helpers: nowMs, mkReqId, dlog, dumpToFile,          |
+            |   isValidObjectId, normalizeBaseUrl, getOllamaBaseUrl,|
+            |   buildSystemPrompt, sseSend, axiosConfigForBaseUrl,  |
+            |   extractResistencias, sameSet,                       |
+            |   isCorrectAnswerForExercise, loadLastMessages         |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+       ____|________
+      | repos() | -> Obj | null    (reads container (Obj))
+       ----------
+    Resolves ejercicio/interaccion/message repositories from the container
+    (fallback path). Returns null when the container is not initialized.
+*/
 function repos() {
   if (!container._initialized) return null;
   return {
@@ -20,28 +49,10 @@ function repos() {
 }
 const { resolveLanguage, getFinishMessages } = require("../../../domain/services/languageManager");
 
-// ⚠️ Recomendación: dotenv se carga UNA vez en index.js.
-// Lo dejo para no romperte nada, pero si ya lo cargas en index.js, puedes quitar esta línea.
 require("dotenv").config();
 
 const router = express.Router();
 
-// =====================
-// Warmup endpoint
-// =====================
-// POST /api/ollama/warmup
-// Fired by the frontend the moment the chat screen mounts, before the
-// student even types. The goal is to pay the model's cold-start latency
-// (LiteLLM loading llama / qwen3 / phi4 into VRAM on the UPV side) in
-// background while the user is still reading the exercise statement, so
-// the first real turn is warm-fast instead of cold-slow.
-//
-// Idempotent: if the model is already resident, PoliGPT returns in <1s.
-// Fire-and-forget on the client; we still return {ok, ms, model} so the
-// browser console can show whether the warm-up actually completed.
-//
-// Disabled with WARMUP_ENABLED=false (default ON when LLM_PROVIDER=poligpt
-// AND when LLM_PROVIDER=ollama; only useful where there is a cold start).
 router.post("/warmup", async function (req, res) {
   const llmCfg = require("../../../infrastructure/llm/config");
   if (process.env.WARMUP_ENABLED === "false") {
@@ -56,8 +67,6 @@ router.post("/warmup", async function (req, res) {
       if (!container._initialized || !container.llmService) {
         return res.status(503).json({ ok: false, error: "LLM service not ready" });
       }
-      // Minimal prompt — PoliGPT bills by tokens and we only care about
-      // forcing the model to load. max_tokens=1, temperature=0.
       await container.llmService.chatCompletion(
         [{ role: "user", content: "ping" }],
         { temperature: 0, numPredict: 1, budgetMs: 30000 }
@@ -67,8 +76,6 @@ router.post("/warmup", async function (req, res) {
       return res.json({ ok: true, ms: ms, provider: "poligpt", model: llmCfg.POLIGPT_MODEL });
     }
 
-    // provider = ollama → same shape as warmupOllamaUPV() in index.js,
-    // but on-demand from the client instead of only at backend boot.
     const url = String(llmCfg.OLLAMA_CHAT_URL).replace(/\/$/, "");
     const model = llmCfg.OLLAMA_MODEL;
     await axios.post(
@@ -92,17 +99,10 @@ router.post("/warmup", async function (req, res) {
     const ms = Date.now() - t0;
     const msg = (err && err.message) || String(err);
     console.warn("[WARMUP] FAILED (" + ms + "ms):", msg);
-    // 502 (bad gateway upstream) — the warmup is best-effort; the frontend
-    // should swallow this and let the first real turn pay the cold start.
     return res.status(502).json({ ok: false, ms: ms, error: msg });
   }
 });
 
-// =====================
-// Config (base)
-// =====================
-
-// Compatibilidad: si tienes OLLAMA_BASE_URL en algún sitio, también lo aceptamos.
 const OLLAMA_API_URL_FALLBACK =
   process.env.OLLAMA_API_URL ||
   process.env.OLLAMA_BASE_URL ||
@@ -111,9 +111,8 @@ const OLLAMA_API_URL_FALLBACK =
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:latest";
 const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || "60m";
 
-// Stream: NO uses axios timeout (timeout=0), usamos un maxTimer propio.
-const OLLAMA_STREAM_MAX_MS = Number(process.env.OLLAMA_STREAM_MAX_MS || 1800000); // 30 min
-const OLLAMA_TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS || 60000); // 60s (NO-stream)
+const OLLAMA_STREAM_MAX_MS = Number(process.env.OLLAMA_STREAM_MAX_MS || 1800000);
+const OLLAMA_TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS || 60000);
 
 const OLLAMA_NUM_PREDICT = Number(process.env.OLLAMA_NUM_PREDICT || 120);
 const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 8192);
@@ -125,30 +124,51 @@ const DEFAULT_START_MESSAGE =
   process.env.DEFAULT_START_MESSAGE ||
   "Quiero empezar el ejercicio. Guíame paso a paso con preguntas socráticas y explícame qué debo analizar primero.";
 
-// Debug
 const DEBUG_OLLAMA = process.env.DEBUG_OLLAMA === "1";
 const DEBUG_DUMP_CONTEXT = process.env.DEBUG_DUMP_CONTEXT === "1";
 const DEBUG_DUMP_PATH = process.env.DEBUG_DUMP_PATH || "./debug_ollama";
 const trace = require("../../../infrastructure/events/pipelineDebugLogger");
 
-// TLS (solo si hiciera falta en DEV)
 const ALLOW_INSECURE_TLS = process.env.OLLAMA_INSECURE_TLS === "1";
 
-// Token fin (para que el frontend lo detecte)
 const FIN_TOKEN = "<END_EXERCISE>";
 
-// =====================
-// Helpers
-// =====================
+/*
+       ____|_________
+      | nowMs() | -> Z
+       ----------
+    Current monotonic time in milliseconds (from process.hrtime).
+*/
 function nowMs() {
   return Number(process.hrtime.bigint() / 1000000n);
 }
+
+/*
+       ____|___________
+      | mkReqId() | -> Txt
+       -----------
+    Generates a short pseudo-random request id for debug correlation.
+*/
 function mkReqId() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
 }
+
+/*
+ Txt, ... -> ____|________
+            | dlog() | -> void
+             ---------
+    Conditional debug logger gated by DEBUG_OLLAMA.
+*/
 function dlog(reqId, ...args) {
   if (DEBUG_OLLAMA) console.log(`[OLLAMA][${reqId}]`, ...args);
 }
+
+/*
+ Txt, Txt, Txt -> ____|_______________
+                 | dumpToFile() | -> void
+                  --------------
+    Writes a labeled debug dump to disk when DEBUG_DUMP_CONTEXT is on.
+*/
 function dumpToFile(reqId, label, content) {
   if (!DEBUG_DUMP_CONTEXT) return;
   if (!fs.existsSync(DEBUG_DUMP_PATH)) fs.mkdirSync(DEBUG_DUMP_PATH, { recursive: true });
@@ -159,23 +179,37 @@ function dumpToFile(reqId, label, content) {
   fs.writeFileSync(filename, content, "utf8");
 }
 
+/*
+ Txt -> ____|__________________
+       | isValidObjectId() | -> T/F
+        ------------------
+    True when x is a legacy ObjectId (24 hex) or a UUID.
+*/
 function isValidObjectId(x) {
   if (typeof x !== "string") return false;
-  // Acepta ObjectId (24 hex chars) o UUID (36 chars con guiones)
   return /^[a-f0-9]{24}$/i.test(x) || /^[0-9a-f-]{36}$/i.test(x);
 }
 
+/*
+ Txt -> ____|___________________
+       | normalizeBaseUrl() | -> Txt
+        -------------------
+    Strips a trailing slash from a base URL; returns "" for non-strings.
+*/
 function normalizeBaseUrl(url) {
   if (!url || typeof url !== "string") return "";
-  return url.replace(/\/$/, ""); // quita "/" final
+  return url.replace(/\/$/, "");
 }
 
-// Decide a qué servidor llamar:
-// 1) override por header (x-llm-mode)
-// 2) LLM_MODE en .env
-// 3) fallback OLLAMA_API_URL
+/*
+ Obj -> ____|___________________
+       | getOllamaBaseUrl() | -> Obj
+        -------------------
+    Chooses the Ollama server to call: x-llm-mode header overrides LLM_MODE
+    env, falling back to OLLAMA_API_URL. Returns { mode, baseUrl }.
+*/
 function getOllamaBaseUrl(req) {
-  const headerMode = String(req.headers["x-llm-mode"] || "").toLowerCase().trim(); // "local" | "upv"
+  const headerMode = String(req.headers["x-llm-mode"] || "").toLowerCase().trim();
   const envMode = String(process.env.LLM_MODE || "").toLowerCase().trim();
   const mode = headerMode || envMode;
 
@@ -197,6 +231,13 @@ function getOllamaBaseUrl(req) {
   return { mode: mode || "default", baseUrl: normalizeBaseUrl(chosen) };
 }
 
+/*
+ Ejercicio, Txt -> ____|____________________
+                  | buildSystemPrompt() | -> Txt
+                   --------------------
+    Builds the tutor system prompt for an exercise + language, falling back
+    to a minimal Socratic prompt when the builder yields empty text.
+*/
 function buildSystemPrompt(ejercicio, lang) {
   let systemPrompt = buildTutorSystemPrompt(ejercicio, lang);
 
@@ -207,13 +248,25 @@ function buildSystemPrompt(ejercicio, lang) {
   return systemPrompt;
 }
 
+/*
+ Obj, Obj -> ____|___________
+            | sseSend() | -> void
+             -----------
+    Writes one SSE data frame with the JSON payload and flushes.
+*/
 function sseSend(res, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
   if (typeof res.flush === "function") res.flush();
 }
 
+/*
+ Txt -> ____|________________________
+       | axiosConfigForBaseUrl() | -> Obj
+        ------------------------
+    Returns axios options for the base URL: an https agent (optionally
+    allowing insecure TLS in DEV) for https targets, otherwise {}.
+*/
 function axiosConfigForBaseUrl(baseUrl) {
-  // Para HTTPS, podemos setear un agent (y opcionalmente permitir TLS inseguro en DEV).
   if (baseUrl.startsWith("https://")) {
     return {
       httpsAgent: new https.Agent({ rejectUnauthorized: !ALLOW_INSECURE_TLS }),
@@ -222,9 +275,12 @@ function axiosConfigForBaseUrl(baseUrl) {
   return {};
 }
 
-// =====================
-// ✅ Validación determinista (respuesta correcta)
-// =====================
+/*
+ Txt -> ____|_____________________
+       | extractResistencias() | -> [Txt]
+        ---------------------
+    Extracts the unique uppercase resistor tokens (R1, R2, ...) from text.
+*/
 function extractResistencias(text) {
   if (typeof text !== "string") return [];
   const matches = text.toUpperCase().match(/\bR\d+\b/g);
@@ -232,6 +288,12 @@ function extractResistencias(text) {
   return [...new Set(matches.map((x) => x.trim()))];
 }
 
+/*
+ [Txt], [Txt] -> ____|___________
+                | sameSet() | -> T/F
+                 -----------
+    True when both arrays contain the same set of normalized tokens.
+*/
 function sameSet(a, b) {
   const A = new Set((a || []).map((x) => String(x).toUpperCase().trim()).filter(Boolean));
   const B = new Set((b || []).map((x) => String(x).toUpperCase().trim()).filter(Boolean));
@@ -240,6 +302,13 @@ function sameSet(a, b) {
   return true;
 }
 
+/*
+ Obj -> ____|___________________________
+       | isCorrectAnswerForExercise() | -> T/F
+        ----------------------------
+    True when the resistor set extracted from userText exactly matches the
+    exercise's configured correctAnswer.
+*/
 function isCorrectAnswerForExercise({ userText, ejercicio }) {
   const correct = ejercicio?.tutorContext?.correctAnswer;
   if (!Array.isArray(correct) || correct.length === 0) return false;
@@ -250,12 +319,6 @@ function isCorrectAnswerForExercise({ userText, ejercicio }) {
   return sameSet(userSet, correct);
 }
 
-// ==============================
-// Logs de arranque (solo informativos). Suprimidos cuando el provider
-// activo es PoliGPT — esta ruta legacy Ollama sigue cargada por compat
-// pero no se usa, y los prints confundían al ver "MODEL=qwen2.5:latest"
-// junto al log real "[Container] LLM provider: poligpt (model=llama)".
-// ==============================
 if ((process.env.LLM_PROVIDER || "ollama").toLowerCase() === "ollama") {
   console.log("[OLLAMA CFG] MODEL =", OLLAMA_MODEL);
   console.log("[OLLAMA CFG] KEEP_ALIVE =", OLLAMA_KEEP_ALIVE);
@@ -277,9 +340,6 @@ if ((process.env.LLM_PROVIDER || "ollama").toLowerCase() === "ollama") {
   console.log("[OLLAMA CFG] insecureTLS =", ALLOW_INSECURE_TLS ? "ON (DEV)" : "OFF");
 }
 
-// ==============================
-// Healthcheck Ollama (según modo)
-// ==============================
 router.get("/health", async (req, res) => {
   const { mode, baseUrl } = getOllamaBaseUrl(req);
 
@@ -302,9 +362,13 @@ router.get("/health", async (req, res) => {
   }
 });
 
-// ==============================
-// Util: lee SOLO últimos N mensajes (ligero)
-// ==============================
+/*
+ Txt -> ____|___________________
+       | loadLastMessages() | -> Promise<[Obj]>
+        -------------------
+    Loads the last HISTORY_MAX_MESSAGES messages for an interaction as
+    {role, content} entries. Returns [] when the container is not ready.
+*/
 async function loadLastMessages(interaccionId) {
   const r = repos();
   if (!r) return [];
@@ -312,27 +376,21 @@ async function loadLastMessages(interaccionId) {
   return msgs.map((m) => ({ role: m.role, content: m.content }));
 }
 
-// ==============================
-// STREAM: /api/ollama/chat/stream
-// ==============================
 router.post("/chat/stream", async (req, res) => {
   const reqId = mkReqId();
   const t0 = nowMs();
 
   const { mode, baseUrl } = getOllamaBaseUrl(req);
 
-  // SSE headers
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
-  // abre SSE
   res.write(": ok\n\n");
   if (typeof res.flush === "function") res.flush();
 
-  // heartbeat
   const hb = setInterval(() => {
     res.write(": ping\n\n");
     if (typeof res.flush === "function") res.flush();
@@ -378,7 +436,6 @@ router.post("/chat/stream", async (req, res) => {
     });
   };
 
-  // Controller para abortar stream (timeout propio)
   const controller = new AbortController();
   const maxTimer = setTimeout(() => {
     if (!aborted) {
@@ -388,10 +445,9 @@ router.post("/chat/stream", async (req, res) => {
   }, OLLAMA_STREAM_MAX_MS);
 
   try {
-    const userId = req.userId; // From session via globalAuth (NEVER from client)
+    const userId = req.userId;
     const { exerciseId, interaccionId, userMessage } = req.body || {};
 
-    // This handler only runs if ragMiddleware called next()
     var traceId = trace.traceRequestStart("ollamaChatRoutes_FALLBACK", {
       userId: userId,
       exerciseId: exerciseId,
@@ -425,7 +481,6 @@ router.post("/chat/stream", async (req, res) => {
       return res.end();
     }
 
-    // Ejercicio
     const tDb0 = nowMs();
     const rx = repos();
     if (!rx) {
@@ -441,7 +496,6 @@ router.post("/chat/stream", async (req, res) => {
       return res.end();
     }
 
-    // Interacción: cargar o crear
     let iid = interaccionId || null;
     if (iid) {
       const exists = await rx.interaccionRepo.existsForUser(iid, userId);
@@ -457,19 +511,14 @@ router.post("/chat/stream", async (req, res) => {
       dlog(reqId, "🆕 interaccion creada", iid);
     }
 
-    // Guardar mensaje user (atómico)
     const text = userMessage.trim();
     await rx.messageRepo.appendMessage(iid, new Message({
       interactionId: iid, role: "user", content: text,
     }));
     await rx.interaccionRepo.updateEndTime(iid, new Date());
 
-    // ============================
-    // ✅ CIERRE DETERMINISTA (SIN LLM)
-    // ============================
     const correctNow = isCorrectAnswerForExercise({ userText: text, ejercicio });
 
-    // Resolve active language from conversation history
     const history = await loadLastMessages(iid);
     const lang = resolveLanguage(history);
 
@@ -499,7 +548,6 @@ router.post("/chat/stream", async (req, res) => {
       return;
     }
 
-    // Construir messages: system + últimos N
     const systemPrompt = buildSystemPrompt(ejercicio, lang);
     const messages = [{ role: "system", content: systemPrompt }, ...history];
 
@@ -512,7 +560,6 @@ router.post("/chat/stream", async (req, res) => {
     dumpToFile(reqId, "system_prompt", systemPrompt);
     dumpToFile(reqId, "messages_json", JSON.stringify(messages, null, 2));
 
-    // Llamada a Ollama stream (NDJSON)
     const ollamaStartMs = nowMs();
     const ollamaResp = await axios.post(
       `${baseUrl}/api/chat`,
@@ -572,7 +619,6 @@ router.post("/chat/stream", async (req, res) => {
 
       buffer += chunk.toString("utf-8");
 
-      // Ollama suele mandar NDJSON con \n. A veces viene \r\n.
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || "";
 
@@ -633,14 +679,11 @@ router.post("/chat/stream", async (req, res) => {
   }
 });
 
-// =======================================
-// start-exercise (NO stream) — compatibilidad
-// =======================================
 router.post("/chat/start-exercise", async (req, res) => {
   const { mode, baseUrl } = getOllamaBaseUrl(req);
 
   try {
-    const userId = req.userId; // From session via globalAuth (NEVER from client)
+    const userId = req.userId;
     const { exerciseId, userMessage } = req.body || {};
 
     if (!isValidObjectId(exerciseId)) {
@@ -657,7 +700,6 @@ router.post("/chat/start-exercise", async (req, res) => {
     const ejercicio = await rx.ejercicioRepo.findById(exerciseId);
     if (!ejercicio) return res.status(404).json({ message: "Ejercicio no encontrado." });
 
-    // First message: no history yet, default to Spanish
     const systemPrompt = buildSystemPrompt(ejercicio, "es");
 
     const interaccion = await rx.interaccionRepo.create({
@@ -668,7 +710,6 @@ router.post("/chat/start-exercise", async (req, res) => {
       interactionId: interaccion.id, role: "user", content: firstMsg,
     }));
 
-    // ✅ Si el primer mensaje ya es respuesta correcta, cerramos determinista también aquí
     if (isCorrectAnswerForExercise({ userText: firstMsg, ejercicio })) {
       const assistant = `${getFinishMessages("es").exactAnswer}${FIN_TOKEN}`;
 

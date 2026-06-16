@@ -2,6 +2,30 @@
 
 const TutorAgent = require("../../src/domain/agents/tutorAgent");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |               TUTOR AGENT - STREAMING                 |
+            |  Test suite for TutorAgent streaming integration.     |
+            |  Verifies it uses chatCompletionStreamWithCallback    |
+            |  when a tokenStreamHandler is set, falls back to      |
+            |  chatCompletion otherwise (or when the adapter lacks  |
+            |  the streaming method), and that a throwing handler   |
+            |  does not abort the LLM call.                         |
+        ____|________________                                       |
+   Obj -> | buildContext() | -> Obj                                 |
+          ----------------                                          |
+        ____|__________________                                     |
+   [Txt] -> | fakeLlmService() | -> Obj                             |
+            ------------------                                      |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+     Obj -> ____|________________
+           | buildContext() | -> Obj
+            ----------------
+        Builds a default tutor execution context, merging any overrides.
+*/
 function buildContext(overrides) {
   const base = {
     userMessage: "no sé",
@@ -28,6 +52,13 @@ function buildContext(overrides) {
   return Object.assign(base, overrides);
 }
 
+/*
+     [Txt] -> ____|__________________
+             | fakeLlmService() | -> Obj
+              ------------------
+        Builds a fake LLM service that replays the scripted tokens through
+        either chatCompletion or the streaming callback, tracking call counts.
+*/
 function fakeLlmService(scriptedTokens) {
   const calls = { chat: 0, stream: 0 };
   return {
@@ -125,7 +156,6 @@ describe("TutorAgent streaming integration", () => {
         this.called++;
         return "fallback text";
       },
-      // chatCompletionStreamWithCallback intentionally absent
     };
     const agent = new TutorAgent({
       llmService: llmNoStream,

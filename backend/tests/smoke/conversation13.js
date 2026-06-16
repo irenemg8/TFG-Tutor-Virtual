@@ -1,21 +1,44 @@
 #!/usr/bin/env node
 "use strict";
 
-/**
- * Smoke de conversación 13-turnos sobre Ej 1 (correctas: R1, R2, R4).
- * Para cada turno: classification, detected ACs, decisión, respuesta,
- * y validaciones pedagógicas concretas.
- */
-
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  CONVERSATION 13-TURN SMOKE           |
+            |  13-turn smoke conversation against exercise 1 (correct|
+            |  R1, R2, R4). For each turn it reports classification, |
+            |  detected ACs, decision and response, then runs        |
+            |  concrete pedagogical validations.                    |
+        ____|________________                                       |
+   Txt -> | req() | -> Promise<Obj>                                 |
+          -----------------                                         |
+        ____|________________                                       |
+        | reqSSE() | -> Promise<Obj>                                |
+        ----------------------                                      |
+        ____|________________                                       |
+        | parseSetCookie() | -> Txt | null                          |
+        ----------------------                                      |
+        ____|________________                                       |
+        | loadLatestDump() | -> Obj | null                          |
+        ----------------------                                      |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const BACKEND = process.env.SMOKE_BACKEND || "http://localhost:3030";
 const DUMP_DIR = process.env.SMOKE_DUMP || "/tmp/tv_dump";
 const C = { ok: "\x1b[32m", fail: "\x1b[31m", warn: "\x1b[33m", reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m" };
 const c = (s, k) => (C[k] || "") + s + C.reset;
 
+/*
+   IN -> ____|________
+        | req() | -> Promise<Obj>
+         ----------
+      Performs a buffered HTTP request and resolves with status, headers and body.
+   */
 function req(method, urlStr, opts) {
   opts = opts || {};
   const u = new URL(urlStr);
@@ -31,6 +54,12 @@ function req(method, urlStr, opts) {
   });
 }
 
+/*
+   IN -> ____|________
+        | reqSSE() | -> Promise<Obj>
+         ----------
+      Consumes a streaming SSE response and resolves with accumulated text and timing stats.
+   */
 function reqSSE(urlStr, opts) {
   opts = opts || {};
   const u = new URL(urlStr);
@@ -68,8 +97,20 @@ function reqSSE(urlStr, opts) {
   });
 }
 
+/*
+   IN -> ____|________
+        | parseSetCookie() | -> Txt | null
+         ----------
+      Joins the cookie name=value pairs from a Set-Cookie header into a single Cookie string.
+   */
 function parseSetCookie(h) { if (!h) return null; const arr = Array.isArray(h) ? h : [h]; return arr.map(c => c.split(";")[0]).join("; "); }
 
+/*
+   IN -> ____|________
+        | loadLatestDump() | -> Obj | null
+         ----------
+      Reads and parses the most recent debug summary dump from the dump directory.
+   */
 function loadLatestDump() {
   try {
     const all = fs.readdirSync(DUMP_DIR).filter(f => f.endsWith("_summary.txt"))
@@ -119,7 +160,6 @@ const TURNS = [
     }).catch(e => ({ error: e.message }));
     if (!interaccionId && t.interaccionId) interaccionId = t.interaccionId;
     process.stdout.write("fc=" + (t.firstChunkMs || "?") + "ms ch=" + (t.chunkCount || 0));
-    // Settle a moment so the dump file exists and is the most recent.
     await new Promise(r => setTimeout(r, 500));
     const dump = loadLatestDump();
     const cls = dump && dump.classification ? dump.classification.type : "?";
@@ -138,16 +178,10 @@ const TURNS = [
   for (const r of results) {
     const issues = [];
     const txt = r.responseText.toLowerCase();
-    // Reglas duras:
-    // No revelar respuesta completa
     if (/r1[, ]+r2[, ]+(y )?r4/.test(txt) && r.turnNo < 10) issues.push("REVELÓ respuesta correcta R1,R2,R4");
-    // No confirmar respuesta incorrecta como "Perfecto/Correcto" cuando no hay justificación válida
     if (/(perfecto|correcto|exacto|muy bien|excelente)/.test(txt) && r.turn.expectClass !== "correct_good_reasoning" && r.turn.expectClass !== "greeting") {
       issues.push("Confirma con elogio pleno cuando classifier=" + r.cls);
     }
-    // No nombrar elementos directamente cuando no hay AC detectada (regla por defecto)
-    // (Excepción: cuando el alumno los acaba de proponer, está OK reconocerlos)
-    // En turn 7 ("R3"), el tutor SÍ debe poder usar la estrategia AC1 sobre R3.
     if (r.fallback) issues.push("FALLBACK del orchestrator");
     if (!r.okClass && r.turn.expectClass !== "correct_good_reasoning") issues.push("Clasificación: esperaba " + r.turn.expectClass + " obtuvo " + r.cls);
     if (r.responseText.length < 15) issues.push("Respuesta vacía o ultra-corta");
@@ -159,7 +193,6 @@ const TURNS = [
     }
   }
 
-  // Anti-repetición: comparar pregunta de turn 5 vs turn 9 (mismo input)
   if (results[4] && results[8]) {
     const q5 = results[4].responseText;
     const q9 = results[8].responseText;
@@ -170,14 +203,12 @@ const TURNS = [
     }
   }
 
-  // FIN_EJERCICIO check: solo debe aparecer en turno 13 si hay 2 prev correct turns
   for (const r of results) {
     if (r.responseText.includes("<FIN_EJERCICIO>")) {
       console.log(c("\nFIN_EJERCICIO emitido en turn " + r.turnNo, r.turnNo >= 10 ? "ok" : "fail"));
     }
   }
 
-  // Latency stats
   const times = results.filter(r => r.t.firstChunkMs != null).map(r => r.t.firstChunkMs);
   if (times.length) console.log(`\nfirstChunk avg=${Math.round(times.reduce((a,b)=>a+b,0)/times.length)}ms min=${Math.min(...times)} max=${Math.max(...times)}`);
 })().catch(e => { console.error("crash:", e); process.exit(2); });

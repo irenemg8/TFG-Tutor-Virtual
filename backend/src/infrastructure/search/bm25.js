@@ -1,21 +1,43 @@
-// In-memory BM25 keyword search over exercise datasets
-
 const config = require("../llm/config");
 
-// In-memory index: { exerciseNum: { docs, avgDl, idf } }
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                          BM25                         |
+            |  In-memory BM25 keyword search over exercise datasets.|
+            |  Holds one index per exercise and scores documents    |
+            |  with the classic BM25 ranking function.              |
+            |                                                       |
+            |        Txt -> | tokenize()   | -> [Txt]               |
+            |   Z, [Obj] -> | loadIndex()  | -> void                |
+            |   [Txt], Obj, R, Obj -> | scoreBM25() | -> R          |
+            |   Txt, Z, Z -> | searchBM25() | -> [Obj]              |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 const indices = {};
 
-// Tokenize text into lowercase words 
-// example: "R1 y R2 dado que forman un divisor de tensión" 
-// result: ["r1", "r2", "dado", "que", "forman", "un", "divisor", "de", "tensión"]
+/*
+   Txt -> ____|____________
+         | tokenize() | -> [Txt]
+          -------------
+      Lowercases the text, splits on whitespace and punctuation, and
+      drops one-character tokens.
+*/
 function tokenize(text) {
   return text
-    .toLowerCase()                   // R1 -> r1
-    .split(/[\s,;.!?()¿¡"]+/)        // [r1, y, r2, ...]
-    .filter((t) => t.length > 1);    // deletes words of one character (y, a, e, i, o, u, ...)
+    .toLowerCase()
+    .split(/[\s,;.!?()¿¡"]+/)
+    .filter((t) => t.length > 1);
 }
 
-// Build BM25 index for an exercise from its student-tutor pairs
+/*
+   Z, [Obj] -> ____|_____________
+              | loadIndex() | -> void
+               --------------
+      Builds and stores the BM25 index for an exercise from its
+      student-tutor pairs, computing average document length and IDF
+      per token.
+*/
 function loadIndex(exerciseNum, pairs) {
   const docs = pairs.map((pair, i) => ({
     tokens: tokenize(pair.student),
@@ -24,23 +46,15 @@ function loadIndex(exerciseNum, pairs) {
     index: i,
   }));
 
-/*------------------------------------------------------
-  BM25 algorithm:
-    IDF(t) = log((N - df + 0.5) / (df + 0.5) + 1)
-    score(q, d) = Σ IDF(t) × (tf × (k1+1)) / (tf + k1 × (1 - b + b × dl/avgDl))
---------------------------------------------------------*/
-
-  // Average document length (avgDl)
   let totalLen = 0;
   for (let i = 0; i < docs.length; i++) {
     totalLen += docs[i].tokens.length;
   }
   const avgDl = totalLen / docs.length;
 
-  // IDF: log((N - df + 0.5) / (df + 0.5) + 1)
   const df = {};
   for (let i = 0; i < docs.length; i++) {
-    const seen = new Set(docs[i].tokens);  // deletes duplicate tokens
+    const seen = new Set(docs[i].tokens);
     const unique = Array.from(seen);
     for (let j = 0; j < unique.length; j++) {
       df[unique[j]] = (df[unique[j]] || 0) + 1;
@@ -49,20 +63,25 @@ function loadIndex(exerciseNum, pairs) {
 
   const N = docs.length;
   const idf = {};
-  const tokens = Object.keys(df);  // array of tokens
+  const tokens = Object.keys(df);
   for (let i = 0; i < tokens.length; i++) {
     const freq = df[tokens[i]];
     idf[tokens[i]] = Math.log((N - freq + 0.5) / (freq + 0.5) + 1);
   }
-  indices[exerciseNum] = {docs, avgDl, idf}; 
+  indices[exerciseNum] = {docs, avgDl, idf};
 }
 
-// Score a single document against a query using BM25 -> Returns the score of the document
+/*
+   [Txt], Obj, R, Obj -> ____|_____________
+                        | scoreBM25() | -> R
+                         --------------
+      Scores one document against the query tokens with the BM25
+      formula IDF(t) x (tf x (k1+1)) / (tf + k1 x (1-b+b x dl/avgDl)).
+*/
 function scoreBM25(queryTokens, doc, avgDl, idf) {
   const {k1, b} = { k1: config.BM25_K1, b: config.BM25_B};
   let score = 0;
 
-  // Term frequency map for the document
   const tf = {};
   for (let i = 0; i < doc.tokens.length; i++) {
     tf[doc.tokens[i]] = (tf[doc.tokens[i]] || 0) + 1;
@@ -81,7 +100,14 @@ function scoreBM25(queryTokens, doc, avgDl, idf) {
   return score;
 }
 
-// Search an exercise index with BM25 -> Returns top results sorted by score (highest first)
+/*
+   Txt, Z, Z -> ____|______________
+               | searchBM25() | -> [Obj]
+                ---------------
+      Tokenizes the query, scores every document in the exercise index
+      and returns the topK results sorted by score (highest first).
+      Returns [] when the exercise has no index.
+*/
 function searchBM25(query, exerciseNum, topK = config.TOP_K_RETRIEVAL) {
   const index = indices[exerciseNum];
   if (index == null) {

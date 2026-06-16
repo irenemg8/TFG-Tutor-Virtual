@@ -2,6 +2,27 @@
 
 const TutoringOrchestrator = require("../../src/domain/agents/orchestrator");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                WHITESPACE NORMALISE                  |
+            |  Test suite for orchestrator._normaliseWhitespace.    |
+            |  Verifies it inserts a space after . ! ? before the   |
+            |  next letter, preserves opening marks ¿ ¡, collapses  |
+            |  double spaces while keeping newlines, splits glued   |
+            |  lowercase->Uppercase (qwen2.5 hallucination), and    |
+            |  leaves short identifiers like R5/V1 untouched.       |
+        ____|_________                                              |
+   void -> | build() | -> Obj                                       |
+           ---------                                                |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+     void -> ____|_________
+            | build() | -> Obj
+             ---------
+        Builds a TutoringOrchestrator wired with no-op stub agents.
+*/
 function build() {
   return new TutoringOrchestrator({
     context: { execute: async () => {} },

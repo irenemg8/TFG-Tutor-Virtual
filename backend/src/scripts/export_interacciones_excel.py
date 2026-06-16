@@ -1,3 +1,52 @@
+"""
+------------------------------------------------------------------------------
+            _________________________________________________________
+            |                EXPORT INTERACCIONES EXCEL             |
+            |  Reads conversation documents from MongoDB, robustly  |
+            |  locates the message list (even when nested), packs   |
+            |  them into User/Assistant turn pairs and exports a    |
+            |  wide Excel table (U1 A1 U2 A2 ...).                   |
+        ____|________________                                        |
+   Date -> | to_iso() | -> Txt | null                                |
+           ------------                                              |
+        ____|_______________                                         |
+        | json_safe() | -> Txt                                       |
+        ---------------                                              |
+        ____|________________                                        |
+        | build_query() | -> dict                                    |
+        ----------------                                             |
+        ____|______________________                                  |
+        | pick_first() | -> Obj | null                               |
+        ---------------                                              |
+        ____|_______________________________                         |
+        | looks_like_message_dict() | -> T/F                         |
+        ----------------------------                                 |
+        ____|____________________________                            |
+        | find_messages_recursive() | -> ([Obj], Txt | null)         |
+        ----------------------------                                 |
+        ____|________________________                                |
+        | get_messages_array() | -> ([Obj], Txt | null)              |
+        ------------------------                                     |
+        ____|_____________________                                   |
+        | normalize_message() | -> dict                              |
+        -----------------------                                      |
+        ____|________________                                        |
+        | role_kind() | -> Txt                                       |
+        ---------------                                              |
+        ____|_________________________                               |
+        | autosize_worksheet() | -> void                             |
+        ------------------------                                     |
+        ____|________________                                        |
+        | pack_pairs() | -> [(Txt, Txt)]                             |
+        ---------------                                              |
+        ____|___________                                             |
+        | main() | -> void                                           |
+        ----------                                                   |
+            |                                                        |
+            |________________________________________________________|
+------------------------------------------------------------------------------
+"""
+
 import os
 import json
 from datetime import datetime
@@ -8,14 +57,10 @@ import pandas as pd
 from pymongo import MongoClient
 
 
-# ---------------------------
-# CONFIG
-# ---------------------------
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("MONGO_DB", "tutorvirtual")
 COLLECTION_NAME = os.getenv("MONGO_COLLECTION", "interaccions")
 
-# opcional: filtrar por fecha (solo si defines DATE_FIELD + START_DATE/END_DATE)
 START_DATE = os.getenv("START_DATE", "").strip()
 END_DATE = os.getenv("END_DATE", "").strip()
 DATE_FIELD = os.getenv("DATE_FIELD", "").strip()
@@ -25,14 +70,17 @@ OUTPUT_XLSX = os.getenv(
     f"interacciones_tabla_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 )
 
-# límite para no crear 300 columnas si alguien escribe muchísimo
-MAX_TURNOS = int(os.getenv("MAX_TURNOS", "40"))  # turnos = pares U/A aprox
+MAX_TURNOS = int(os.getenv("MAX_TURNOS", "40"))
 
 
-# ---------------------------
-# HELPERS
-# ---------------------------
 def to_iso(dt_value):
+    """
+       IN -> Date ____|___________
+                  | to_iso() | -> Txt | null
+                   ------------
+       Converts a datetime, epoch number or string into an ISO-8601 text,
+       falling back to str() when parsing fails; None maps to None.
+    """
     if dt_value is None:
         return None
     if isinstance(dt_value, datetime):
@@ -51,10 +99,24 @@ def to_iso(dt_value):
 
 
 def json_safe(value):
+    """
+       IN -> Obj ____|______________
+                 | json_safe() | -> Txt
+                  ---------------
+       Serializes any value to a UTF-8 JSON string, stringifying objects
+       that are not natively serializable.
+    """
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def build_query():
+    """
+       IN -> ____|________________
+            | build_query() | -> dict
+             ----------------
+       Builds the MongoDB query, adding a date range filter only when both
+       DATE_FIELD and at least one of START_DATE / END_DATE are set.
+    """
     if not (START_DATE or END_DATE) or not DATE_FIELD:
         return {}
     q = {}
@@ -68,16 +130,27 @@ def build_query():
 
 
 def pick_first(d, keys):
+    """
+       IN -> dict, [Txt] ____|______________
+                         | pick_first() | -> Obj | null
+                          ---------------
+       Returns the value of the first key present in the dict with a
+       non-empty value, or None when none match.
+    """
     for k in keys:
         if k in d and d[k] not in (None, ""):
             return d[k]
     return None
 
 
-# ---------------------------
-# DETECCIÓN ROBUSTA DE LISTA DE MENSAJES (aunque esté anidada)
-# ---------------------------
 def looks_like_message_dict(x: dict) -> bool:
+    """
+       IN -> dict ____|___________________________
+                  | looks_like_message_dict() | -> T/F
+                   ----------------------------
+       True when the dict carries at least one key typical of a chat
+       message (role, content, timestamp, ...).
+    """
     if not isinstance(x, dict):
         return False
     msg_keys = {
@@ -88,6 +161,13 @@ def looks_like_message_dict(x: dict) -> bool:
 
 
 def find_messages_recursive(obj, path=""):
+    """
+       IN -> Obj, Txt ____|____________________________
+                      | find_messages_recursive() | -> ([Obj], Txt | null)
+                       ----------------------------
+       Walks the document depth-first looking for the message list, even
+       when nested, and returns it together with its dotted access path.
+    """
     if isinstance(obj, list) and obj:
         if all(isinstance(it, dict) for it in obj) and any(looks_like_message_dict(it) for it in obj):
             return obj, path or "(root_list)"
@@ -113,10 +193,23 @@ def find_messages_recursive(obj, path=""):
 
 
 def get_messages_array(doc):
+    """
+       IN -> Obj ____|_______________________
+                 | get_messages_array() | -> ([Obj], Txt | null)
+                  ------------------------
+       Thin wrapper over find_messages_recursive for a whole document.
+    """
     return find_messages_recursive(doc)
 
 
 def normalize_message(msg):
+    """
+       IN -> Obj ____|_____________________
+                 | normalize_message() | -> dict
+                  -----------------------
+       Maps a heterogeneous message into a canonical dict with role,
+       content, ISO timestamp and the raw JSON.
+    """
     if not isinstance(msg, dict):
         return {"role": None, "content": str(msg), "timestamp": None, "raw": str(msg)}
 
@@ -134,7 +227,11 @@ def normalize_message(msg):
 
 def role_kind(role: str):
     """
-    Normaliza roles típicos a USER / ASSISTANT, si no, UNKNOWN.
+       IN -> Txt ____|_____________
+                 | role_kind() | -> Txt
+                  ---------------
+       Normalizes assorted role labels into USER / ASSISTANT, returning
+       UNKNOWN when the role is empty or unrecognized.
     """
     if not role:
         return "UNKNOWN"
@@ -142,12 +239,18 @@ def role_kind(role: str):
     if r in ["user", "usuario", "alumno", "student", "human"]:
         return "USER"
     if r in ["assistant", "asistente", "tutor", "ia", "ai", "system"]:
-        # ojo: si tienes mensajes "system" y no los quieres en la tabla, luego se filtran
         return "ASSISTANT"
     return "UNKNOWN"
 
 
 def autosize_worksheet(ws, max_rows_scan=2000, max_width=60):
+    """
+       IN -> Worksheet, Z, Z ____|_______________________
+                             | autosize_worksheet() | -> void
+                              ------------------------
+       Freezes the header row and adjusts each column width to its widest
+       scanned cell, capped at max_width.
+    """
     ws.freeze_panes = "A2"
     for col_cells in ws.columns:
         header = col_cells[0].value
@@ -160,12 +263,13 @@ def autosize_worksheet(ws, max_rows_scan=2000, max_width=60):
 
 def pack_pairs(normalized_msgs):
     """
-    Convierte lista de mensajes a pares U/A por orden:
-    - Ignora "system" si aparece.
-    - Si hay varios seguidos del mismo rol, se concatenan.
-    Devuelve lista de pares: [(u_text, a_text), ...]
+       IN -> [dict] ____|________________
+                    | pack_pairs() | -> [(Txt, Txt)]
+                     ---------------
+       Folds the message list into ordered (user, assistant) pairs,
+       dropping system messages, merging consecutive same-role turns and
+       padding orphan turns with empty counterparts.
     """
-    # filtrar system si aparece como role literal
     msgs = []
     for m in normalized_msgs:
         rk = role_kind(m.get("role"))
@@ -173,7 +277,6 @@ def pack_pairs(normalized_msgs):
             continue
         msgs.append({**m, "rk": rk})
 
-    # compactar consecutivos del mismo rol
     compact = []
     for m in msgs:
         txt = (m.get("content") or "").strip()
@@ -189,19 +292,16 @@ def pack_pairs(normalized_msgs):
 
     for m in compact:
         if m["rk"] == "USER":
-            # si había un user sin assistant, lo cerramos con assistant vacío
             if current_user is not None:
                 pairs.append((current_user, ""))
             current_user = m["content"]
         elif m["rk"] == "ASSISTANT":
             if current_user is None:
-                # assistant sin user previo -> lo ponemos como turno 0 con user vacío
                 pairs.append(("", m["content"]))
             else:
                 pairs.append((current_user, m["content"]))
                 current_user = None
         else:
-            # UNKNOWN: lo anexamos al bloque anterior si existe, si no, lo metemos en user vacío
             if current_user is not None:
                 current_user = (current_user + "\n" + m["content"]).strip()
             elif pairs:
@@ -216,17 +316,20 @@ def pack_pairs(normalized_msgs):
     return pairs
 
 
-# ---------------------------
-# MAIN
-# ---------------------------
 def main():
+    """
+       IN -> ____|_______
+            | main() | -> void
+             --------
+       Connects to MongoDB, builds the per-conversation rows, expands them
+       into a wide U/A table and writes it to the output Excel file.
+    """
     client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
     client.admin.command("ping")
 
     col = client[DB_NAME][COLLECTION_NAME]
     query = build_query()
 
-    # 1) Recolectar todas las conversaciones y calcular max nº de pares para construir columnas
     conv_rows = []
     all_pairs = []
     max_pairs = 0
@@ -243,7 +346,6 @@ def main():
 
         msgs, msgs_path = get_messages_array(doc)
 
-        # fallback: si no hay lista, intenta construirla desde campos típicos
         if not msgs:
             user_text = pick_first(doc, ["input", "pregunta", "mensaje_usuario", "userMessage", "user_message", "prompt"])
             ai_text = pick_first(doc, ["output", "respuesta", "mensaje_ia", "assistantMessage", "assistant_message", "respuesta_ia"])
@@ -258,7 +360,6 @@ def main():
         normalized = [normalize_message(m) for m in msgs]
         pairs = pack_pairs(normalized)
 
-        # limitar para que Excel no explote
         if len(pairs) > MAX_TURNOS:
             pairs = pairs[:MAX_TURNOS]
 
@@ -279,7 +380,6 @@ def main():
     if not conv_rows:
         raise SystemExit("No se han encontrado documentos para exportar.")
 
-    # 2) Construir tabla “wide”: U1 A1 U2 A2 ...
     wide_rows = []
     for base, (iid, pairs) in zip(conv_rows, all_pairs):
         row = dict(base)
@@ -293,7 +393,6 @@ def main():
 
     df_wide = pd.DataFrame(wide_rows)
 
-    # Orden columnas: metadata + pares
     meta_cols = [
         "interaccion_id", "usuario_id", "ejercicio_id",
         "inicio", "fin", "num_turnos_user_assistant",
@@ -306,7 +405,6 @@ def main():
     ordered_cols = [c for c in meta_cols if c in df_wide.columns] + [c for c in pair_cols if c in df_wide.columns]
     df_wide = df_wide[ordered_cols]
 
-    # 3) Export a Excel
     with pd.ExcelWriter(OUTPUT_XLSX, engine="openpyxl") as writer:
         df_wide.to_excel(writer, index=False, sheet_name="Tabla_Conversacion")
 

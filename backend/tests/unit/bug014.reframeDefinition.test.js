@@ -1,20 +1,20 @@
 "use strict";
 
-/**
- * BUG-014 (2026-05-03): el regex de _reframeDefinitionRequest tragaba
- * sub-cláusulas como "que es parte de un divisor de tensión?" dentro de
- * preguntas legítimas, sustituyéndolas por la pregunta canned y
- * generando output corrupto con dos ¿ anidados:
- *   "¿Cómo afecta R1...si consideramos ¿Cómo se aplica ese concepto a ESTE circuito?"
- *
- * Tests del refactor que solo aplica el reframe cuando la frase
- * COMPLETA es una pregunta-definición.
- */
-
 const PedagogicalReviewerAgent = require("../../src/domain/agents/pedagogicalReviewerAgent");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |   REFRAME DEFINITION — UNIT TESTS (BUG-014)           |
+            |  Regresses BUG-014 (2026-05-03): the                  |
+            |  _reframeDefinitionRequest regex swallowed sub-clauses |
+            |  like "que es parte de un divisor" inside legitimate   |
+            |  questions, producing corrupt output with nested ¿.    |
+            |  Verifies the reframe only fires when the WHOLE phrase  |
+            |  is a definition-request, across es/val/en.           |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 describe("PedagogicalReviewerAgent._reframeDefinitionRequest (BUG-014)", () => {
-  // No necesitamos deps reales: solo tocamos un método sin estado.
   const a = Object.create(PedagogicalReviewerAgent.prototype);
 
   test("NO toca pregunta legítima con 'que es' en sub-cláusula (BUG-014)", () => {
@@ -22,7 +22,6 @@ describe("PedagogicalReviewerAgent._reframeDefinitionRequest (BUG-014)", () => {
       "¿Cómo afecta R1 al flujo de corriente entre N2 y tierra si consideramos que es parte de un divisor de tensión?";
     const out = a._reframeDefinitionRequest(input, "es");
     expect(out).toBe(input);
-    // No debe contener doble ¿
     const aperturas = (out.match(/¿/g) || []).length;
     expect(aperturas).toBeLessThanOrEqual(1);
   });

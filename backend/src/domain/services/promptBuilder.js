@@ -1,12 +1,34 @@
-// backend/src/utils/promptBuilder.js
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                     PROMPTBUILDER                     |
+            |  Module. Builds the Socratic-tutor system prompt for  |
+            |  an exercise: assembles tone/language/rules, parses   |
+            |  the netlist into a topology summary, sanitises the   |
+            |  expert reasoning and emits only the populated blocks.|
+            |                                                       |
+            |  Obj, Txt -> | buildTutorSystemPrompt() | -> Txt      |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const FIN_TOKEN = "<END_EXERCISE>";
 
+/*
+   X -> ____|___________
+       | safeStr() | -> Txt
+        ------------
+      Returns the trimmed string, or "" when the input is not a string.
+*/
 function safeStr(x) {
   if (typeof x !== "string") return "";
   return x.trim();
 }
 
+/*
+   Obj, [Txt] -> ____|________________
+                | pickFirstStr() | -> Txt
+                 -----------------
+      Returns the first non-empty trimmed value among the given keys, "".
+*/
 function pickFirstStr(obj, keys) {
   for (const k of keys) {
     const v = safeStr(obj?.[k]);
@@ -15,6 +37,12 @@ function pickFirstStr(obj, keys) {
   return "";
 }
 
+/*
+   Txt -> ____|__________
+         | normId() | -> Txt
+          -----------
+      Uppercases and strips all whitespace from an element id.
+*/
 function normId(s) {
   return String(s || "")
     .toUpperCase()
@@ -22,25 +50,39 @@ function normId(s) {
     .trim();
 }
 
-// Element IDs (R1, V1, I3, AC9...) are normalised to uppercase no-whitespace
-// for stable matching. Free-form text answers ("por todas las resistencias
-// circula la misma corriente") must be preserved verbatim, otherwise the
-// system prompt shows an unreadable run-on string and the LLM can't parse it.
+/*
+   Txt -> ____|__________________
+         | normAnswerToken() | -> Txt
+          -------------------
+      Normalises short SPICE-like ids to uppercase no-whitespace, but
+      preserves free-form text answers verbatim.
+*/
 function normAnswerToken(s) {
   const raw = String(s || "").trim();
   if (!raw) return "";
-  // Treat as element ID only when it's short and matches a typical SPICE id.
   if (raw.length <= 6 && /^[A-Za-z]+\d*$/.test(raw)) return normId(raw);
   return raw;
 }
 
+/*
+   [Txt] -> ____|______________
+           | formatList() | -> Txt
+            ---------------
+      Joins the truthy array entries with ", "; "" when empty.
+*/
 function formatList(arr) {
   if (!Array.isArray(arr) || arr.length === 0) return "";
   return arr.filter(Boolean).join(", ");
 }
 
-// Parse netlist to generate an explicit per-resistance topology summary
-// so the LLM doesn't need to reason about circuit topology itself
+/*
+   Txt -> ____|_______________________
+         | buildResistanceSummary() | -> Txt
+          --------------------------
+      Parses the netlist into an internal per-resistance topology summary
+      (sources, connections, detected short circuits, notes); "" when no
+      resistances are found.
+*/
 function buildResistanceSummary(netlist) {
   if (!netlist) return "";
 
@@ -50,19 +92,16 @@ function buildResistanceSummary(netlist) {
   const notes = [];
 
   for (const line of lines) {
-    // Parse resistance lines like "R1 N1 N2 1"
     const rMatch = line.match(/^(R\d+)\s+(\S+)\s+(\S+)/i);
     if (rMatch) {
       resistances.push({ name: rMatch[1].toUpperCase(), node1: rMatch[2], node2: rMatch[3] });
       continue;
     }
-    // Parse voltage sources like "V1 N1 0 1"
     const vMatch = line.match(/^(V\d+)\s+(\S+)\s+(\S+)/i);
     if (vMatch) {
       otherComponents.push(vMatch[1] + ": fuente de tensión entre " + vMatch[2] + " y " + vMatch[3]);
       continue;
     }
-    // Capture notes (switch info, etc.)
     if (line.length > 5) {
       notes.push(line);
     }
@@ -72,16 +111,13 @@ function buildResistanceSummary(netlist) {
 
   let summary = "CIRCUIT TOPOLOGY (internal information, DO NOT reveal to the student):\n";
 
-  // Components
   for (const c of otherComponents) {
     summary += "- " + c + "\n";
   }
 
-  // Resistances with detected states
   for (const r of resistances) {
     let status = "Connected between " + r.node1 + " and " + r.node2;
 
-    // Detect short circuit (both nodes are the same)
     if (r.node1 === r.node2) {
       status += " -> SHORT-CIRCUITED (both terminals at the same node)";
     }
@@ -89,18 +125,24 @@ function buildResistanceSummary(netlist) {
     summary += "- " + r.name + ": " + status + "\n";
   }
 
-  // Notes (switches, etc.)
   for (const note of notes) {
     summary += "- NOTE: " + note + "\n";
   }
 
-  // Add modoExperto reasoning (sanitized version is done later)
   return summary;
 }
 
+/*
+   Obj, Txt -> ____|___________________________
+              | buildTutorSystemPrompt() | -> Txt
+               --------------------------
+      Builds the full Socratic-tutor system prompt for an exercise:
+      merges the language rules, sanitises the expert reasoning, derives
+      the topology summary and concatenates only the populated context
+      blocks with the exercise info.
+*/
 function buildTutorSystemPrompt(ejercicio, lang) {
   lang = lang || "es";
-  // Campos base del ejercicio
   const titulo = pickFirstStr(ejercicio, ["title", "titulo", "nombre", "name"]);
   const enunciado = pickFirstStr(ejercicio, ["statement", "enunciado", "texto", "descripcion"]);
   const concepto = pickFirstStr(ejercicio, ["concept", "concepto", "tema", "topic"]);
@@ -110,31 +152,20 @@ function buildTutorSystemPrompt(ejercicio, lang) {
     : ejercicio?.nivel != null ? String(ejercicio.nivel) : "";
   const imagen = pickFirstStr(ejercicio, ["image", "imagen", "imageUrl", "img"]);
 
-  // TutorContext estructurado
   const tc = ejercicio?.tutorContext || {};
   const objetivo = pickFirstStr(tc, ["objective", "objetivo"]);
   const netlist = pickFirstStr(tc, ["netlist"]);
   const modoExperto = pickFirstStr(tc, ["expertMode", "modoExperto"]);
   const version = tc?.version != null ? String(tc.version) : "";
 
-  // IDs de AC relevantes (solo IDs, no el objeto entero)
   const acRefsRaw = Array.isArray(tc?.acRefs) ? tc.acRefs : (Array.isArray(tc?.ac_refs) ? tc.ac_refs : []);
   const acRefs = acRefsRaw.map(normId).filter(Boolean);
 
-  // ✅ Respuesta correcta (lista cerrada para este ejercicio)
   const correctAnswerRaw = Array.isArray(tc?.correctAnswer)
     ? tc.correctAnswer
     : (Array.isArray(tc?.respuestaCorrecta) ? tc.respuestaCorrecta : []);
   const respuestaCorrecta = correctAnswerRaw.map(normAnswerToken).filter(Boolean);
 
-  // Compact rules — was ~5300 chars before the audit, then ~2700, now ~900,
-  // now ~1200 with language rules re-included in system (post-quality regression).
-  // Trade-off: language rules live HERE again (not in TURN CONTEXT), so the
-  // KV-cache prefix invalidates on language switches. That's fine because
-  // language changes happen at most 1-2 times per session, while the language
-  // directive was getting ignored when buried in TURN CONTEXT — qwen2.5 weights
-  // the system block more strongly, producing more reliable language adherence
-  // and a warmer/consistent tone.
   const { getLanguageRules } = require("./languageManager");
   const langBlock = getLanguageRules(lang);
 
@@ -159,18 +190,15 @@ RULES (always apply):
 - Close ONLY when elements are correct AND justified — then append ${FIN_TOKEN}.
 `.trim();
 
-  // Sanitize modoExperto: remove sentences that directly reveal the answer
   let modoExpertoSafe = modoExperto;
   if (modoExpertoSafe && respuestaCorrecta.length > 0) {
-    // Remove sentences that list the correct answer explicitly
     const sentences = modoExpertoSafe.split(/(?<=[.!?])\s+/);
     const filtered = [];
     for (const s of sentences) {
       const mentioned = (s.match(/R\d+/gi) || []).map(r => r.toUpperCase());
-      // Skip sentence if it contains ALL correct resistances (likely reveals the answer)
       const hasAll = respuestaCorrecta.every(r => mentioned.includes(r));
       if (hasAll && mentioned.length >= respuestaCorrecta.length) {
-        continue; // skip this sentence
+        continue;
       }
       filtered.push(s);
     }
@@ -179,12 +207,6 @@ RULES (always apply):
 
   const resistanceSummary = buildResistanceSummary(netlist);
 
-  // Build the contexto block only with sections that have real data.
-  // Previously we emitted "(not defined)" placeholders that poisoned the
-  // system prompt for exercises with incomplete tutorContext (Ej 2/3/7
-  // before the 2026-05-03 cleanup). The placeholders contradicted the
-  // tutor rules ("CORRECT ANSWER below is your ground truth") and made
-  // the LLM hallucinate. Now: if a field is missing we omit the section.
   const contextoBlocks = [];
   if (objetivo) {
     contextoBlocks.push("OBJECTIVE:\n" + objetivo);

@@ -4,6 +4,13 @@ const IResultadoRepository = require("../../../domain/ports/repositories/IResult
 const Resultado = require("../../../domain/entities/Resultado");
 const Ejercicio = require("../../../domain/entities/Ejercicio");
 
+/*
+   Obj, [Obj] -> ____|________________
+                | rowToDomain() | -> Resultado | null
+                 --------------
+      Maps a resultados row plus its error-entry list into a Resultado
+      entity, translating the Spanish columns. Null when no row.
+*/
 function rowToDomain(row, errors) {
   if (!row) return null;
   return new Resultado({
@@ -20,12 +27,58 @@ function rowToDomain(row, errors) {
   });
 }
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  PGRESULTADOREPOSITORY                |
+            |  Repository adapter implementing IResultadoRepository  |
+            |  on top of PostgreSQL. Persists exercise results and   |
+            |  their child error entries, mapping the Spanish        |
+            |  columns to the domain shape.                          |
+            |                                                       |
+        ____|________________                                       |
+   Pool -> | constructor() | -> PgResultadoRepository (writes attrs)|
+           -----------------                                        |
+            |   pool: Pool (injected pg pool)                       |
+        ____|________                                              |
+   Obj -> | create() | -> Promise<Resultado>          (reads attrs) |
+          ----------                                                |
+        ____|______________                                        |
+   Txt -> | findByUserId() | -> Promise<[Resultado]>  (reads attrs) |
+          --------------                                            |
+        ____|__________________________                            |
+   Txt -> | findByUserIdWithExercise() | -> Promise<[{resultado,ejercicio}]> (reads attrs)|
+          --------------------------                                |
+        ____|___________________________                           |
+   Txt -> | findCompletedExerciseIds() | -> Promise<[Txt]> (reads attrs)|
+          --------------------------                                |
+        ____|________________                                      |
+   Obj -> | findByFilter() | -> Promise<[Resultado]>  (reads attrs) |
+          --------------                                            |
+        ____|_______________________                               |
+   Txt -> | getErrorTagsByUserId() | -> Promise<[Txt]> (reads attrs)|
+          ----------------------                                    |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class PgResultadoRepository extends IResultadoRepository {
+  /*
+   Pool -> ____|________________
+          | constructor() | -> PgResultadoRepository    (writes attribute pool (Pool))
+           -----------------
+      Stores the injected pg connection pool.
+  */
   constructor(pool) {
     super();
     this.pool = pool;
   }
 
+  /*
+   Obj -> ____|________
+         | create() | -> Promise<Resultado>    (reads attribute pool (Pool))
+          ----------
+      Inserts a result and its error entries within a single transaction,
+      returning the created entity.
+  */
   async create(data) {
     const client = await this.pool.connect();
     try {
@@ -66,6 +119,13 @@ class PgResultadoRepository extends IResultadoRepository {
     }
   }
 
+  /*
+   Txt -> ____|______________
+         | findByUserId() | -> Promise<[Resultado]>    (reads attribute pool (Pool))
+          --------------
+      Returns all results of a user with their aggregated error entries,
+      newest first.
+  */
   async findByUserId(userId) {
     const { rows } = await this.pool.query(
       `SELECT r.*, json_agg(json_build_object('label', ee.etiqueta, 'text', ee.texto))
@@ -80,6 +140,13 @@ class PgResultadoRepository extends IResultadoRepository {
     return rows.map((r) => rowToDomain(r, r.errores_arr || []));
   }
 
+  /*
+   Txt -> ____|__________________________
+         | findByUserIdWithExercise() | -> Promise<[{resultado,ejercicio}]>    (reads attribute pool (Pool))
+          --------------------------
+      Returns each result of a user paired with a lightweight Ejercicio
+      built from the joined exercise columns, newest first.
+  */
   async findByUserIdWithExercise(userId) {
     const { rows } = await this.pool.query(
       `SELECT r.*,
@@ -107,6 +174,12 @@ class PgResultadoRepository extends IResultadoRepository {
     }));
   }
 
+  /*
+   Txt -> ____|___________________________
+         | findCompletedExerciseIds() | -> Promise<[Txt]>    (reads attribute pool (Pool))
+          --------------------------
+      Returns the distinct ids of exercises the user has results for.
+  */
   async findCompletedExerciseIds(userId) {
     const { rows } = await this.pool.query(
       "SELECT DISTINCT ejercicio_id FROM resultados WHERE usuario_id = $1",
@@ -115,6 +188,13 @@ class PgResultadoRepository extends IResultadoRepository {
     return rows.map((r) => r.ejercicio_id);
   }
 
+  /*
+   Obj -> ____|________________
+         | findByFilter() | -> Promise<[Resultado]>    (reads attribute pool (Pool))
+          --------------
+      Returns results matching an optional filter (userId, exerciseId,
+      from/to date range), with aggregated error entries, newest first.
+  */
   async findByFilter(filter) {
     const conditions = [];
     const vals = [];
@@ -151,6 +231,12 @@ class PgResultadoRepository extends IResultadoRepository {
     return rows.map((r) => rowToDomain(r, r.errores_arr || []));
   }
 
+  /*
+   Txt -> ____|_______________________
+         | getErrorTagsByUserId() | -> Promise<[Txt]>    (reads attribute pool (Pool))
+          ----------------------
+      Returns the distinct error labels recorded across the user's results.
+  */
   async getErrorTagsByUserId(userId) {
     const { rows } = await this.pool.query(
       `SELECT DISTINCT ee.etiqueta AS label

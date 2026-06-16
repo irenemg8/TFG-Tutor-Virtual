@@ -1,45 +1,58 @@
-// Main agentic RAG pipeline: classifier -> retrieval -> CRAG -> augmentation
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                     RAG PIPELINE                      |
+            |  Main agentic RAG pipeline: classify -> retrieve ->     |
+            |  CRAG -> augment. Builds the prompt augmentation the    |
+            |  tutor LLM consumes, routing each classification to its  |
+            |  retrieval strategy. Infrastructure is injected.       |
+        ____|________________                                       |
+   [Obj] -> | formatExamples()             | -> Txt                 |
+            ---------------------------------                       |
+   [Obj] -> | formatKGContext()            | -> Txt                 |
+            ---------------------------------                       |
+   Obj, [Txt] -> | analyzeStudentElements()  | -> Txt              |
+                 ------------------------------                     |
+   Obj, [Txt], Txt -> | formatClassificationHint() | -> Txt        |
+                      -------------------------------               |
+   Txt, Obj -> | loadStudentHistory()      | -> Promise<Txt>        |
+               ----------------------------                         |
+   Txt -> | extractKeyEntities()           | -> Txt                 |
+          ---------------------------------                         |
+   ... -> | runPipeline()                  | -> Promise<Obj>        |
+          ---------------------------------                         |
+   ... -> | runFullPipeline()              | -> Promise<Obj>        |
+          ---------------------------------                         |
+   Obj -> | createRagPipeline()            | -> Obj                 |
+          ---------------------------------                         |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const { classifyQuery, extractResistances, types } = require("./queryClassifier");
 const { getAllPatterns, conceptKeywords: conceptDict, normalizeToSpanish } = require("../languageManager");
 
-// Infrastructure deps — injected by createRagPipeline() at startup.
-// Never require() infrastructure directly from domain code.
+/* Infrastructure deps injected by createRagPipeline() at startup. Domain code
+   never require()s infrastructure directly. */
 let hybridSearch, searchKG, emitEvent, config;
 
-// Foundational KG concepts to scaffold the tutor's hints when the student is
-// wrong/partial but did NOT use any concept keyword. Picks the building blocks
-// most circuits exercises hinge on.
+/* Foundational KG concepts used to scaffold hints when the student is
+   wrong/partial but used no concept keyword. */
 const SCAFFOLD_CONCEPTS = [
   "serie", "paralelo", "cortocircuito", "circuito abierto",
   "divisor de tensión", "interruptor abierto",
 ];
 
-// Format dataset examples as context for the LLM
+/*
+   [Obj] -> ____|__________________
+           | formatExamples() | -> Txt
+            ------------------
+      Formats the top dataset example (student side only) as a tone reference
+      for the LLM. Returns "" when there are no results.
+*/
 function formatExamples(results) {
   if (results.length === 0) {
     return "";
   }
 
-/*-------------------------------------------------------------------------
-[REFERENCE EXAMPLES]
-The following are examples of how an expert tutor responds...
-
-Example 1:
-Student: "R1 y R2 por el divisor de tensión"
-Tutor: "En un divisor de tensión todos los componentes están en serie..."
-
-Example 2:
-Student: "R5"
-Tutor: "¿Por qué piensas que R5 ...?"
--------------------------------------------------------------------------*/
-
-  // Top-1 only and ONLY the student side as a tone reference. Including the
-  // tutor response inside the prompt made qwen2.5 regurgitate it verbatim —
-  // observed in production where multiple turns produced identical replies
-  // copied from the dataset (e.g. "Razona tu respuesta, para ello piensa por
-  // donde circula la corriente..."). The LLM has its own pedagogical rules
-  // in the system prompt; the example is now just context, not a template.
   const limited = results.slice(0, 1);
   let text = "[STUDENT TONE REFERENCE — for context only, DO NOT copy phrases]\n";
   for (let i = 0; i < limited.length; i++) {
@@ -49,27 +62,19 @@ Tutor: "¿Por qué piensas que R5 ...?"
   return text;
 }
 
-// Format knowledge graph results as context for the LLM
+/*
+   [Obj] -> ____|___________________
+           | formatKGContext() | -> Txt
+            -------------------
+      Formats up to two knowledge-graph entries (truncated reasoning, no
+      verbatim Socratic questions) as internal domain context, kept compact to
+      bound the augmentation size. Returns "" when there are no results.
+*/
 function formatKGContext(kgResults) {
   if (kgResults.length === 0) {
     return "";
   }
 
-/*-------------------------------------------------------------------------
-[DOMAIN KNOWLEDGE]
-Concept: "Dispositivos pueden conectarse en serie y en paralelo"
-Expert reasoning: "En una conexión en serie, los dispositivos se conectan uno tras otro,
-formando un único camino para la corriente..."
-Socratic questions: "¿En un divisor de tensión todos los componentes están conectados en serie?"
-
-Concept: "Un cortocircuito tiene diferencia de potencial cero"
-Expert reasoning: "Cuando un componente está cortocircuitado, la corriente no pasa por él..."
-Socratic questions: "¿Qué ocurre con la corriente cuando un componente está cortocircuitado?"
--------------------------------------------------------------------------*/
-
-  // Top-2 max + truncated reasoning + skip socratic-questions verbatim.
-  // The previous block dumped 3 entries × ~500 chars each into the prompt
-  // every turn. Limited here to keep RAG augmentation under ~1500 chars.
   const REASONING_MAX = 220;
   const limited = kgResults.slice(0, 2);
   let text = "[DOMAIN KNOWLEDGE — internal reference, do not quote or copy verbatim]\n";
@@ -93,8 +98,14 @@ Socratic questions: "¿Qué ocurre con la corriente cuando un componente está c
   return text;
 }
 
-// Analyze each element the student mentioned: which are proposed, which are negated, which are correct/wrong
-// Generic: works with any evaluable elements (resistances, concepts, definitions, etc.)
+/*
+   Obj, [Txt] -> ____|________________________
+                | analyzeStudentElements() | -> Txt
+                 ---------------------------
+      Builds the internal [PER-ELEMENT ANALYSIS] block: which mentioned
+      elements are proposed/negated and correct/wrong, plus already-established
+      and missing ones. Generic over any evaluable element type.
+*/
 function analyzeStudentElements(classification, correctAnswer) {
   var proposed = classification.proposed || [];
   var negated = classification.negated || [];
@@ -103,11 +114,6 @@ function analyzeStudentElements(classification, correctAnswer) {
     return "";
   }
 
-  // BUG-LM3 (2026-06-10): membership was case-sensitive. proposed/negated are
-  // always uppercased by the classifier, but correctAnswer was used raw — if a
-  // seed/DB row ever stores a lowercase/padded "Rn", every per-element verdict
-  // INVERTS (it would tell the LLM a correct element is wrong and that wrongly
-  // rejecting a correct element is fine). Normalize both sides (uppercase+trim).
   function _norm(x) { return typeof x === "string" ? x.toUpperCase().trim() : x; }
 
   var correctSet = {};
@@ -115,7 +121,6 @@ function analyzeStudentElements(classification, correctAnswer) {
     correctSet[_norm(correctAnswer[i])] = true;
   }
 
-  // Analyze proposed elements
   var correctProposals = [];
   var wrongProposals = [];
   for (var i = 0; i < proposed.length; i++) {
@@ -126,9 +131,8 @@ function analyzeStudentElements(classification, correctAnswer) {
     }
   }
 
-  // Analyze negated elements
-  var correctNegations = [];  // student rejects something NOT in the answer (correct rejection)
-  var wrongNegations = [];    // student rejects something IN the answer (wrong rejection)
+  var correctNegations = [];
+  var wrongNegations = [];
   for (var i = 0; i < negated.length; i++) {
     if (correctSet[_norm(negated[i])]) {
       wrongNegations.push(negated[i]);
@@ -137,14 +141,6 @@ function analyzeStudentElements(classification, correctAnswer) {
     }
   }
 
-  // Find missing elements (in correct answer, not proposed, not negated).
-  // BUG-LOOP-PEA (2026-06-11, run-5): this analysis only saw the CURRENT turn,
-  // so one turn after the student named R1,R2,R4 it told the LLM "MISSING: The
-  // student has not mentioned R1, R2, R4" — the LLM then kept demanding the
-  // already-given answer ("a pesar de habérselo dicho antes me hace
-  // repetirlo"). The orchestrator stamps the session-level union on
-  // classification.cumulativeNamedCorrect; anything named in ANY turn is not
-  // missing.
   var alreadyNamed = {};
   var cumNamed = classification.cumulativeNamedCorrect || [];
   for (var i = 0; i < cumNamed.length; i++) alreadyNamed[_norm(cumNamed[i])] = true;
@@ -195,8 +191,14 @@ function analyzeStudentElements(classification, correctAnswer) {
   return text;
 }
 
-// Format classification hint for the LLM
-// lang parameter enables intermediate feedback phrases in the correct language
+/*
+   Obj, [Txt], Txt -> ____|___________________________
+                     | formatClassificationHint() | -> Txt
+                      -----------------------------
+      Builds the [RESPONSE MODE] block from the classification type, softening
+      aggressive hints when no element was named, and appends the per-element
+      analysis. lang defaults to "es".
+*/
 function formatClassificationHint(classification, correctAnswer, lang) {
   lang = lang || "es";
 
@@ -216,9 +218,6 @@ function formatClassificationHint(classification, correctAnswer, lang) {
     return "";
   }
 
-  // When the student doesn't mention specific elements, they are likely responding
-  // to a Socratic sub-question (not giving the final answer). In this case, soften
-  // aggressive hints so the LLM can evaluate the response using conversation history.
   var noElementsMentioned = classification.resistances.length === 0;
   var aggressiveTypes = ["wrong_concept", "wrong_answer"];
   var isAggressiveType = aggressiveTypes.indexOf(classification.type) >= 0;
@@ -238,16 +237,8 @@ function formatClassificationHint(classification, correctAnswer, lang) {
     text += "The student mentions: " + classification.concepts.join(", ") + ".\n";
   }
 
-  // Removed: el bloque de "intermediate feedback phrases" (lista de frases
-  // candidatas tipo "Estás cerca", "Pero hay que pulir algunos conceptos")
-  // hacía que qwen2.5 a veces repitiera la misma frase dos veces seguidas
-  // ("Pero hay que pulir algunos conceptos. Pero hay que pulir algunos
-  // conceptos.") y añadía 300-500 bytes al prompt. La regla "no confirmes
-  // wrong como Perfecto" ya está en el system prompt y en el hint de cada
-  // classification, así que el LLM elige la apertura sin repetición.
   text += "\nFollow the reference examples below to guide your response style.\n\n";
 
-  // Add per-element analysis when the student mentions specific elements (with negation awareness)
   if ((classification.resistances.length > 0 || (classification.negated && classification.negated.length > 0)) && correctAnswer != null) {
     text += analyzeStudentElements(classification, correctAnswer);
   }
@@ -255,9 +246,14 @@ function formatClassificationHint(classification, correctAnswer, lang) {
   return text;
 }
 
-// Load the student's past AC errors via the Resultado repository (Pg-backed).
-// resultadoRepo is injected by the caller (retrievalAgent passes it through
-// runFullPipeline options). Domain code no longer reaches into the container.
+/*
+   Txt, Obj -> ____|______________________
+              | loadStudentHistory() | -> Promise<Txt>
+               ------------------------
+      Loads the student's recurring AC errors via the injected Resultado
+      repository and formats the top-3 as a [STUDENT HISTORY] block. Returns ""
+      when there is no user, repo or history.
+*/
 async function loadStudentHistory(userId, resultadoRepo) {
   if (userId == null) return "";
   if (!resultadoRepo) return "";
@@ -265,7 +261,6 @@ async function loadStudentHistory(userId, resultadoRepo) {
   try {
     const resultados = await resultadoRepo.findByUserId(userId);
 
-    // Count error tags across all exercises
     const errorCounts = {};
     for (const r of resultados) {
       for (const err of r.errors || []) {
@@ -277,9 +272,6 @@ async function loadStudentHistory(userId, resultadoRepo) {
     const tags = Object.keys(errorCounts);
     if (tags.length === 0) return "";
 
-    // Show only the top-3 most frequent ACs to keep the prompt compact and
-    // weight the LLM towards what truly recurs. Long histories used to bury
-    // strong signals among noise and inflated num_ctx unnecessarily.
     const topTags = tags
       .sort(function (a, b) { return errorCounts[b] - errorCounts[a]; })
       .slice(0, 3);
@@ -297,13 +289,18 @@ async function loadStudentHistory(userId, resultadoRepo) {
   }
 }
 
-// CRAG: extract key entities from the user message for query reformulation
-// Uses multi-language concept keywords and normalizes to Spanish for dataset retrieval
+/*
+   Txt -> ____|____________________
+         | extractKeyEntities() | -> Txt
+          ----------------------
+      CRAG query reformulation: collects resistances plus matched concept
+      keywords (all languages) and normalizes them to Spanish for dataset
+      retrieval. Falls back to normalizing the whole message.
+*/
 function extractKeyEntities(userMessage) {
   const resistances = extractResistances(userMessage);
   const lower = userMessage.toLowerCase();
 
-  // Collect important terms: resistances + concept keywords found (all languages)
   const parts = [];
   for (let i = 0; i < resistances.length; i++) {
     parts.push(resistances[i]);
@@ -322,20 +319,21 @@ function extractKeyEntities(userMessage) {
   return normalizeToSpanish(parts.join(" "));
 }
 
-// Main pipeline: classifies, retrieves, evaluates quality, and builds augmentation
-// evaluableElements: optional array of all possible answer elements for generic extraction
-// lang: language for intermediate feedback phrases
-// options: { signal?: AbortSignal } — when provided, slow embedding/Chroma
-//          calls inside hybridSearch can be cancelled mid-flight by the
-//          enclosing budget watchdog set up in runFullPipeline.
+/*
+   Txt, Z, [Txt], Txt, [Txt], Txt, Obj -> ____|_______________
+                                          | runPipeline() | -> Promise<Obj>
+                                           ---------------
+      Core pipeline: classifies the message, routes the classification to its
+      retrieval strategy (greeting/dont_know/closed/wrong/correct/partial) and
+      builds the augmentation. evaluableElements and lang are optional; options
+      may carry an AbortSignal to cancel slow retrieval mid-flight.
+*/
 async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang, options) {
   options = options || {};
   const signal = options.signal || null;
   const hsOpts = signal ? { signal: signal } : undefined;
-  // Step A: Classify the query (now with generic element extraction + negation detection)
   emitEvent("classify_start", "start", { userMessage: userMessage, correctAnswer: correctAnswer, messageLength: userMessage.length });
   var classification = classifyQuery(userMessage, correctAnswer, evaluableElements);
-  // Use PROPOSED elements (not negated) to determine if the student gave the correct answer
   var isCorrectAnswer = classification.proposed.length > 0 && classification.proposed.slice().sort().join(",") === correctAnswer.slice().sort().join(",");
   emitEvent("classify_end", "end", {
     type: classification.type,
@@ -354,12 +352,11 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
     decision: "no_rag",
     sources: [],
     classification: classification.type,
-    mentionedElements: classification.resistances,  // all elements the student mentioned
-    proposed: classification.proposed,               // elements proposed (not negated)
-    negated: classification.negated,                 // elements the student rejected
+    mentionedElements: classification.resistances,
+    proposed: classification.proposed,
+    negated: classification.negated,
   };
 
-  // Step B: Route to appropriate retrieval strategy
   if (classification.type === types.greeting) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "no_rag", path: "greeting → no_rag" });
     return result;
@@ -367,7 +364,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
 
   if (classification.type === types.dontKnow) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "scaffold", path: "dont_know → scaffold" });
-    // Only fetch the most relevant KG concepts for scaffolding (limit to 3 to avoid context overflow)
     emitEvent("kg_search_start", "start", { concepts: ["serie", "paralelo", "cortocircuito"] });
     const kgResults = searchKG(["serie", "paralelo", "cortocircuito"]);
     const limited = kgResults.slice(0, 3);
@@ -379,7 +375,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
   }
 
   if (classification.type === types.closedAnswer) {
-    // Yes/no replies to diagnostic questions: acknowledge & advance.
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "acknowledge_diagnostic", path: "closed_answer → acknowledge_diagnostic" });
     result.augmentation = formatClassificationHint(classification, correctAnswer, lang);
     result.decision = "acknowledge_diagnostic";
@@ -392,7 +387,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
     let datasetResults = await hybridSearch(userMessage, exerciseNum, config.TOP_K_FINAL, hsOpts);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
 
-    // CRAG: if top score is too low, reformulate and retry
     if (datasetResults.length === 0 || datasetResults[0].score < config.MED_THRESHOLD) {
       const reformulated = extractKeyEntities(userMessage);
       emitEvent("crag_reformulate", "end", { originalQuery: userMessage, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, threshold: config.MED_THRESHOLD, reformulatedQuery: reformulated, reason: "topScore < MED_THRESHOLD (" + config.MED_THRESHOLD + ")", extractedEntities: reformulated.split(" ") });
@@ -401,9 +395,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
       emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
     }
 
-    // KG scaffolding: when the student is wrong but used no concept words, the
-    // tutor still benefits from foundational concepts to anchor a Socratic hint
-    // (current path, divisor de tensión, cortocircuito, interruptor abierto).
     const kgConcepts = classification.concepts && classification.concepts.length > 0
       ? classification.concepts
       : SCAFFOLD_CONCEPTS;
@@ -473,8 +464,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
     var datasetResults = await hybridSearch(userMessage, exerciseNum, config.TOP_K_FINAL, hsOpts);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
 
-    // KG scaffolding: partial answers benefit from foundational concepts so the
-    // tutor can ask "what about <concept>?" instead of pointing at a resistor.
     const kgConcepts = classification.concepts && classification.concepts.length > 0
       ? classification.concepts
       : SCAFFOLD_CONCEPTS;
@@ -491,16 +480,14 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, eval
   return result;
 }
 
-// Full pipeline with student history appended
-// evaluableElements: optional array of all possible answer elements
-// lang: language for intermediate feedback phrases
-// options: {
-//   budgetMs?: number,         — arms an AbortController that cancels
-//                                in-flight Chroma/embedding calls when
-//                                budgetMs * 0.95 elapses (NS-3).
-//   resultadoRepo?: object     — injected so loadStudentHistory doesn't
-//                                require('container') from the domain (NS-5).
-// }
+/*
+   Txt, Z, [Txt], Txt, [Txt], Txt, Obj -> ____|___________________
+                                          | runFullPipeline() | -> Promise<Obj>
+                                           -------------------
+      Wraps runPipeline with a budget watchdog (options.budgetMs arms an
+      AbortController) and appends the student history block. Returns a
+      no-rag/timed-out result on abort. options.resultadoRepo is injected.
+*/
 async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, evaluableElements, lang, options) {
   options = options || {};
   const budgetMs = typeof options.budgetMs === "number" && options.budgetMs > 0 ? options.budgetMs : null;
@@ -511,9 +498,6 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
   if (budgetMs) {
     controller = new AbortController();
     signal = controller.signal;
-    // 95% leaves a small slack so the surrounding orchestrator can still
-    // emit "retrieval timed out" telemetry before its own outer budget
-    // triggers and forces a hard fallback.
     abortTimer = setTimeout(() => {
       try { controller.abort(); } catch (_) {}
     }, Math.max(500, Math.floor(budgetMs * 0.95)));
@@ -542,12 +526,10 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
   }
   if (abortTimer) clearTimeout(abortTimer);
 
-  // If no RAG needed, skip
   if (result.decision === "no_rag") {
     return result;
   }
 
-  // Load student's past errors and append
   emitEvent("student_history_start", "start", { userId: userId });
   var history = await loadStudentHistory(userId, options.resultadoRepo);
   emitEvent("student_history_end", "end", { hasHistory: history.length > 0, historyLength: history.length, historyPreview: history });
@@ -555,23 +537,19 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
     result.augmentation += history;
   }
 
-  // NS-22: the 10-rule [GUARDRAIL] block was a verbatim duplicate of the
-  // system prompt's RULES section (~1500 bytes per turn). The system block
-  // already covers don't-reveal, don't-confirm-wrong, don't-name-elements,
-  // ground-truth and history-aware evaluation. Removed here to keep the
-  // user-message turn payload small and let Ollama prefill faster.
-
   emitEvent("augmentation_built", "end", { augmentationLength: result.augmentation.length, decision: result.decision, classification: result.classification, sourcesCount: result.sources.length, sections: ["hint", history.length > 0 ? "history" : null, result.sources.length > 0 ? "examples" : null].filter(Boolean), augmentationPreview: result.augmentation });
 
   return result;
 }
 
-/**
- * Factory: inject infrastructure dependencies so domain code stays clean.
- * Call once from container.js at startup:
- *   const { runFullPipeline } = createRagPipeline({ hybridSearch, searchKG, emitEvent, config });
- * The returned runFullPipeline is then passed to createAgentRegistry as a dep.
- */
+/*
+   Obj -> ____|____________________
+         | createRagPipeline() | -> Obj
+          ---------------------
+      Factory that injects the infrastructure dependencies (hybridSearch,
+      searchKG, emitEvent, config) once at startup and returns
+      { runFullPipeline } for the agent registry.
+*/
 function createRagPipeline(deps) {
   hybridSearch = deps.hybridSearch;
   searchKG    = deps.searchKG;
@@ -581,5 +559,4 @@ function createRagPipeline(deps) {
 }
 
 module.exports = { createRagPipeline };
-// Exposed for unit testing (BUG-LM3 regression): pure per-element analysis.
 module.exports.analyzeStudentElements = analyzeStudentElements;

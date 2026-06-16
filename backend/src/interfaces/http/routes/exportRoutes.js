@@ -1,7 +1,3 @@
-// Export routes: JSON/CSV export of interactions and results (profesor/admin).
-// GET /api/export/interacciones?userId=...&exerciseId=...&from=...&to=...&format=csv|json
-// GET /api/export/resultados?userId=...&exerciseId=...&from=...&to=...&format=csv|json
-
 const express = require("express");
 const container = require("../../../container");
 const { requireRole } = require("../middleware/authMiddleware");
@@ -10,6 +6,45 @@ const router = express.Router();
 
 router.use(requireRole("profesor", "admin"));
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    EXPORT ROUTES                      |
+            |  Express router that exports interactions and results  |
+            |  as JSON or CSV for analysis. Every route requires the |
+            |  profesor/admin role (router-level guard). Enriches    |
+            |  rows with user and exercise data. Endpoints:         |
+            |     GET /interacciones  -> [Obj] | CSV                |
+            |     GET /resultados     -> [Obj] | CSV                |
+        ____|____________                                            |
+   Obj -> | repos() | -> Obj | null                (reads container) |
+          -----------                                                |
+        ____|_____________                                           |
+   Txt -> | isValidId() | -> T/F                   (pure check)      |
+          -------------                                              |
+        ____|______________                                          |
+   Obj -> | buildFilter() | -> Obj                 (pure)            |
+          ---------------                                            |
+        ____|_____________                                           |
+   * -> | csvEscape() | -> Txt                     (pure)            |
+        -------------                                                |
+        ____|_____________                                           |
+   [Obj] -> | rowsToCsv() | -> Txt                 (pure)            |
+            -------------                                            |
+        ____|_____________________                                   |
+   Obj, [Obj], Usuario, Ejercicio -> | flattenInteraccion() | -> [Obj]|
+                                    ---------------------            |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+ Obj -> ____|____________
+       | repos() | -> Obj | null    (reads container (Obj))
+        -----------
+    Resolves the interaccion, resultado, usuario, ejercicio and message
+    repositories from the container. Sends a 503 and returns null when
+    persistence is not initialized yet.
+*/
 function repos(res) {
   if (!container._initialized) {
     res.status(503).json({ error: "service_unavailable" });
@@ -24,11 +59,24 @@ function repos(res) {
   };
 }
 
+/*
+ Txt -> ____|_____________
+       | isValidId() | -> T/F
+        -------------
+    True when the value is a legacy ObjectId (24 hex) or a UUID.
+*/
 function isValidId(v) {
   if (typeof v !== "string") return false;
   return /^[a-f0-9]{24}$/i.test(v) || /^[0-9a-f-]{36}$/i.test(v);
 }
 
+/*
+ Obj -> ____|______________
+       | buildFilter() | -> Obj
+        ---------------
+    Builds a repository filter from the query string, keeping only valid
+    userId/exerciseId and parsing from/to into Date bounds.
+*/
 function buildFilter(query) {
   const filter = {};
   if (query.userId && isValidId(query.userId)) filter.userId = query.userId;
@@ -38,6 +86,13 @@ function buildFilter(query) {
   return filter;
 }
 
+/*
+ * -> ____|_____________
+     | csvEscape() | -> Txt
+      -------------
+    Escapes a value for a CSV cell: empty for null/undefined, otherwise
+    quoting and doubling internal quotes when the text holds , " or newlines.
+*/
 function csvEscape(val) {
   if (val == null) return "";
   const s = String(val);
@@ -47,6 +102,13 @@ function csvEscape(val) {
   return s;
 }
 
+/*
+ [Obj] -> ____|_____________
+         | rowsToCsv() | -> Txt
+          -------------
+    Serializes an array of flat row objects to a CSV string, using the
+    keys of the first row as the header. Returns "" for an empty array.
+*/
 function rowsToCsv(rows) {
   if (rows.length === 0) return "";
   const headers = Object.keys(rows[0]);
@@ -58,6 +120,14 @@ function rowsToCsv(rows) {
   return lines.join("\n");
 }
 
+/*
+ Obj, [Obj], Usuario, Ejercicio -> ____|_____________________
+                                  | flattenInteraccion() | -> [Obj]
+                                   ---------------------
+    Flattens one interaction and its messages into CSV-ready rows, one per
+    message, expanding metadata (classification, timing, guardrails, AC
+    detection, surgical fixes) and enriching with user and exercise fields.
+*/
 function flattenInteraccion(inter, messages, usuario, ejercicio) {
   const rows = [];
   for (let i = 0; i < messages.length; i++) {
@@ -65,9 +135,6 @@ function flattenInteraccion(inter, messages, usuario, ejercicio) {
     const md = m.metadata || {};
     const g = md.guardrails || {};
     const t = md.timing || {};
-    // detectedACs is an array of {id, name, confidence, ...}; collapse
-    // to a stable string for CSV. Keep the raw array for JSON via a
-    // separate `_detectedACsArray` field below.
     const detectedACsList = Array.isArray(md.detectedACs) ? md.detectedACs : [];
     const detectedACsStr = detectedACsList
       .map((a) => (a && a.id ? a.id + (a.confidence != null ? `(${a.confidence.toFixed(2)})` : "") : ""))
@@ -96,36 +163,26 @@ function flattenInteraccion(inter, messages, usuario, ejercicio) {
       isCorrectAnswer: md.isCorrectAnswer ?? "",
       sourcesCount: md.sourcesCount ?? "",
       studentResponseMs: md.studentResponseMs ?? "",
-      // Timing
       pipelineMs: t.pipelineMs ?? "",
       ollamaMs: t.ollamaMs ?? "",
       totalMs: t.totalMs ?? "",
       firstTokenMs: t.firstTokenMs ?? "",
-      // Concepts (rule-based, from classifier)
       concepts: conceptsStr,
-      // AC verdict (per-turn AC detection — feat/ac-detection feature)
       detectedACs: detectedACsStr,
       detectedACsCount: detectedACsList.length,
-      // Legacy four guardrails:
       guardrail_solutionLeak: g.solutionLeak ?? false,
       guardrail_falseConfirmation: g.falseConfirmation ?? false,
       guardrail_prematureConfirmation: g.prematureConfirmation ?? false,
       guardrail_stateReveal: g.stateReveal ?? false,
-      // New on feat/ac-detection:
       guardrail_languageDrift: g.languageDrift ?? false,
       guardrail_completeSolution: g.completeSolution ?? false,
       guardrail_adherence: g.adherence ?? false,
       guardrail_repeatedQuestion: g.repeatedQuestion ?? false,
       guardrail_didacticExplanation: g.didacticExplanation ?? false,
       guardrail_datasetStyle: g.datasetStyle ?? false,
-      // Pipeline diagnostics:
       guardrailPath: md.guardrailPath || "",
       guardrailLlmRetries: md.guardrailLlmRetries ?? 0,
       guardrailSurgicalFixes: surgicalFixesStr,
-      // Raw LLM output before any guardrail rewrite + chronological list of
-      // {guardrailId,before,after,...} rewrites. The list is JSON-encoded
-      // because per-row arrays of objects don't fit a CSV cell otherwise;
-      // pandas can json.loads(df["guardrailRewrites"]) trivially.
       llmResponseOriginal: md.llmResponseOriginal || "",
       guardrailRewrites: Array.isArray(md.guardrailSurgicalFixDetails)
         ? JSON.stringify(md.guardrailSurgicalFixDetails)
@@ -137,7 +194,6 @@ function flattenInteraccion(inter, messages, usuario, ejercicio) {
   return rows;
 }
 
-// GET /api/export/interacciones
 router.get("/interacciones", async (req, res) => {
   const r = repos(res); if (!r) return;
   try {
@@ -146,7 +202,6 @@ router.get("/interacciones", async (req, res) => {
 
     const interacciones = await r.interaccionRepo.findByFilter(filter);
 
-    // Enrich with users and exercises
     const userIds = [...new Set(interacciones.map((i) => i.userId).filter(Boolean))];
     const exIds = [...new Set(interacciones.map((i) => i.exerciseId).filter(Boolean))];
 
@@ -156,7 +211,6 @@ router.get("/interacciones", async (req, res) => {
     const userMap = Object.fromEntries(usuarios.map((u) => [u.id, u]));
     const exMap = Object.fromEntries(ejercicios.map((e) => [e.id, e]));
 
-    // Load messages for each interaccion (necesario para CSV y para enriquecer JSON)
     const interWithMessages = await Promise.all(
       interacciones.map(async (inter) => ({
         inter,
@@ -174,7 +228,6 @@ router.get("/interacciones", async (req, res) => {
       return res.send(rowsToCsv(allRows));
     }
 
-    // JSON
     const result = interWithMessages.map(({ inter, messages }) => {
       const u = userMap[inter.userId] || null;
       const e = exMap[inter.exerciseId] || null;
@@ -195,7 +248,6 @@ router.get("/interacciones", async (req, res) => {
   }
 });
 
-// GET /api/export/resultados
 router.get("/resultados", async (req, res) => {
   const r = repos(res); if (!r) return;
   try {
@@ -238,7 +290,6 @@ router.get("/resultados", async (req, res) => {
       return res.send(rowsToCsv(rows));
     }
 
-    // JSON
     const result = resultados.map((x) => {
       const u = userMap[x.userId] || null;
       const e = exMap[x.exerciseId] || null;
@@ -263,5 +314,4 @@ router.get("/resultados", async (req, res) => {
 });
 
 module.exports = router;
-// Exposed for unit tests — keeps test files from having to spin up Express.
 module.exports._test = { flattenInteraccion, buildFilter, rowsToCsv };

@@ -1,15 +1,5 @@
 "use strict";
 
-// NS-34 — fixes para los tres defectos reportados en el smoke test del
-// 2026-05-03:
-//   2. T11 quedó sin pregunta porque StateRevealGuardrail redactó la única
-//      frase que la llevaba.
-//   3. T10/T13 redactaron una afirmación con todos los elementos correctos y
-//      la respuesta acabó sin pregunta socrática.
-//   4. T7 acumuló prefijos ("No es exactamente así. ... Hay conceptos que
-//      debemos revisar.") porque dos guardrails distintos prependían cada uno
-//      su propia frase corredora.
-
 const {
   redactStateRevealSentence,
   redactElementMentions,
@@ -19,6 +9,23 @@ const {
 const FalseConfirmationGuardrail = require("../../src/infrastructure/guardrails/FalseConfirmationGuardrail");
 const CompleteSolutionGuardrail = require("../../src/infrastructure/guardrails/CompleteSolutionGuardrail");
 const PrematureConfirmationGuardrail = require("../../src/infrastructure/guardrails/PrematureConfirmationGuardrail");
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  GUARDRAILS NS-34                     |
+            |  Test suite for the NS-34 fixes from the 2026-05-03   |
+            |  smoke test: bug 2 (StateRevealGuardrail redacted the |
+            |  only sentence carrying the question), bug 3 (an      |
+            |  all-correct assertion was redacted leaving no        |
+            |  Socratic question), and bug 4 (two guardrails        |
+            |  stacked their own running prefixes). Verifies        |
+            |  ensureResponseHasQuestion, the two redactors and     |
+            |  surgical-fix idempotence.                            |
+        ____|________________                                       |
+   Obj -> | buildGuardrailCtx() | -> Obj                            |
+          ---------------------                                     |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("NS-34 ensureResponseHasQuestion", () => {
   test("preserva el texto si ya hay una interrogación", () => {
@@ -47,9 +54,6 @@ describe("NS-34 ensureResponseHasQuestion", () => {
 
 describe("NS-34 — bug 2: redactStateRevealSentence garantiza pregunta", () => {
   test("cuando la única frase con '?' es la redactada, añade Socratic genérica", () => {
-    // Hardcoded state pattern dentro de una pregunta: el sentence-replace
-    // borra la pregunta entera al sustituirla por el placeholder, dejando el
-    // turno sin ningún signo de interrogación.
     const input = "¿Sabías que circula corriente por R5?";
     const { text, redacted } = redactStateRevealSentence(
       input,
@@ -70,7 +74,6 @@ describe("NS-34 — bug 2: redactStateRevealSentence garantiza pregunta", () => 
       "es"
     );
     expect(redacted).toBe(true);
-    // Debe mantener la pregunta original sin duplicar
     expect((text.match(/\?/g) || [])).toHaveLength(1);
     expect(text).toContain("¿Qué notas?");
   });
@@ -83,9 +86,6 @@ describe("NS-34 — bug 3: redactElementMentions garantiza pregunta", () => {
     const input = "La respuesta es R1, R2 y R4.";
     const { text, redacted } = redactElementMentions(input, correctAnswer, "es");
     expect(redacted).toBe(true);
-    // En este caso la redacción ocurre por step 1 (tolerantPattern), que NO
-    // requiere que la frase sea pregunta — ergo la respuesta acaba sin "?"
-    // y debe completarse con una pregunta genérica.
     expect(text).toMatch(/\?$/);
   });
 
@@ -97,8 +97,13 @@ describe("NS-34 — bug 3: redactElementMentions garantiza pregunta", () => {
   });
 });
 
-// ---------- bug 4 ----------
-
+/*
+     Obj -> ____|________________
+           | buildGuardrailCtx() | -> Obj
+            ---------------------
+        Builds a guardrail context with wrong-answer defaults, merging any
+        overrides passed in.
+*/
 function buildGuardrailCtx(overrides) {
   return Object.assign(
     {
@@ -118,9 +123,6 @@ describe("NS-34 — bug 4: surgical fixes son idempotentes", () => {
     const g = new FalseConfirmationGuardrail();
     const ctx = buildGuardrailCtx();
 
-    // Simulamos la salida tras un fix previo (prefix + cleaned response).
-    // Empieza por "No es exactamente así..." → la negación bloquea cualquier
-    // confirm phrase, así que NO debe aplicarse otra capa.
     const alreadyFixed =
       "No es exactamente así. Vamos a repasar algo importante. Piensa en el camino que sigue la corriente.";
     const fix = g.surgicalFix(alreadyFixed, ctx);
@@ -151,8 +153,6 @@ describe("NS-34 — bug 4: surgical fixes son idempotentes", () => {
     const raw = "Correcto, R3 no contribuye al voltaje.";
     const fix = g.surgicalFix(raw, ctx);
     expect(fix.applied).toBe(true);
-    // El prefijo viene de getRandomIntermediatePhrase('wrong', 'es'), pero
-    // sea cual sea, la respuesta YA NO debe contener "Correcto" al inicio.
     expect(fix.text).not.toMatch(/^Correcto/i);
   });
 });

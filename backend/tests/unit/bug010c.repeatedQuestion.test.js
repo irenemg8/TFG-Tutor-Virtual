@@ -1,18 +1,23 @@
 "use strict";
 
-/**
- * BUG-010-C (2026-05-03): el LLM repetía literalmente la pregunta
- * socrática del turno previo. Cubrimos:
- *  - contextAgent._extractLastQuestion → expone la pregunta literal a tutorAgent
- *  - RepeatedQuestionGuardrail → red de seguridad post-LLM
- */
-
 const RepeatedQuestionGuardrail = require("../../src/infrastructure/guardrails/RepeatedQuestionGuardrail");
 const ContextAgent = require("../../src/domain/agents/contextAgent");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |   REPEATED QUESTION — UNIT TESTS (BUG-010-C)          |
+            |  Regresses BUG-010-C (2026-05-03): the model repeated  |
+            |  the previous turn's Socratic question verbatim.       |
+            |  Covers contextAgent._extractLastQuestion (exposes the |
+            |  literal prior question) and RepeatedQuestionGuardrail |
+            |  (post-LLM safety net detecting near-duplicates).     |
+        ____|_____                                                  |
+        | ctx() | -> Obj                                            |
+        --------                                                    |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 describe("contextAgent._extractLastQuestion (BUG-010-C)", () => {
-  // Construimos una instancia "esquelética" sólo para acceder al método —
-  // no llamamos a execute() así que no hace falta mockear repos.
   const a = Object.create(ContextAgent.prototype);
 
   test("devuelve la última pregunta del último mensaje assistant", () => {
@@ -50,6 +55,12 @@ describe("contextAgent._extractLastQuestion (BUG-010-C)", () => {
 describe("RepeatedQuestionGuardrail (BUG-010-C)", () => {
   const g = new RepeatedQuestionGuardrail();
 
+  /*
+       IN -> ____|____
+            | ctx() | -> Obj
+             --------
+      Builds a guardrail context from a message history and optional lang.
+  */
   function ctx(messages, lang = "es") {
     return { lang, messages };
   }

@@ -2,18 +2,39 @@
 
 const AgentInterface = require("./base/AgentInterface");
 
-/**
- * ClassifierAgent: Classifies the student's message to determine response strategy.
- * Thin wrapper around the existing rule-based queryClassifier.
- *
- * Hex compliance: debug logger injected via constructor (required).
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    CLASSIFIERAGENT                    |
+            |  Pipeline agent that classifies the student's message |
+            |  to decide the tutor's response strategy. Thin wrapper|
+            |  around the rule-based queryClassifier. Runs after    |
+            |  ContextAgent so the conversation history is loaded.  |
+        ____|________________                                       |
+   Obj -> | constructor() | -> ClassifierAgent       (writes attrs) |
+          -----------------                                         |
+            |                                                       |
+            |   name: Txt            classifyQuery: Fn              |
+            |   debugLogger: Obj                                    |
+        ____|_____________________________                          |
+ AgentContext -> | execute() | -> Promise<void>  (reads classifyQuery (Fn),
+                 ------------                      debugLogger (Obj))|
+        ____|_____________________________                          |
+ [Obj] -> | _lastAssistantText() | -> Txt                           |
+          ----------------------                                    |
+        ____|___________                                            |
+        | canSkip() | -> T/F                                        |
+        ------------                                                |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class ClassifierAgent extends AgentInterface {
-  /**
-   * @param {object} deps
-   * @param {Function} deps.classifyQuery - The classifyQuery function from queryClassifier.js
-   * @param {object} [deps.debugLogger] - IPipelineLogger adapter (preferred)
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> ClassifierAgent    (writes attributes name (Txt),
+          -----------------                       classifyQuery (Fn), debugLogger (Obj))
+      Stores the injected classifyQuery function and the required
+      debugLogger, throwing when the logger is missing.
+  */
   constructor(deps) {
     super("classifierAgent");
     this.classifyQuery = deps.classifyQuery;
@@ -21,10 +42,16 @@ class ClassifierAgent extends AgentInterface {
     this.debugLogger = deps.debugLogger;
   }
 
+  /*
+ AgentContext -> ____|___________
+                | execute() | -> Promise<void>    (reads attributes classifyQuery (Fn)
+                 -----------                        and debugLogger (Obj))
+      Runs classifyQuery over the user message, correct answer and
+      evaluable elements plus the tutor's last message (to disambiguate
+      short yes/no replies from one-word wrong answers), then logs and
+      writes the result to context.classification.
+  */
   async execute(context) {
-    // The classifier now needs the tutor's last message to disambiguate
-    // short yes/no answers from "single word" wrong answers. The
-    // contextAgent already loaded history, so we extract it locally.
     const lastAssistantText = this._lastAssistantText(context.history);
 
     context.classification = this.classifyQuery(
@@ -36,6 +63,13 @@ class ClassifierAgent extends AgentInterface {
     this.debugLogger.logClassify(context.userMessage, context.classification);
   }
 
+  /*
+ [Obj] -> ____|_______________________
+         | _lastAssistantText() | -> Txt
+          ----------------------
+      Walks the history backwards and returns the content of the most
+      recent assistant message, or "" when there is none.
+  */
   _lastAssistantText(history) {
     if (!Array.isArray(history)) return "";
     for (let i = history.length - 1; i >= 0; i--) {
@@ -46,8 +80,14 @@ class ClassifierAgent extends AgentInterface {
     return "";
   }
 
+  /*
+       ____|___________
+      | canSkip() | -> T/F
+       ------------
+      Always false: classification runs on every turn.
+  */
   canSkip() {
-    return false; // Classification always runs
+    return false;
   }
 }
 

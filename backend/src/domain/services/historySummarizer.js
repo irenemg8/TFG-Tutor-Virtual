@@ -1,34 +1,50 @@
 "use strict";
 
-/**
- * HistorySummarizer: keeps an evergreen summary of the conversation turns
- * that have fallen out of the LLM's recent-history window.
- *
- * Without this, sessions longer than HISTORY_MAX_MESSAGES turns silently
- * lose context — the student writes "te he dicho que R3 no influye" and the
- * tutor has no record of the earlier confirmation because that turn already
- * fell out of the window. The summariser keeps an incremental, in-memory
- * rolling summary indexed by interactionId, which the TutorAgent injects
- * back into the LLM prompt as a system message.
- *
- * Cache strategy: per-interaction (interactionId → {count, summary}). When
- * new turns push older messages out of the recent window, we extend the
- * previous summary with the newcomers via a short LLM call instead of
- * re-reading the entire tail. The cache lives in process memory only — on
- * restart it's regenerated lazily from the persisted messages on the first
- * post-window turn of each conversation.
- *
- * LLM cost: 1 call per turn once the conversation exceeds the recent window.
- * Prompt is short (~300 chars previous summary + 2 new turns) so it adds
- * ~300-800ms to the turn. On the very first post-restart hit for a long
- * conversation the cost is higher because we have to summarise from scratch.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   HISTORYSUMMARIZER                   |
+            |  Keeps an evergreen rolling summary of conversation   |
+            |  turns that have fallen out of the recent-history     |
+            |  window, indexed by interactionId, so long sessions   |
+            |  do not silently lose context. Updated incrementally  |
+            |  via a short LLM call; cache lives in process memory. |
+        ____|________________                                       |
+   Obj -> | constructor() | -> HistorySummarizer    (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   llm: ILlmService    logger: Obj    cache: Map       |
+        ____|_______________                                        |
+   [Obj], Txt, Txt -> | summarize() | -> Promise<Txt | null>  (reads attrs) |
+                       ---------------                                 |
+        ____|________________________                               |
+        | _summarizeFromScratch() | -> Promise<Txt>  (reads attrs)  |
+        ---------------------------                                 |
+        ____|________________________                               |
+        | _summarizeIncremental() | -> Promise<Txt>  (reads attrs)  |
+        ---------------------------                                 |
+        ____|____________________                                   |
+        | _formatTranscript() | -> Txt                              |
+        -----------------------                                     |
+        ____|_______________                                        |
+   Txt -> | _systemPrompt() | -> Txt                                |
+          ------------------                                        |
+        ____|_____________                                          |
+        | _userPrompt() | -> Txt                                    |
+        ----------------                                            |
+        ____|______________                                         |
+   Txt -> | invalidate() | -> void                  (reads attrs)   |
+          ----------------                                          |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class HistorySummarizer {
-  /**
-   * @param {object} deps
-   * @param {import('../ports/services/ILlmService')} deps.llmService
-   * @param {object} [deps.logger]
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> HistorySummarizer    (writes attributes llm (ILlmService),
+          -----------------                         logger (Obj), cache (Map))
+      Builds the summariser from a deps object. Requires an llmService;
+      defaults the logger to a no-op and starts with an empty cache.
+  */
   constructor(deps) {
     if (!deps || !deps.llmService) {
       throw new Error("HistorySummarizer requires llmService");
@@ -38,13 +54,14 @@ class HistorySummarizer {
     this.cache = new Map();
   }
 
-  /**
-   * @param {Array<{role,content}>} olderMessages — messages that fell out
-   *    of the recent-history window (chronological order, oldest first).
-   * @param {string} lang — "es" / "val" / "en"
-   * @param {string} interactionId — cache key
-   * @returns {Promise<string|null>}
-   */
+  /*
+   [Obj], Txt, Txt -> ____|_______________
+                     | summarize() | -> Promise<Txt | null>    (reads attribute cache (Map))
+                      ---------------
+      Returns a rolling summary of the messages that fell out of the
+      recent window, reusing or extending the cached one when possible.
+      Resolves to null when there is nothing to summarise.
+  */
   async summarize(olderMessages, lang, interactionId) {
     if (!Array.isArray(olderMessages) || olderMessages.length === 0) {
       return null;
@@ -70,6 +87,12 @@ class HistorySummarizer {
     return summary || null;
   }
 
+  /*
+   [Obj], Txt -> ____|________________________
+                | _summarizeFromScratch() | -> Promise<Txt>    (reads attributes llm (ILlmService),
+                 ---------------------------                    logger (Obj))
+      Summarises the full transcript in one LLM call. Returns "" on error.
+  */
   async _summarizeFromScratch(messages, lang) {
     const transcript = this._formatTranscript(messages);
     const prompt = [
@@ -89,6 +112,13 @@ class HistorySummarizer {
     }
   }
 
+  /*
+   Txt, [Obj], Txt -> ____|________________________
+                     | _summarizeIncremental() | -> Promise<Txt>    (reads attributes llm (ILlmService),
+                      ---------------------------                    logger (Obj))
+      Merges the previous summary with the new turns in one LLM call.
+      Falls back to the previous summary on error.
+  */
   async _summarizeIncremental(prevSummary, newMessages, lang) {
     const transcript = this._formatTranscript(newMessages);
     const prompt = [
@@ -109,6 +139,13 @@ class HistorySummarizer {
     }
   }
 
+  /*
+   [Obj] -> ____|____________________
+           | _formatTranscript() | -> Txt
+            -----------------------
+      Renders the messages into a "ROLE: content" transcript, mapping
+      assistant/user to TUTOR/ALUMNO and clipping each turn to 500 chars.
+  */
   _formatTranscript(messages) {
     let out = "";
     for (let i = 0; i < messages.length; i++) {
@@ -121,6 +158,13 @@ class HistorySummarizer {
     return out.trim();
   }
 
+  /*
+   Txt -> ____|_______________
+         | _systemPrompt() | -> Txt
+          ------------------
+      Returns the neutral-summariser system instruction in the requested
+      language (valencian / english / spanish default).
+  */
   _systemPrompt(lang) {
     if (lang === "val") {
       return "Eres un resumidor neutral. Comprimix una conversa tutor-alumne en una sola frase d'aproximadament 250 caràcters: qué ha confirmat l'alumne, qué conceptes ha esmentat i qué ha establert el tutor. Mai inventes informació; mai esmentes la solució completa. Resposta en valencià.";
@@ -131,6 +175,13 @@ class HistorySummarizer {
     return "Eres un resumidor neutral. Comprime una conversación tutor-alumno en una sola frase de aproximadamente 250 caracteres: qué ha confirmado el alumno, qué conceptos ha mencionado y qué ha establecido el tutor. Nunca inventes información; nunca menciones la solución completa. Responde en español.";
   }
 
+  /*
+   Txt, Txt, Txt -> ____|_____________
+                   | _userPrompt() | -> Txt
+                    ----------------
+      Builds the user-turn prompt in the requested language, choosing a
+      merge prompt when a previous summary is given, otherwise a plain one.
+  */
   _userPrompt(lang, transcript, prevSummary) {
     if (prevSummary) {
       if (lang === "val") {
@@ -153,6 +204,12 @@ class HistorySummarizer {
     return "Conversación:\n" + transcript + "\n\nResume en unos 250 caracteres.";
   }
 
+  /*
+   Txt -> ____|______________
+         | invalidate() | -> void    (reads attribute cache (Map))
+          ----------------
+      Drops the cached summary for the given interaction id.
+  */
   invalidate(interactionId) {
     this.cache.delete(interactionId);
   }

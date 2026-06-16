@@ -1,32 +1,64 @@
 "use strict";
 
-/**
- * Smoke test suite for the hexagonal refactor.
- *
- * Run with: node tests/smoke/runAll.js
- *
- * Covers:
- *   - Unit tests for each IGuardrail adapter (with real production FP inputs)
- *   - Integration tests for GuardrailPipeline (parallel, surgical-first, budget)
- *   - Contract test for ILlmService (mock adapter)
- *   - End-to-end smoke through the orchestrator with stub repos
- *
- * No network. No real database. No real LLM. Everything mocked.
- * Exit code: 0 if all pass, 1 if any fail.
- */
-
 const path = require("path");
 const ROOT = path.join(__dirname, "..", "..");
 
-// Make imports relative to backend root
 process.chdir(ROOT);
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  HEXAGONAL SMOKE SUITE                |
+            |  Fully mocked smoke suite for the hexagonal refactor.  |
+            |  Covers IGuardrail adapter units, GuardrailPipeline    |
+            |  integration, the ILlmService contract and an          |
+            |  end-to-end orchestrator run with stub repos. No       |
+            |  network, no database, no real LLM.                   |
+        ____|________________                                       |
+   Txt -> | record() | -> void                                      |
+          -----------------                                         |
+        ____|________________                                       |
+        | runSection() | -> Promise<void>                           |
+        ----------------------                                      |
+        ____|________________                                       |
+        | textServices() | -> Promise<void>                         |
+        ----------------------                                      |
+        ____|________________                                       |
+        | guardrailAdapters() | -> Promise<void>                    |
+        ----------------------                                      |
+        ____|________________                                       |
+        | pipelineIntegration() | -> Promise<void>                  |
+        ----------------------                                      |
+        ____|________________                                       |
+        | llmServiceContract() | -> Promise<void>                   |
+        ----------------------                                      |
+        ____|________________                                       |
+        | orchestratorE2E() | -> Promise<void>                      |
+        ----------------------                                      |
+        ____|________________                                       |
+        | main() | -> Promise<void>                                 |
+        ----------------------                                      |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 const results = [];
+/*
+   IN -> ____|________
+        | record() | -> void
+         ----------
+      Pushes a test result and prints its pass/fail line.
+   */
 function record(name, pass, detail) {
   results.push({ name, pass, detail });
   console.log((pass ? "  ✓ " : "  ✗ ") + name + (detail ? " — " + detail : ""));
 }
 
+/*
+   IN -> ____|________
+        | runSection() | -> Promise<void>
+         ----------
+      Runs a named section function, recording an uncaught failure if it throws.
+   */
 async function runSection(title, fn) {
   console.log("\n━━━ " + title + " ━━━");
   try {
@@ -36,8 +68,12 @@ async function runSection(title, fn) {
   }
 }
 
-// ─── Section 1: text services ────────────────────────────────────────────────
-
+/*
+   IN -> ____|________
+        | textServices() | -> Promise<void>
+         ----------
+      Exercises the shared domain text services and records each assertion.
+   */
 async function textServices() {
   const { stripAccents } = require(path.join(ROOT, "src/domain/services/text/accentNormalizer"));
   const { sameSet, containsAll } = require(path.join(ROOT, "src/domain/services/text/setComparison"));
@@ -51,13 +87,16 @@ async function textServices() {
   record("splitSentences basic", JSON.stringify(splitSentences("Hola. ¿Qué? Bien.")) === '["Hola","¿Qué","Bien"]');
   record("extractResistances r1 r2 r4", JSON.stringify(extractResistances("r1 r2 r4")) === '["R1","R2","R4"]');
   record("extractMentionedElements generic", extractMentionedElements("R1 y R4", ["R1","R2","R3","R4","R5"]).length === 2);
-  // Critical FP fix:
   record("isNegatedInContext('No es exactamente', 'exactamente') == true", isNegatedInContext("No es exactamente así", "exactamente") === true);
   record("isNegatedInContext('Perfecto', 'perfecto') == false", isNegatedInContext("Perfecto, correcto", "perfecto") === false);
 }
 
-// ─── Section 2: guardrail adapters ───────────────────────────────────────────
-
+/*
+   IN -> ____|________
+        | guardrailAdapters() | -> Promise<void>
+         ----------
+      Runs regression checks on each IGuardrail adapter against real production FP/TP inputs.
+   */
 async function guardrailAdapters() {
   const { createDefaultGuardrails } = require(path.join(ROOT, "src/infrastructure/guardrails"));
   const guardrails = createDefaultGuardrails();
@@ -67,7 +106,6 @@ async function guardrailAdapters() {
   record("8 guardrails registered", guardrails.length === 8);
   record("all have unique ids", Object.keys(byId).length === 8);
 
-  // Regression: the 4 critical FPs from production logs
   const fc = byId.false_confirmation;
   record(
     "FP: \"No es exactamente así\" does NOT trigger false_confirmation",
@@ -110,11 +148,9 @@ async function guardrailAdapters() {
     pc.check("No es correcto todavía, falta justificar.", { classification: "correct_no_reasoning" }).violated === false
   );
 
-  // Surgical fix sanity: SolutionLeakGuardrail should repair a leak
   const fix = sl.surgicalFix("Son R1, R2 y R4 las correctas.", { correctAnswer: ["R1","R2","R4"], lang: "es" });
   record("Surgical fix removes element list", fix && fix.applied === true);
 
-  // CompleteSolutionGuardrail regression: catches confirmation of wrong PARTS.
   const cs = byId.complete_solution;
   record(
     "TP: 'Genial, has tenido en cuenta R4' on negated-correct R4 violates complete_solution",
@@ -142,17 +178,33 @@ async function guardrailAdapters() {
   );
 }
 
-// ─── Section 3: GuardrailPipeline integration ────────────────────────────────
-
+/*
+   IN -> ____|________
+        | pipelineIntegration() | -> Promise<void>
+         ----------
+      Drives the GuardrailPipeline end-to-end over clean, FP, leak and didactic responses.
+   */
 async function pipelineIntegration() {
   const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
   const { createDefaultGuardrails } = require(path.join(ROOT, "src/infrastructure/guardrails"));
 
+  /*
+     IN -> ____|________
+          | MockLlm() | -> MockLlm
+           ----------
+        Stub ILlmService returning queued responses in order, defaulting to "OK".
+     */
   class MockLlm {
     constructor(responses) { this.responses = responses || []; this.calls = 0; }
     async chatCompletion() { const r = this.responses[this.calls] || "OK"; this.calls++; return r; }
   }
 
+  /*
+     IN -> ____|________
+          | runCase() | -> Promise<Obj>
+           ----------
+        Builds a pipeline with a MockLlm and validates a single primary response.
+     */
   async function runCase(primary, ctx, mockResponses, budgetMs) {
     const pipeline = new GuardrailPipeline({
       guardrails: createDefaultGuardrails(),
@@ -183,29 +235,29 @@ async function pipelineIntegration() {
   const r3 = await runCase("Son R1, R2 y R4 las correctas.", { ...ctxBase, classification: "correct_no_reasoning" }, []);
   record("Leak → surgical_ok, 0 LLM retries", r3.path === "surgical_ok" && r3.llmRetryCount === 0);
 
-  // After C4 (DidacticExplanationGuardrail.surgicalFix), didactic responses
-  // are repaired surgically without an LLM retry — the response is reduced
-  // to its existing question(s) or replaced with a rotating fallback.
   const r4 = await runCase(
     "Esto significa que cuando una resistencia está en corto, no pasa. ¿Qué crees que pasa con la corriente?",
     ctxBase,
-    [] // no LLM retry expected
+    []
   );
   record("Didactic with embedded question → surgical_ok, 0 LLM retries (C4)",
     r4.path === "surgical_ok" && r4.llmRetryCount === 0);
 
-  // Pure didactic with no embedded question → still surgical_ok (fallback question).
   const r5 = await runCase(
     "Esto significa que cuando una resistencia está en corto, no pasa la corriente por ella.",
     ctxBase,
-    [] // surgical fallback fires; no LLM retry
+    []
   );
   record("Didactic without question → surgical_ok via fallback (C4)",
     r5.path === "surgical_ok" && r5.llmRetryCount === 0);
 }
 
-// ─── Section 4: ILlmService contract ─────────────────────────────────────────
-
+/*
+   IN -> ____|________
+        | llmServiceContract() | -> Promise<void>
+         ----------
+      Verifies OllamaLlmAdapter satisfies the ILlmService contract surface.
+   */
 async function llmServiceContract() {
   const ILlmService = require(path.join(ROOT, "src/domain/ports/services/ILlmService"));
   const { BudgetExhaustedError } = require(path.join(ROOT, "src/domain/ports/services/ILlmService"));
@@ -218,8 +270,12 @@ async function llmServiceContract() {
   record("OllamaLlmAdapter exposes isHealthy", typeof new OllamaLlmAdapter().isHealthy === "function");
 }
 
-// ─── Section 5: end-to-end via orchestrator (stubbed) ────────────────────────
-
+/*
+   IN -> ____|________
+        | orchestratorE2E() | -> Promise<void>
+         ----------
+      Runs the orchestrator end-to-end with stub repos and asserts the response is sanitized.
+   */
 async function orchestratorE2E() {
   const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
   const { createDefaultGuardrails } = require(path.join(ROOT, "src/infrastructure/guardrails"));
@@ -230,7 +286,6 @@ async function orchestratorE2E() {
 
   const mockLlm = {
     async chatCompletion() {
-      // A response that violates BOTH solution_leak and state_reveal
       return "Eso es correcto. Son R1, R2 y R4 porque R5 está cortocircuitada.";
     },
   };
@@ -257,7 +312,7 @@ async function orchestratorE2E() {
       async countConsecutiveFromEnd() { return 0; },
       async countAssistantMessages() { return 0; },
       async getLastAssistantMessages() { return []; },
-      async appendMessage() { /* noop */ },
+      async appendMessage() {},
     },
     securityService: { analyzeInput: () => ({ safe: true, category: "safe" }) },
     llmService: mockLlm,
@@ -296,8 +351,12 @@ async function orchestratorE2E() {
   record("E2E: pipeline completed in <100ms", ctx.timing.pipelineMs != null && ctx.timing.pipelineMs < 100);
 }
 
-// ─── Run all ─────────────────────────────────────────────────────────────────
-
+/*
+   IN -> ____|________
+        | main() | -> Promise<void>
+         ----------
+      Runs every section, prints the summary and exits non-zero on any failure.
+   */
 (async function main() {
   await runSection("Section 1: Shared domain text services", textServices);
   await runSection("Section 2: IGuardrail adapters (regression)", guardrailAdapters);

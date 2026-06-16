@@ -1,26 +1,40 @@
 #!/usr/bin/env node
 "use strict";
 
-/**
- * Multi-turn smoke: 2 turnos por cada uno de los 7 ejercicios.
- * Verifica:
- *   - Turn 1 ("no sé por dónde empezar") arranca interaccion y responde
- *   - Turn 2 (follow-up) usa la misma interaccionId y responde
- *   - Tutor no devuelve fallback ni mensaje vacío
- *   - Streaming activo (chunks > 1)
- *   - No '(not defined)' en el system prompt (dump)
- *   - Per-turn timing logueado
- *
- * Uso: node tests/smoke/ns-multiturn.js
- */
-
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    MULTI-TURN SMOKE                   |
+            |  Runs 2 turns against each of the 7 exercises. Checks  |
+            |  that turn 1 starts an interaction, turn 2 reuses the  |
+            |  same interaccionId, no fallback or empty reply,       |
+            |  streaming is active and the prompt has no '(not       |
+            |  defined)'.                                            |
+        ____|________________                                       |
+   Txt -> | req() | -> Promise<Obj>                                 |
+          -----------------                                         |
+        ____|________________                                       |
+        | reqSSE() | -> Promise<Obj>                                |
+        ----------------------                                      |
+        ____|________________                                       |
+        | parseSetCookie() | -> Txt | null                          |
+        ----------------------                                      |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 const BACKEND = process.env.SMOKE_BACKEND || "http://localhost:3030";
 const DUMP_DIR = process.env.SMOKE_DUMP || "/tmp/tv_dump";
 
+/*
+   IN -> ____|________
+        | req() | -> Promise<Obj>
+         ----------
+      Performs a buffered HTTP request and resolves with status, headers and body.
+   */
 function req(method, urlStr, opts) {
   opts = opts || {};
   const u = new URL(urlStr);
@@ -41,6 +55,12 @@ function req(method, urlStr, opts) {
   });
 }
 
+/*
+   IN -> ____|________
+        | reqSSE() | -> Promise<Obj>
+         ----------
+      Consumes a streaming SSE response and resolves with accumulated text and timing stats.
+   */
 function reqSSE(urlStr, opts) {
   opts = opts || {};
   const u = new URL(urlStr);
@@ -93,6 +113,12 @@ function reqSSE(urlStr, opts) {
   });
 }
 
+/*
+   IN -> ____|________
+        | parseSetCookie() | -> Txt | null
+         ----------
+      Joins the cookie name=value pairs from a Set-Cookie header into a single Cookie string.
+   */
 function parseSetCookie(h) {
   if (!h) return null;
   const arr = Array.isArray(h) ? h : [h];
@@ -102,8 +128,6 @@ function parseSetCookie(h) {
 const C = { ok: "\x1b[32m", fail: "\x1b[31m", warn: "\x1b[33m", reset: "\x1b[0m", dim: "\x1b[2m" };
 const c = (s, k) => (C[k] || "") + s + C.reset;
 
-// Per-exercise turn 2 follow-up — chosen so the classifier doesn't hit the
-// happy path on turn 1 ("no sé") again, exercising different RAG branches.
 const turn2Per = {
   1: "R1, R2 y R4 dado que R3 está en abierto y R5 cortocircuitada",
   2: "R1 y R2 supongo, porque las demás se pueden quitar",
@@ -132,15 +156,12 @@ const turn2Per = {
     const num = (ej.imagen || "").match(/Ejercicio(\d+)/i);
     const n = num ? Number(num[1]) : 0;
     process.stdout.write(`Ej ${n} `);
-    // Turn 1
     const t1 = await reqSSE(`${BACKEND}/api/ollama/chat/stream`, {
       headers: { "Content-Type": "application/json", "x-llm-mode": "upv", cookie },
       body: JSON.stringify({ exerciseId: ej._id, llmMode: "upv", userMessage: "no sé por dónde empezar" }),
     }).catch(e => ({ error: e.message }));
     process.stdout.write(`turn1=${t1.firstChunkMs || "?"}ms/${t1.chunkCount || 0}chunks `);
-    // Wait briefly so backend persistence settles
     await new Promise(r => setTimeout(r, 800));
-    // Turn 2 with same interaccionId
     const t2 = await reqSSE(`${BACKEND}/api/ollama/chat/stream`, {
       headers: { "Content-Type": "application/json", "x-llm-mode": "upv", cookie },
       body: JSON.stringify({
@@ -151,7 +172,6 @@ const turn2Per = {
     }).catch(e => ({ error: e.message }));
     process.stdout.write(`turn2=${t2.firstChunkMs || "?"}ms/${t2.chunkCount || 0}chunks`);
 
-    // Validate
     const t1text = (t1.acc || "").trim();
     const t2text = (t2.acc || "").trim();
     const fallbackPattern = /tardando demasiado|reformular tu mensaje|too long to respond/i;
@@ -186,7 +206,6 @@ const turn2Per = {
   if (t1times.length) console.log(`Turn 1 firstChunk: avg=${Math.round(t1times.reduce((a,b)=>a+b,0)/t1times.length)}ms min=${Math.min(...t1times)} max=${Math.max(...t1times)}`);
   if (t2times.length) console.log(`Turn 2 firstChunk: avg=${Math.round(t2times.reduce((a,b)=>a+b,0)/t2times.length)}ms min=${Math.min(...t2times)} max=${Math.max(...t2times)}`);
 
-  // Inspect the latest dumps for '(not defined)' regression
   let promptsWithNotDef = 0;
   try {
     const all = fs.readdirSync(DUMP_DIR).filter(f => f.endsWith("_prompt.txt"));

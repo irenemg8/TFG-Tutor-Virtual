@@ -2,6 +2,17 @@
 
 const RetrievalAgent = require("../../src/domain/agents/retrievalAgent");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |              RETRIEVAL AGENT - DI (NS-5)              |
+            |  Test suite for the NS-5 dependency-injection         |
+            |  inversion. Verifies the agent forwards an injected   |
+            |  resultadoRepo to runFullPipeline as the 7th argument |
+            |  options object, and omits the options entirely when  |
+            |  no resultadoRepo is injected.                        |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 describe("RetrievalAgent NS-5 DI inversion", () => {
   test("forwards injected resultadoRepo to runFullPipeline.options", async () => {
     const calls = [];

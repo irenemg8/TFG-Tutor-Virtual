@@ -2,12 +2,27 @@
 
 const Ejercicio = require("../../src/domain/entities/Ejercicio");
 
-// Regression for the 2026-04-27 bug where titles seedados como
-// "Resistencias y Circuito Abierto" (sin número) hacían que
-// getExerciseNumber() devolviese null y ragPipeline enrutase retrieval a
-// "exercise_null" → 0 resultados. El fix añade fallback al campo `imagen`.
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  EJERCICIO — UNIT TESTS               |
+            |  Verifies the derived getters of the Ejercicio entity. |
+            |  Regresses the 2026-04-27 bug where number-less titles |
+            |  made getExerciseNumber() return null, and BUG-EVAL-   |
+            |  EMPTY (2026-06-15) where an empty evaluableElements    |
+            |  must fall back to the netlist.                        |
+        ____|________________                                       |
+        | build() | -> Ejercicio                                    |
+        -----------                                                 |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("Ejercicio.getExerciseNumber", () => {
+  /*
+       IN -> ____|________
+            | build() | -> Ejercicio
+             -----------
+        Builds an Ejercicio from a partial props object with sane defaults.
+  */
   function build(props) {
     return new Ejercicio({
       title: props.title || "",
@@ -41,10 +56,6 @@ describe("Ejercicio.getExerciseNumber", () => {
   });
 });
 
-// BUG-EVAL-EMPTY (2026-06-15): rows seeded before the netlist-fallback have an
-// empty elementos_evaluables, which silently broke flow-negation + cumulative
-// closure and sent the tutor into an infinite re-ask loop. getEvaluableElements
-// must derive the set from the netlist when the explicit field is empty.
 describe("Ejercicio.getEvaluableElements — netlist fallback", () => {
   const netlist = "R1 N1 N2 1\nV1 N1 0 1\nR2 N2 0 1\nR3 N3 0 1\nR4 N2 0 1\nR5 0 0 1";
 

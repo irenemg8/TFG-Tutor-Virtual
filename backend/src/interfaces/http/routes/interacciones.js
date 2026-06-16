@@ -1,10 +1,39 @@
-// backend/src/interfaces/http/routes/interacciones.js
 const express = require("express");
 const container = require("../../../container");
 const { canAccessUserData } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  INTERACCIONES ROUTES                 |
+            |  Express router over tutoring interactions. Mounted    |
+            |  under /api/interacciones; globalAuth runs upstream so |
+            |  req.userId comes from the session. Ownership is       |
+            |  enforced per route via canAccessUserData. Endpoints:  |
+            |     GET    /mine                          -> [Obj]    |
+            |     GET    /user/:userId                  -> [Obj]    |
+            |     GET    /byExercise/:exerciseId         -> Obj|null |
+            |     GET    /byExerciseAndUser/:ex/:user    -> Obj|null |
+            |     GET    /:id                            -> Obj     |
+            |     DELETE /:id                            -> Obj     |
+        ____|__________                                              |
+   Obj -> | repo() | -> InteraccionRepo | null    (reads container)  |
+          ----------                                                 |
+        ____|_____________                                           |
+   Txt -> | isValidId() | -> T/F                  (pure check)       |
+          -------------                                              |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+ Obj -> ____|__________
+       | repo() | -> InteraccionRepo | null    (reads container (Obj))
+        ----------
+    Resolves the interaction repository from the container. Sends a 503
+    and returns null when the persistence layer is not initialized yet.
+*/
 function repo(res) {
   if (!container._initialized || !container.interaccionRepo) {
     res.status(503).json({ error: "service_unavailable" });
@@ -13,18 +42,20 @@ function repo(res) {
   return container.interaccionRepo;
 }
 
-// Validación de IDs: ObjectId (24 hex) o UUID (36 con guiones).
-// Suficiente como guardia básica; la FK de Postgres valida el resto.
+/*
+ Txt -> ____|_____________
+       | isValidId() | -> T/F
+        -------------
+    True when the value is a legacy ObjectId (24 hex) or a UUID (36 chars
+    with dashes). Basic guard; the Postgres FK validates the rest.
+*/
 function isValidId(v) {
   if (typeof v !== "string") return false;
-  if (/^[a-f0-9]{24}$/i.test(v)) return true;           // ObjectId legacy
-  if (/^[0-9a-f-]{36}$/i.test(v)) return true;          // UUID
+  if (/^[a-f0-9]{24}$/i.test(v)) return true;
+  if (/^[0-9a-f-]{36}$/i.test(v)) return true;
   return false;
 }
 
-// NOTE: globalAuth está aplicado a nivel de app. req.userId viene de la sesión.
-
-// 0. Interacciones del usuario actual
 router.get("/mine", async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -35,7 +66,6 @@ router.get("/mine", async (req, res) => {
   }
 });
 
-// 1. LEGACY: interacciones de otro usuario (solo admin/profesor)
 router.get("/user/:userId", async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -51,7 +81,6 @@ router.get("/user/:userId", async (req, res) => {
   }
 });
 
-// 2. Última interacción del usuario actual + ejercicio
 router.get("/byExercise/:exerciseId", async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -64,7 +93,6 @@ router.get("/byExercise/:exerciseId", async (req, res) => {
   }
 });
 
-// 2b. LEGACY: compat frontend anterior
 router.get("/byExerciseAndUser/:exerciseId/:userId", async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -82,7 +110,6 @@ router.get("/byExerciseAndUser/:exerciseId/:userId", async (req, res) => {
   }
 });
 
-// 3. Obtener una interacción concreta (con conversacion embedded al estilo legacy)
 router.get("/:id", async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -93,9 +120,6 @@ router.get("/:id", async (req, res) => {
     if (!canAccessUserData(i.userId || i.usuario_id, req)) {
       return res.status(403).json({ message: "No autorizado." });
     }
-    // El frontend legacy espera `conversacion` como array embebido (como era
-    // en Mongo). En Pg los mensajes viven en tabla aparte; los cargamos y los
-    // inyectamos aquí para mantener el contrato del API sin tocar React.
     const messages = await container.messageRepo.getAllMessages(id);
     const body = i.toJSON();
     body.conversacion = messages;
@@ -105,7 +129,6 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// 4. Borrar interacción (solo owner)
 router.delete("/:id", async (req, res) => {
   const r = repo(res); if (!r) return;
   try {

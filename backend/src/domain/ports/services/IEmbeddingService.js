@@ -1,24 +1,40 @@
 "use strict";
 
-/**
- * Port interface for text embedding generation.
- * Implementations: OllamaEmbeddingService (current)
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  IEMBEDDINGSERVICE                    |
+            |  Port/interface defining the contract for text        |
+            |  embedding generation. The active adapter is          |
+            |  OllamaEmbeddingService; the methods here just throw. |
+            |                                                       |
+        ____|________________________                              |
+   Txt -> | generateEmbedding() | -> Promise<[R]>                  |
+          ----------------------                                   |
+        ____|__________________________                            |
+   [Txt] -> | generateEmbeddings() | -> Promise<[[R]]>            |
+            -----------------------                                |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class IEmbeddingService {
-  /**
-   * Generate an embedding vector for a single text.
-   * @param {string} text
-   * @returns {Promise<number[]>}
-   */
+  /*
+   Txt -> ____|________________________
+         | generateEmbedding() | -> Promise<[R]>
+          ----------------------
+      Contract: resolve the embedding vector for a single text.
+      Abstract here.
+  */
   async generateEmbedding(text) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Generate embedding vectors for multiple texts.
-   * @param {string[]} texts
-   * @returns {Promise<number[][]>}
-   */
+  /*
+   [Txt] -> ____|__________________________
+           | generateEmbeddings() | -> Promise<[[R]]>
+            -----------------------
+      Contract: resolve one embedding vector per input text. Abstract
+      here.
+  */
   async generateEmbeddings(texts) {
     throw new Error("Not implemented");
   }

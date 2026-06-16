@@ -2,9 +2,17 @@
 
 const { classifyQuery } = require("../../src/domain/services/rag/queryClassifier");
 
-// Smoke tests for the rule-based classifier. Cubren los caminos críticos del
-// orchestrator (greeting → handleGreeting inline; correct/wrong → LLM path)
-// y la propagación de concepts que después usa el conceptsBanner del tutor.
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    QUERY CLASSIFIER                   |
+            |  Smoke tests for the rule-based classifier. Cover the |
+            |  critical orchestrator paths (greeting,               |
+            |  correct/wrong, dont_know) and the propagation of     |
+            |  concepts later consumed by the tutor's               |
+            |  conceptsBanner. Include the B1 regression where      |
+            |  student meta-questions are routed to dont_know.      |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("classifyQuery", () => {
   const correctAnswer = ["R1", "R2", "R4"];
@@ -33,7 +41,6 @@ describe("classifyQuery", () => {
       correctAnswer,
       evaluable
     );
-    // Sin negaciones explícitas + concepto -> correct_wrong_reasoning
     expect(r.type).toBe("correct_wrong_reasoning");
     expect(r.concepts.length).toBeGreaterThan(0);
   });
@@ -62,11 +69,6 @@ describe("classifyQuery", () => {
     expect(r.negated).toContain("R3");
   });
 
-  // ---------------------------------------------------------------------------
-  // Regresión: preguntas reformuladoras del alumno (B1)
-  // Antes caían a wrong_answer y disparaban el banner agresivo. Ahora se
-  // tratan como dont_know para que el LLM baje el scaffolding.
-  // ---------------------------------------------------------------------------
   test("metapregunta con '?' sin elementos → dont_know", () => {
     const r = classifyQuery(
       "Por cuáles resistencias pasa la corriente, cierto?",
@@ -82,8 +84,6 @@ describe("classifyQuery", () => {
       correctAnswer,
       evaluable
     );
-    // El alumno menciona elementos: el classifier debe seguir su ruta normal,
-    // no la nueva regla de pregunta-sin-elementos.
     expect(r.type).not.toBe("dont_know");
     expect(r.proposed.sort()).toEqual(["R1", "R2"]);
   });

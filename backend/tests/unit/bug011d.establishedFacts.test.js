@@ -1,13 +1,17 @@
 "use strict";
 
-/**
- * BUG-011-D (2026-05-03): el tutor confirmaba un hecho ("Sí, R1 conecta
- * N1 con N2") y al turno siguiente repreguntaba sobre lo mismo. Ahora
- * contextAgent extrae los hechos ya establecidos en turnos previos y los
- * inyectamos como banner ESTABLISHED FACTS para que el LLM avance.
- */
-
 const ContextAgent = require("../../src/domain/agents/contextAgent");
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |   ESTABLISHED FACTS — UNIT TESTS (BUG-011-D)          |
+            |  Regresses BUG-011-D (2026-05-03): the tutor confirmed |
+            |  a fact and re-asked it next turn. Verifies            |
+            |  contextAgent._extractEstablishedFacts pulls prior     |
+            |  affirmations (not questions), dedupes them, caps at   |
+            |  5, and tolerates null/empty content.                 |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("contextAgent._extractEstablishedFacts (BUG-011-D)", () => {
   const a = Object.create(ContextAgent.prototype);
@@ -74,8 +78,6 @@ describe("contextAgent._extractEstablishedFacts (BUG-011-D)", () => {
       { content: "Sí, R1 conecta N1 con N2. ¿Podrías decirme a qué nodo está conectada la otra terminal de R1?" },
     ];
     const facts = a._extractEstablishedFacts(msgs);
-    // Sólo debe extraer la afirmación "R1 conecta N1 con N2", no la
-    // pregunta interrogativa.
     const r1Connects = facts.filter((f) => /R1[^.!?\n]*conecta/i.test(f));
     expect(r1Connects.length).toBeGreaterThanOrEqual(1);
   });

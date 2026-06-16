@@ -1,22 +1,29 @@
 "use strict";
 
-// Element mention extraction from free-text messages.
-// Consolidates 3 previous implementations: queryClassifier.extractResistances,
-// guardrails.extractResistances, ollamaChatRoutes.extractResistencias.
-//
-// Two APIs:
-//   extractResistances(text)                             — legacy regex (R\d+)
-//   extractMentionedElements(text, evaluableElements)    — generic, word-boundary
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   ELEMENT EXTRACTOR                   |
+            |  Module that extracts element mentions from free-text   |
+            |  messages. Consolidates three former implementations    |
+            |  (classifier, guardrails and chat routes).             |
+        ____|________________                                       |
+   Txt -> | extractResistances()        | -> [Txt]                  |
+          --------------------------------                          |
+   Txt, [Txt] -> | extractMentionedElements() | -> [Obj]            |
+                 -------------------------------                    |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-// Word-boundary character classes — permit the element to be surrounded by
-// common punctuation/spacing without being absorbed into a longer token.
 const BOUNDARY_BEFORE = /[\s,;:(¿¡"'\-]/;
 const BOUNDARY_AFTER = /[\s,;:).?!"'\-]/;
 
-/**
- * Legacy: extract resistance names via R\d+ regex, uppercased and deduplicated.
- * Preserved for backward compatibility where evaluableElements isn't available.
- */
+/*
+   Txt -> ____|______________________
+         | extractResistances() | -> [Txt]
+          ------------------------
+      Extracts resistance names via R\d+ regex, uppercased and deduplicated.
+      Kept for backward compatibility where evaluableElements is unavailable.
+*/
 function extractResistances(text) {
   if (typeof text !== "string") return [];
   const matches = text.match(/R\d+/gi);
@@ -33,17 +40,18 @@ function extractResistances(text) {
   return out;
 }
 
-/**
- * Generic: extract mentions of specific evaluable elements (any type: R*, C*,
- * L*, V*, concept names, definitions). Returns array of { element, position }
- * with word-boundary checks so "R1" inside "CR10" doesn't match.
- *
- * Falls back to extractResistances behavior when evaluableElements is empty.
- */
+/*
+   Txt, [Txt] -> ____|___________________________
+                | extractMentionedElements() | -> [Obj]
+                 -----------------------------
+      Extracts mentions of specific evaluable elements (any type: R*, C*, L*,
+      V*, concept names) as { element, position }, with word-boundary checks so
+      "R1" inside "CR10" does not match. Falls back to the regex path when
+      evaluableElements is empty.
+*/
 function extractMentionedElements(text, evaluableElements) {
   if (typeof text !== "string") return [];
   if (!Array.isArray(evaluableElements) || evaluableElements.length === 0) {
-    // Fallback: regex path, still returning { element, position }
     const out = [];
     const seen = new Set();
     const re = /R\d+/gi;
@@ -57,7 +65,6 @@ function extractMentionedElements(text, evaluableElements) {
     }
     return out;
   }
-  // Generic path: scan for each evaluable element substring with boundary check.
   const lower = text.toLowerCase();
   const mentions = [];
   const seen = new Set();

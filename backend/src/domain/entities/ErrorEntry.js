@@ -1,22 +1,44 @@
 "use strict";
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                       ERRORENTRY                      |
+            |  Value object for an Alternative Conception (AC) error |
+            |  detected in a student interaction. Replaces the       |
+            |  embedded errores[] array of the legacy Mongo Resultado.|
+        ____|________________                                       |
+   Obj -> | constructor() | -> ErrorEntry           (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   id: Txt | null                                      |
+            |   label: Txt                                          |
+            |   text: Txt                                           |
+        ____|___________                                            |
+        | toJSON() | -> Obj                          (reads attrs)  |
+        ------------                                                |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class ErrorEntry {
-  /**
-   * Value object for an Alternative Conception (AC) error detected in a student's interaction.
-   * Replaces the embedded errores[] array in MongoDB's Resultado.
-   *
-   * @param {object} props
-   * @param {string} [props.id]
-   * @param {string}  props.label  - AC identifier (e.g. "AC13", "AC_UNK")
-   * @param {string}  props.text   - Human-readable error description
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> ErrorEntry    (writes attributes id (Txt|null),
+          -----------------                  label (Txt), text (Txt))
+      Builds the value object from a plain props object. `label` is the AC
+      identifier (e.g. "AC13", "AC_UNK") and `text` its readable description.
+  */
   constructor(props) {
     this.id = props.id || null;
     this.label = props.label;
     this.text = props.text;
   }
 
-  /** Legacy Mongo JSON shape for frontend compat (Resultado.errores items). */
+  /*
+       ____|___________
+      | toJSON() | -> Obj    (reads attributes id (Txt|null), label (Txt), text (Txt))
+       ------------
+      Serializes to the legacy Mongo shape used inside Resultado.errores[].
+  */
   toJSON() {
     return {
       id: this.id,

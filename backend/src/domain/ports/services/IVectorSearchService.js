@@ -1,27 +1,41 @@
 "use strict";
 
-/**
- * Port interface for vector similarity search.
- * Implementations: ChromaVectorSearchService (current)
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                IVECTORSEARCHSERVICE                   |
+            |  Port/interface defining the contract for vector      |
+            |  similarity search. The active adapter is             |
+            |  ChromaVectorSearchService; the methods here throw.   |
+            |                                                       |
+        ____|________________________                              |
+   [R], Txt, Z -> | search() | -> Promise<[Obj]>                  |
+                  -----------                                      |
+        ____|__________________                                    |
+   Txt, [Obj] -> | addDocuments() | -> Promise<void>              |
+                 ----------------                                  |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class IVectorSearchService {
-  /**
-   * Search for similar documents in a collection.
-   * @param {number[]} queryEmbedding
-   * @param {string} collectionName
-   * @param {number} [topK]
-   * @returns {Promise<Array<{id: string, content: string, score: number, metadata: object}>>}
-   */
+  /*
+   [R], Txt, Z -> ____|__________
+                 | search() | -> Promise<[Obj]>
+                  -----------
+      Contract: search a collection for documents similar to the query
+      embedding, returning up to topK matches as
+      { id, content, score, metadata }. Abstract here.
+  */
   async search(queryEmbedding, collectionName, topK) {
     throw new Error("Not implemented");
   }
 
-  /**
-   * Add documents to a collection.
-   * @param {string} collectionName
-   * @param {Array<{id: string, content: string, embedding: number[], metadata: object}>} data
-   * @returns {Promise<void>}
-   */
+  /*
+   Txt, [Obj] -> ____|________________
+                | addDocuments() | -> Promise<void>
+                 ----------------
+      Contract: add documents (each { id, content, embedding, metadata })
+      to the named collection. Abstract here.
+  */
   async addDocuments(collectionName, data) {
     throw new Error("Not implemented");
   }

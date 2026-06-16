@@ -2,46 +2,46 @@
 
 const { BudgetExhaustedError } = require("../ports/services/ILlmService");
 
-/**
- * GuardrailPipeline: runs output guardrails over an LLM response with:
- *   1. PARALLEL checks     — all guardrails run via Promise.all (~1ms total)
- *   2. SURGICAL-FIRST      — try deterministic fixes before any LLM retry
- *   3. CONSOLIDATED RETRY  — at most ONE LLM retry with combined hints
- *   4. TIME BUDGET         — skips further work if budget is exceeded
- *
- * Worst case LLM calls per request: 2 (primary + 1 consolidated retry)
- * vs. the old middleware's worst-case of 11.
- *
- * Usage:
- *   const pipeline = new GuardrailPipeline({
- *     guardrails: createDefaultGuardrails(),
- *     llmService: ollamaAdapter,
- *     budgetMs: 45000,
- *     logger: trace,
- *   });
- *   const result = await pipeline.validate(primaryResponse, ctx, { messages: [...] });
- *   // result.response is the safe-to-send text
- *
- * Result shape: {
- *   response: string,           // final safe response
- *   violated: boolean,          // false if everything passed
- *   path: string,               // one of: primary_ok | surgical_ok | llm_retry_ok |
- *                               //         llm_retry_plus_surgical | budget_exhausted |
- *                               //         no_retry_hints | retry_failed_final_surgical
- *   residualViolations: array,  // violations that couldn't be fixed (may be empty)
- *   llmRetryCount: number,      // 0 or 1
- *   surgicalFixesApplied: array,// guardrail ids that surgically fixed things
- * }
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   GUARDRAILPIPELINE                   |
+            |  Runs output guardrails over an LLM response: parallel|
+            |  checks, surgical-first deterministic fixes, at most  |
+            |  ONE consolidated LLM retry, all under a time budget. |
+            |  Worst case 2 LLM calls per request (primary + retry).|
+        ____|________________                                       |
+   Obj -> | constructor() | -> GuardrailPipeline    (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   guardrails: [IGuardrail]    llm: ILlmService        |
+            |   logger: Obj                 budgetMs: N             |
+            |   minRetryBudgetMs: N         emitEvent: Fn           |
+        ____|___________                                            |
+        | validate() | -> Promise<Obj>               (reads attrs)  |
+        --------------                                              |
+        ____|_______________________                                |
+        | _runChecksInParallel() | -> Promise<[Obj]> (reads attrs)  |
+        --------------------------                                  |
+        ____|_________________                                      |
+        | _findGuardrail() | -> IGuardrail | null    (reads attrs)  |
+        --------------------                                        |
+        ____|_________                                              |
+        | _safe() | -> void                                         |
+        -----------                                                 |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class GuardrailPipeline {
-  /**
-   * @param {object} opts
-   * @param {Array<IGuardrail>} opts.guardrails
-   * @param {ILlmService} opts.llmService
-   * @param {object} [opts.logger]   — pipelineDebugLogger or compatible
-   * @param {number} [opts.budgetMs] — default 45000
-   * @param {number} [opts.minRetryBudgetMs] — min ms needed to attempt LLM retry, default 10000
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> GuardrailPipeline    (writes attributes guardrails ([IGuardrail]),
+          -----------------                         llm (ILlmService), logger (Obj), budgetMs (N),
+                                                    minRetryBudgetMs (N), emitEvent (Fn))
+      Builds the pipeline from an options object. Requires a non-empty
+      guardrails array and an llmService. The optional emitEvent fires
+      out-of-band notices so the SSE layer can swap a leaked draft for a
+      neutral placeholder while a rewrite is in flight.
+  */
   constructor(opts) {
     if (!opts || !Array.isArray(opts.guardrails) || opts.guardrails.length === 0) {
       throw new Error("GuardrailPipeline requires a non-empty guardrails array");
@@ -54,25 +54,19 @@ class GuardrailPipeline {
     this.logger = opts.logger || _noopLogger();
     this.budgetMs = opts.budgetMs != null ? opts.budgetMs : 45000;
     this.minRetryBudgetMs = opts.minRetryBudgetMs != null ? opts.minRetryBudgetMs : 10000;
-    // Optional out-of-band event emitter (ragBus.emitEvent). Used to notify the
-    // SSE layer that the pipeline is about to call the LLM for a rewrite, so
-    // the frontend can swap the streamed (possibly leaked) draft for a neutral
-    // placeholder while the rewrite is in flight, instead of letting the user
-    // read the leaked draft for the 2-5s the rewrite takes.
     this.emitEvent = typeof opts.emitEvent === "function" ? opts.emitEvent : function () {};
   }
 
-  /**
-   * Validate a response and repair it if needed.
-   *
-   * @param {string} response
-   * @param {object} ctx — see IGuardrail ctx
-   * @param {object} opts
-   * @param {Array<{role,content}>} opts.messages — original LLM messages (for retry)
-   * @param {string} [opts.reqId] — request id for tracing
-   * @param {number} [opts.startMs] — override start time (if caller has budget offset)
-   * @returns {Promise<PipelineResult>}
-   */
+  /*
+   Txt, Obj, Obj -> ____|__________
+                   | validate() | -> Promise<Obj>    (reads attributes guardrails ([IGuardrail]),
+                    --------------                     llm (ILlmService), logger (Obj), budgetMs (N),
+                                                       minRetryBudgetMs (N), emitEvent (Fn))
+      Validates a response and repairs it if needed. Runs parallel checks,
+      then surgical fixes, then a single consolidated LLM retry for critical
+      residuals, then a final surgical pass. Resolves to the result object
+      describing the safe response and the path taken.
+  */
   async validate(response, ctx, opts) {
     opts = opts || {};
     const reqId = opts.reqId || "";
@@ -80,14 +74,8 @@ class GuardrailPipeline {
     const remainingBudget = () => this.budgetMs - (Date.now() - startMs);
 
     const surgicalFixesApplied = [];
-    // Chronological detail of every surgical rewrite applied this turn.
-    // Each entry: {guardrailId, before, after, durationMs, phase}.
-    // The pipeline already had the before/after in hand for the logger but
-    // dropped them — now we keep them so the export endpoint can surface
-    // what the LLM was about to say before the redaction kicked in.
     const surgicalFixDetails = [];
 
-    // === Phase A: initial parallel check ===
     let currentResponse = response;
     let checks = await this._runChecksInParallel(currentResponse, ctx, reqId);
     let violations = checks.filter(function (c) { return c.violated; });
@@ -101,7 +89,6 @@ class GuardrailPipeline {
       });
     }
 
-    // === Phase B: surgical fixes on all violated guardrails ===
     for (var i = 0; i < violations.length; i++) {
       const v = violations[i];
       const g = this._findGuardrail(v.id);
@@ -129,7 +116,6 @@ class GuardrailPipeline {
       }
     }
 
-    // Re-check after surgical
     checks = await this._runChecksInParallel(currentResponse, ctx, reqId);
     violations = checks.filter(function (c) { return c.violated; });
     if (violations.length === 0) {
@@ -141,38 +127,6 @@ class GuardrailPipeline {
       });
     }
 
-    // === Phase C: consolidated LLM retry (if budget permits) ===
-    //
-    // Quality-vs-latency gate: a consolidated retry costs another 5-15s
-    // against PoliGPT. Reserve it for pedagogically-critical violations
-    // where the surgical fix cannot reliably recover the meaning:
-    //   - solution_leak: tutor revealed the answer
-    //   - false_confirmation: confirmed a wrong answer as right
-    //   - premature_confirmation: confirmed without justification
-    //   - state_reveal: revealed element state (short/open)
-    //   - complete_solution: emitted a step-by-step worked solution
-    //   - repeated_question: literal repetition of previous Socratic question
-    //     (BUG-A 2026-05-11: added here because RepeatedQuestionGuardrail's
-    //     surgicalFix returns null on purpose — it cannot rewrite the question
-    //     without LLM knowledge of the AC; without retry, the repeated
-    //     question reached the student and they wrote "ya me lo has
-    //     preguntado antes" in production logs).
-    //   - adherence: BUG-CRIT (2026-06-11). The adherence guardrail has TWO
-    //     surgically-fixable rules (contradiction, multi_question — repaired in
-    //     Phase B and gone before this point) AND ONE retry-only rule:
-    //     false_premise ("¿por qué R4 no influye?" about a CORRECT element).
-    //     false_premise has NO surgicalFix on purpose (there is no safe rewrite
-    //     of a question built on a false presupposition), so its only repair
-    //     path is the consolidated retry. Before this fix, adherence was absent
-    //     from this set, so a residual false_premise hit `non_critical_only`
-    //     and the false-premise question reached the student VERBATIM — exactly
-    //     the "¿Por qué crees que R4 no influye?" leak observed in production.
-    //     The detection was dead. Adding adherence here wires its retry hint in.
-    //     (contradiction/multi_question never reach here unless their surgical
-    //     fix failed, in which case a retry is the correct fallback anyway.)
-    // For the rest (language_drift, didactic_explanation, dataset_style,
-    // element_naming), the surgical fix already rewrote the offending sentence
-    // in place; an LLM retry wastes a round-trip without measurable quality gain.
     const CRITICAL_GUARDRAILS = new Set([
       "solution_leak",
       "false_confirmation",
@@ -181,9 +135,6 @@ class GuardrailPipeline {
       "complete_solution",
       "repeated_question",
       "adherence",
-      // BUG-LOOP (2026-06-11): retry-only (no safe rewrite of the question),
-      // so it MUST be here or its detection is dead — same class of bug as
-      // BUG-CRIT above. Forces a pivot when the tutor re-asks a settled element.
       "settled_element_question",
     ]);
     const criticalViolations = violations.filter(function (v) {
@@ -197,7 +148,6 @@ class GuardrailPipeline {
         surgicalFixDetails: surgicalFixDetails,
       });
     }
-    // Only the critical residuals justify the retry cost.
     violations = criticalViolations;
     const budget = remainingBudget();
     if (budget < this.minRetryBudgetMs) {
@@ -231,10 +181,6 @@ class GuardrailPipeline {
       reqId, "consolidated", 1, { guardrails: violations.map(v => v.id) }
     ));
 
-    // Fire an out-of-band event so the SSE bridge can tell the frontend to
-    // swap the leaked draft for a placeholder NOW, before we spend 2-5s
-    // generating the rewrite. The frontend that doesn't know about this
-    // event simply ignores it (additive change).
     this._safe(() => this.emitEvent("guardrail_rewriting", "start", {
       violations: violations.map(v => v.id),
     }));
@@ -248,7 +194,6 @@ class GuardrailPipeline {
         reason: "consolidated_retry", response: retryResponse,
       }));
     } catch (err) {
-      // Budget or network error → return surgical result as-is
       this._safe(() => this.logger.traceError && this.logger.traceError(reqId, "consolidated_retry", err));
       return _result({
         response: currentResponse, violated: true,
@@ -259,7 +204,6 @@ class GuardrailPipeline {
       });
     }
 
-    // === Phase D: re-check retry response + final surgical fallback ===
     checks = await this._runChecksInParallel(retryResponse, ctx, reqId);
     violations = checks.filter(function (c) { return c.violated; });
     if (violations.length === 0) {
@@ -271,7 +215,6 @@ class GuardrailPipeline {
       });
     }
 
-    // Final surgical pass on retry response
     let finalResponse = retryResponse;
     for (var j = 0; j < violations.length; j++) {
       const v2 = violations[j];
@@ -296,7 +239,6 @@ class GuardrailPipeline {
       }
     }
 
-    // Final check
     checks = await this._runChecksInParallel(finalResponse, ctx, reqId);
     const finalViolations = checks.filter(function (c) { return c.violated; });
     return _result({
@@ -310,8 +252,14 @@ class GuardrailPipeline {
     });
   }
 
-  // ─── Internals ─────────────────────────────────────────────────────────────
-
+  /*
+   Txt, Obj, Txt -> ____|_______________________
+                   | _runChecksInParallel() | -> Promise<[Obj]>    (reads attributes guardrails ([IGuardrail]),
+                    --------------------------                      logger (Obj))
+      Runs every guardrail's check() concurrently via Promise.all and
+      returns one result object per guardrail with its violated flag,
+      evidence, metadata and elapsed check time.
+  */
   async _runChecksInParallel(response, ctx, reqId) {
     const self = this;
     const tasks = this.guardrails.map(async function (g) {
@@ -336,6 +284,12 @@ class GuardrailPipeline {
     return Promise.all(tasks);
   }
 
+  /*
+   Txt -> ____|_________________
+         | _findGuardrail() | -> IGuardrail | null    (reads attribute guardrails ([IGuardrail]))
+          --------------------
+      Returns the guardrail whose id matches, or null when none does.
+  */
   _findGuardrail(id) {
     for (var i = 0; i < this.guardrails.length; i++) {
       if (this.guardrails[i].id === id) return this.guardrails[i];
@@ -343,13 +297,33 @@ class GuardrailPipeline {
     return null;
   }
 
+  /*
+   Fn -> ____|_________
+        | _safe() | -> void
+         -----------
+      Invokes the given function and swallows any error so a logging
+      failure never breaks the pipeline.
+  */
   _safe(fn) {
-    try { fn(); } catch (_) { /* ignore logging errors */ }
+    try { fn(); } catch (_) { }
   }
 }
 
+/*
+   Obj -> ____|__________
+         | _result() | -> Obj
+          ------------
+      Identity helper that returns the pipeline result object as-is.
+*/
 function _result(r) { return r; }
 
+/*
+   [Obj], Txt -> ____|______________________
+                | _appendToSystemPrompt() | -> [Obj]
+                 --------------------------
+      Returns a copy of the messages with the suffix appended to the
+      first system message; returns the input unchanged when empty.
+*/
 function _appendToSystemPrompt(messages, suffix) {
   if (!Array.isArray(messages) || messages.length === 0) return messages;
   return messages.map((m, i) => {
@@ -360,6 +334,13 @@ function _appendToSystemPrompt(messages, suffix) {
   });
 }
 
+/*
+        ____|______________
+       | _noopLogger() | -> Obj
+        -----------------
+      Builds a logger object whose trace methods are all no-ops, used
+      when no logger is injected.
+*/
 function _noopLogger() {
   return {
     traceGuardrailCheck: function () {},

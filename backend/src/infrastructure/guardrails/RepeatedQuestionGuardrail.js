@@ -8,27 +8,34 @@ const {
   QUESTION_FRAME_STOPWORDS,
 } = require("../../domain/services/languageManager");
 
-/**
- * BUG-010-C (2026-05-03): red de seguridad post-LLM contra repetición
- * literal de la pregunta socrática del turno anterior. El banner
- * [DO NOT REPEAT YOUR PREVIOUS QUESTION] del tutorAgent ya advierte al
- * LLM, pero qwen2.5 7B ignora la instrucción con cierta frecuencia.
- *
- * Mecanismo:
- *   - check(): extrae la última pregunta del response y la última del
- *     mensaje assistant más reciente (ctx.messages). Calcula similarity
- *     por solapamiento de tokens-no-stopword. Si ratio >= 0.7, viola.
- *   - surgicalFix(): no rescribe la pregunta (no podemos saber qué AC
- *     debería atacar). Devuelve null para forzar retry con el hint.
- *   - buildRetryHint(): centralised in languageManager.
- *
- * No dispara si la respuesta nueva no contiene "?". No dispara si no hay
- * pregunta previa identificable.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |               REPEATEDQUESTIONGUARDRAIL             |
+            |  Guardrail adapter (IGuardrail). Catches the tutor     |
+            |  repeating the previous turn's Socratic question       |
+            |  near-verbatim (token-overlap >= 0.7), which the LLM   |
+            |  does despite the do-not-repeat banner. Retry-only:    |
+            |  the question cannot be safely rewritten in place.     |
+        ____|_____________________                                   |
+        | check() | -> Obj            (reads response, ctx.messages) |
+        -----------                                                  |
+        ____|_______________________                                 |
+        | surgicalFix() | -> Obj | null          (reads response)    |
+        -----------------                                            |
+        ____|___________________                                     |
+        | buildRetryHint() | -> Txt              (reads ctx.messages)|
+        --------------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-// Combined stopwords for question tokenization: union of all language stopwords
-// plus common question-framing words. Sourced from languageManager so adding
-// a 4th language only requires editing that file.
+/*
+   Txt -> ____|_________________
+         | _tokenizeContent() | -> [Txt]
+          -------------------
+      Lowercases, strips punctuation, and returns the non-stopword content
+      tokens (length >= 3) used to measure question similarity.
+*/
 const STOPWORDS = new Set([
   ...getAllPatterns(HEURISTIC_STOPWORDS),
   ...QUESTION_FRAME_STOPWORDS,
@@ -43,6 +50,12 @@ function _tokenizeContent(text) {
     .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
 }
 
+/*
+   Txt -> ____|____________________
+         | _extractLastQuestion() | -> Txt
+          ----------------------
+      Returns the last interrogative fragment of the text, or "" if none.
+*/
 function _extractLastQuestion(text) {
   if (typeof text !== "string" || text.length === 0) return "";
   const matches = text.match(/[¿]?[^.!?]*\?/g);
@@ -50,6 +63,13 @@ function _extractLastQuestion(text) {
   return matches[matches.length - 1].trim();
 }
 
+/*
+   Txt, Txt -> ____|______________
+              | _similarity() | -> R
+               ---------------
+      Content-token overlap of two questions divided by max(len) (symmetric),
+      yielding the 0..1 repetition score compared against the 0.7 threshold.
+*/
 function _similarity(qa, qb) {
   const a = _tokenizeContent(qa);
   const b = _tokenizeContent(qb);
@@ -59,16 +79,16 @@ function _similarity(qa, qb) {
   for (let i = 0; i < a.length; i++) {
     if (setB.has(a[i])) overlap++;
   }
-  // BUG-G4 (2026-06-10): the denominator used to be min(len), which is
-  // ASYMMETRIC — a short new question whose content tokens are a SUBSET of a
-  // longer, semantically different previous question scored 1.0 and was
-  // flagged as a repeat (false positive, forcing a needless retry). max(len)
-  // is symmetric: a true repeat (similar length, high overlap) still scores
-  // high, but "¿qué resistencias importan?" vs a long unrelated question no
-  // longer reaches the 0.7 threshold.
   return overlap / Math.max(a.length, b.length);
 }
 
+/*
+   [Obj] -> ____|___________________________
+           | _findLastAssistantQuestion() | -> Txt
+            ----------------------------
+      Walks the messages backward and returns the last question asked by the
+      most recent assistant message, or "".
+*/
 function _findLastAssistantQuestion(messages) {
   if (!Array.isArray(messages)) return "";
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -85,6 +105,13 @@ class RepeatedQuestionGuardrail extends IGuardrail {
   get id() { return "repeated_question"; }
   get severity() { return "med"; }
 
+  /*
+   Txt, Obj -> ____|_________
+              | check() | -> Obj
+               -----------
+      True (violated) when the new question and the previous assistant
+      question score >= 0.7 similarity. No question / no prior question -> ok.
+  */
   check(response, ctx) {
     if (typeof response !== "string" || response.length === 0) {
       return { violated: false };
@@ -104,14 +131,26 @@ class RepeatedQuestionGuardrail extends IGuardrail {
     };
   }
 
+  /*
+   Txt, Obj -> ____|_______________
+              | surgicalFix() | -> Obj | null
+               -----------------
+      Retry-only: returns null when violated (the question needs the LLM to
+      be rewritten), else applied:false.
+  */
   surgicalFix(response, ctx) {
     if (typeof response !== "string") return null;
     const r = this.check(response, ctx);
     if (!r.violated) return { applied: false, text: response };
-    // No podemos rescribir la pregunta — necesitamos el LLM. Forzamos retry.
     return null;
   }
 
+  /*
+   Txt, Obj -> ____|___________________
+              | buildRetryHint() | -> Txt
+               --------------------
+      Returns the repeated-question retry hint, quoting the previous question.
+  */
   buildRetryHint(lang, ctx) {
     const prevQ = ctx && Array.isArray(ctx.messages)
       ? _findLastAssistantQuestion(ctx.messages)

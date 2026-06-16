@@ -1,12 +1,17 @@
 "use strict";
 
-/**
- * Role definitions and permission hierarchy.
- *
- * alumno:   Read own data, chat, view exercises
- * profesor: Everything alumno + read any student's data + exercise CRUD + export
- * admin:    Everything profesor + user CRUD
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                          ROLES                        |
+            |  Module of role definitions and the permission         |
+            |  hierarchy. alumno reads own data; profesor adds any   |
+            |  student's data, exercise CRUD and export; admin adds  |
+            |  user CRUD.                                            |
+            |                                                       |
+            |   Txt, Txt -> | hasMinRole() | -> T/F                 |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 const ROLES = {
   ALUMNO: "alumno",
   PROFESOR: "profesor",
@@ -19,6 +24,12 @@ const ROLE_HIERARCHY = {
   admin: 2,
 };
 
+/*
+   Txt, Txt -> ____|______________
+              | hasMinRole() | -> T/F
+               --------------
+      True when userRole sits at or above requiredRole in the hierarchy.
+*/
 function hasMinRole(userRole, requiredRole) {
   return (ROLE_HIERARCHY[userRole] || 0) >= (ROLE_HIERARCHY[requiredRole] || 0);
 }

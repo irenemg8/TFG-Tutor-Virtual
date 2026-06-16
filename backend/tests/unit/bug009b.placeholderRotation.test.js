@@ -1,20 +1,31 @@
 "use strict";
 
-/**
- * BUG-009-B (2026-05-03): el placeholder de redacción de state-reveal se
- * rota entre 3 variantes según cuántas veces ha disparado en la historia
- * de la conversación, y se suprime tras 3 disparos para no frustrar al
- * alumno con la misma frase genérica turno-tras-turno.
- *
- * Este test cubre el flujo completo: StateRevealGuardrail.surgicalFix lee
- * ctx.messages, cuenta disparos previos y elige la variante adecuada.
- */
-
 const StateRevealGuardrail = require("../../src/infrastructure/guardrails/StateRevealGuardrail");
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |   STATEREVEALGUARDRAIL ROTATION — UNIT TESTS (009-B)  |
+            |  Regresses BUG-009-B (2026-05-03): the state-reveal   |
+            |  placeholder rotates across 3 variants by prior-hit   |
+            |  count read from ctx.messages, and is suppressed after |
+            |  3 firings so the student is not spammed with the same |
+            |  generic phrase turn after turn.                      |
+        ____|_____                                                  |
+        | ctx() | -> Obj                                            |
+        --------                                                    |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 describe("StateRevealGuardrail.surgicalFix — placeholder rotation (BUG-009-B)", () => {
   const g = new StateRevealGuardrail();
 
+  /*
+       IN -> ____|____
+            | ctx() | -> Obj
+             --------
+      Builds an es context with the standard evaluableElements and the
+      given message history.
+  */
   function ctx(history) {
     return {
       lang: "es",
@@ -23,8 +34,6 @@ describe("StateRevealGuardrail.surgicalFix — placeholder rotation (BUG-009-B)"
     };
   }
 
-  // Para que dispare la guardrail debe haber state-reveal pattern en la
-  // respuesta. Usamos un patrón hardcoded conocido: "está cortocircuitada".
   const stateRevealResponse =
     "R1 está cortocircuitada en este circuito. ¿Por qué crees que pasa eso?";
 
@@ -64,7 +73,7 @@ describe("StateRevealGuardrail.surgicalFix — placeholder rotation (BUG-009-B)"
     const r = g.surgicalFix(stateRevealResponse, ctx(history));
     expect(r.applied).toBe(true);
     expect(r.text).not.toMatch(/propiedad relevante|característica clave|pieza concreta/i);
-    expect(r.text).toMatch(/\?/); // la pregunta socrática debe sobrevivir
+    expect(r.text).toMatch(/\?/);
   });
 
   test("ignora mensajes user al contar disparos previos", () => {

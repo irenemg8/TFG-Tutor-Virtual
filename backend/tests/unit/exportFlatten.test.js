@@ -3,6 +3,18 @@
 const { _test } = require("../../src/interfaces/http/routes/exportRoutes");
 const { flattenInteraccion, rowsToCsv, buildFilter } = _test;
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    EXPORT FLATTEN                     |
+            |  Test suite for the export route helpers. Verifies    |
+            |  flattenInteraccion surfaces every per-turn signal    |
+            |  (identity, core fields, timing, AC verdict, concepts,|
+            |  guardrails and diagnostics), that rowsToCsv emits a  |
+            |  header line and quotes comma cells, and that         |
+            |  buildFilter parses ids/dates only when valid.        |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 describe("exportRoutes.flattenInteraccion — surfaces all per-turn signals", () => {
   const inter = {
     id: "i-1",
@@ -59,33 +71,26 @@ describe("exportRoutes.flattenInteraccion — surfaces all per-turn signals", ()
 
     const a = rows[1];
     expect(a.role).toBe("assistant");
-    // Identity
     expect(a.upvLogin).toBe("estudiante01");
     expect(a.nombreCompleto).toBe("Ana Pérez");
     expect(a.ejercicioTitulo).toBe("Divisor de tensión simple");
-    // Core
     expect(a.classification).toBe("wrong_answer");
     expect(a.decision).toBe("rag_examples");
     expect(a.isCorrectAnswer).toBe(false);
     expect(a.sourcesCount).toBe(3);
     expect(a.studentResponseMs).toBe(4200);
-    // Timing
     expect(a.pipelineMs).toBe(120);
     expect(a.ollamaMs).toBe(1800);
     expect(a.totalMs).toBe(1950);
     expect(a.firstTokenMs).toBe(240);
-    // AC verdict
     expect(a.detectedACsCount).toBe(2);
     expect(a.detectedACs).toContain("AC-V1");
     expect(a.detectedACs).toContain("AC-R3");
-    // Concepts
     expect(a.concepts).toBe("divisor de tensión");
-    // New guardrails
     expect(a.guardrail_languageDrift).toBe(true);
     expect(a.guardrail_adherence).toBe(true);
     expect(a.guardrail_completeSolution).toBe(false);
     expect(a.guardrail_repeatedQuestion).toBe(false);
-    // Diagnostics
     expect(a.guardrailPath).toBe("surgical_ok");
     expect(a.guardrailSurgicalFixes).toBe("adherence");
     expect(a.fallbackUsed).toBe(false);
@@ -102,8 +107,8 @@ describe("exportRoutes.flattenInteraccion — surfaces all per-turn signals", ()
 
   test("buildFilter parses userId/exerciseId only when valid hex/uuid", () => {
     const f = buildFilter({
-      userId: "507f1f77bcf86cd799439011",          // valid mongo ObjectId
-      exerciseId: "not-a-real-id",                  // rejected
+      userId: "507f1f77bcf86cd799439011",
+      exerciseId: "not-a-real-id",
       from: "2026-05-01T00:00:00Z",
       to: "2026-05-04T00:00:00Z",
     });

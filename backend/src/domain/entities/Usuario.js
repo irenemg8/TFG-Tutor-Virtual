@@ -1,20 +1,48 @@
 "use strict";
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                        USUARIO                        |
+            |  Domain entity representing an authenticated user and   |
+            |  their role within the platform.                       |
+        ____|________________                                       |
+   Obj -> | constructor() | -> Usuario              (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   id: Txt            upvLogin: Txt                    |
+            |   email: Txt         firstName: Txt                   |
+            |   lastName: Txt      nationalId: Txt                  |
+            |   groups: [Txt]      role: Txt                        |
+            |   lastLoginAt: Date | null                            |
+            |   createdAt: Date    updatedAt: Date                  |
+        ____|___________                                            |
+        | isStudent() | -> T/F                       (reads attrs)  |
+        --------------                                              |
+        ____|___________                                            |
+        | isTeacher() | -> T/F                       (reads attrs)  |
+        --------------                                              |
+        ____|_________                                              |
+        | isAdmin() | -> T/F                         (reads attrs)  |
+        ------------                                                |
+        ____|__________                                             |
+   Txt -> | hasRole() | -> T/F                       (reads attrs)  |
+          -----------                                               |
+        ____|___________                                            |
+        | toJSON() | -> Obj                          (reads attrs)  |
+        ------------                                                |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class Usuario {
-  /**
-   * @param {object} props
-   * @param {string}   props.id
-   * @param {string}   props.upvLogin
-   * @param {string}  [props.email]
-   * @param {string}  [props.firstName]
-   * @param {string}  [props.lastName]
-   * @param {string}  [props.nationalId]
-   * @param {string[]} [props.groups]
-   * @param {string}  [props.role]
-   * @param {Date}    [props.lastLoginAt]
-   * @param {Date}    [props.createdAt]
-   * @param {Date}    [props.updatedAt]
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> Usuario    (writes attributes id (Txt), upvLogin (Txt),
+          -----------------               email (Txt), firstName (Txt), lastName (Txt),
+                                          nationalId (Txt), groups ([Txt]), role (Txt),
+                                          lastLoginAt (Date|null), createdAt (Date),
+                                          updatedAt (Date))
+      Builds the user from a plain props object. `role` defaults to "alumno".
+  */
   constructor(props) {
     this.id = props.id;
     this.upvLogin = props.upvLogin;
@@ -29,23 +57,54 @@ class Usuario {
     this.updatedAt = props.updatedAt || new Date();
   }
 
+  /*
+       ____|___________
+      | isStudent() | -> T/F    (reads attribute role (Txt))
+       --------------
+      True when the user role is "alumno".
+  */
   isStudent() {
     return this.role === "alumno";
   }
 
+  /*
+       ____|___________
+      | isTeacher() | -> T/F    (reads attribute role (Txt))
+       --------------
+      True when the user role is "profesor".
+  */
   isTeacher() {
     return this.role === "profesor";
   }
 
+  /*
+       ____|_________
+      | isAdmin() | -> T/F    (reads attribute role (Txt))
+       ------------
+      True when the user role is "admin".
+  */
   isAdmin() {
     return this.role === "admin";
   }
 
+  /*
+   Txt -> ____|__________
+         | hasRole() | -> T/F    (reads attribute role (Txt))
+          -----------
+      True when the user role equals the given role.
+  */
   hasRole(role) {
     return this.role === role;
   }
 
-  /** Legacy Mongo JSON shape for frontend compat. */
+  /*
+       ____|___________
+      | toJSON() | -> Obj    (reads attributes id (Txt), upvLogin (Txt),
+       ------------          email (Txt), firstName (Txt), lastName (Txt),
+                             nationalId (Txt), groups ([Txt]), role (Txt),
+                             lastLoginAt (Date|null), createdAt (Date), updatedAt (Date))
+      Serializes to the legacy Mongo shape consumed by the frontend.
+  */
   toJSON() {
     return {
       _id: this.id,

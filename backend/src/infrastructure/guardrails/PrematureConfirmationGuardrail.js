@@ -7,20 +7,36 @@ const { getAllPatterns, confirmPhrases: confirmDict, getPartialConfirmationInstr
 
 const confirmPhrases = getAllPatterns(confirmDict);
 
-/**
- * Detects when the tutor CLOSES an exercise prematurely by confirming a
- * partially-correct or correct-without-reasoning answer.
- *
- * Triggers when classification indicates the student gave elements but
- * hasn't justified their reasoning — the tutor must ask WHY before confirming.
- *
- * Same negation-awareness as FalseConfirmation: "No es correcto todavía" is
- * NOT a confirmation because of the preceding "no".
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |              PREMATURECONFIRMATIONGUARDRAIL           |
+            |  Guardrail adapter (IGuardrail). Catches the tutor     |
+            |  closing the exercise too soon by confirming a         |
+            |  partial / unjustified answer instead of asking WHY    |
+            |  first. Negation-aware ("No es correcto todavía").     |
+        ____|_____________________                                   |
+        | check() | -> Obj            (reads classification, response)|
+        -----------                                                  |
+        ____|_______________________                                 |
+        | surgicalFix() | -> Obj | null          (reads response)    |
+        -----------------                                            |
+        ____|___________________                                     |
+        | buildRetryHint() | -> Txt                                  |
+        --------------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class PrematureConfirmationGuardrail extends IGuardrail {
   get id() { return "premature_confirmation"; }
   get severity() { return "high"; }
 
+  /*
+   Txt, Obj -> ____|_________
+              | check() | -> Obj
+               -----------
+      Active only for partial/no-reasoning classifications; true (violated)
+      when the response head opens with a (non-negated) confirmation phrase.
+  */
   check(response, ctx) {
     const classification = ctx && ctx.classification;
     const partialTypes = ["correct_no_reasoning", "correct_wrong_reasoning", "partial_correct"];
@@ -32,8 +48,6 @@ class PrematureConfirmationGuardrail extends IGuardrail {
 
     for (let i = 0; i < confirmPhrases.length; i++) {
       const phrase = stripAccents(confirmPhrases[i]);
-      // Word-boundary match: avoids English "correct" matching inside Spanish
-      // "correctas", "correctamente", etc.
       if (includesAsWord(firstPart, phrase)) {
         if (isNegatedInContext(lower.substring(0, 100), phrase)) continue;
         return {
@@ -46,9 +60,15 @@ class PrematureConfirmationGuardrail extends IGuardrail {
     return { violated: false };
   }
 
+  /*
+   Txt, Obj -> ____|_______________
+              | surgicalFix() | -> Obj | null
+               -----------------
+      Strips the opening confirmation and prepends a "partial" intermediate
+      phrase. Idempotent: bails out if the text already starts with one.
+  */
   surgicalFix(response, ctx) {
     if (typeof response !== "string") return null;
-    // NS-34: idempotency — see FalseConfirmationGuardrail.
     if (startsWithIntermediatePhrase(response)) return { applied: false, text: response };
     const lang = (ctx && ctx.lang) || "es";
     const { removeOpeningConfirmation } = require("../../domain/services/rag/guardrails");
@@ -62,8 +82,13 @@ class PrematureConfirmationGuardrail extends IGuardrail {
     return { applied: true, text: fixed, before: response, after: fixed };
   }
 
+  /*
+   Txt -> ____|___________________
+         | buildRetryHint() | -> Txt
+          --------------------
+      Returns the partial-confirmation instruction for the given language.
+  */
   buildRetryHint(lang) {
-    // Partial instruction depends on classification; pipeline will pass ctx.
     return getPartialConfirmationInstruction(lang || "es", "correct_no_reasoning");
   }
 }

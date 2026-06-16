@@ -2,6 +2,30 @@
 
 const { globalAuth } = require("../../src/interfaces/http/middleware/authMiddleware");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |               EXPORT_TOKEN AUTH BYPASS                |
+            |  Test suite for globalAuth's EXPORT_TOKEN bypass.     |
+            |  Verifies that /export routes accept a matching       |
+            |  ?token= only when EXPORT_TOKEN is set, reject        |
+            |  unset/wrong tokens (401), never bypass non-export    |
+            |  routes, and leave normal session login intact.       |
+        ____|____________                                           |
+   void -> | makeRes() | -> Obj                                     |
+           -----------                                              |
+        ____|_________                                              |
+   Obj -> | call() | -> Obj                                         |
+          ----------                                                |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+     void -> ____|____________
+            | makeRes() | -> Obj
+             -----------
+        Builds a minimal fake Express response that records the status code
+        and JSON payload.
+*/
 function makeRes() {
   const res = {
     statusCode: null,
@@ -12,6 +36,13 @@ function makeRes() {
   return res;
 }
 
+/*
+     Obj -> ____|_________
+           | call() | -> Obj
+            ----------
+        Runs globalAuth against the given request and returns the response
+        plus whether next() was invoked.
+*/
 function call(req) {
   const res = makeRes();
   let nextCalled = false;

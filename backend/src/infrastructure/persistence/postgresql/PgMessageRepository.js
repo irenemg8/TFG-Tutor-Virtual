@@ -3,6 +3,13 @@
 const IMessageRepository = require("../../../domain/ports/repositories/IMessageRepository");
 const Message = require("../../../domain/entities/Message");
 
+/*
+   Obj, Obj -> ____|____________________
+              | parseJsonbColumn() | -> Obj
+               ------------------
+      Returns a JSONB column already parsed by the driver, parses it when the
+      driver hands back a raw string, and falls back when null or invalid.
+*/
 function parseJsonbColumn(val, fallback) {
   if (val == null) return fallback;
   if (typeof val === "string") {
@@ -11,10 +18,16 @@ function parseJsonbColumn(val, fallback) {
   return val;
 }
 
+/*
+   Obj -> ____|________________
+         | rowToDomain() | -> Message | null
+          --------------
+      Maps a messages row into a Message entity, reassembling its metadata
+      from the dedicated guardrail columns and the extra_metadata JSONB blob.
+      Null when no row.
+*/
 function rowToDomain(row) {
   if (!row) return null;
-  // node-postgres parses JSONB automatically; the helper tolerates the
-  // rare case where the driver hands us a raw string.
   const concepts = parseJsonbColumn(row.concepts, []);
   const extra = parseJsonbColumn(row.extra_metadata, {}) || {};
 
@@ -27,12 +40,10 @@ function rowToDomain(row) {
         studentResponseMs: row.student_response_ms,
         concepts: concepts,
         guardrails: {
-          // Legacy four (DB columns):
           solutionLeak: row.guardrail_solution_leak,
           falseConfirmation: row.guardrail_false_confirmation,
           prematureConfirmation: row.guardrail_premature_confirmation,
           stateReveal: row.guardrail_state_reveal,
-          // New (extra_metadata.guardrails):
           languageDrift: extra.guardrails?.languageDrift || false,
           completeSolution: extra.guardrails?.completeSolution || false,
           adherence: extra.guardrails?.adherence || false,
@@ -73,23 +84,70 @@ function rowToDomain(row) {
   });
 }
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   PGMESSAGEREPOSITORY                 |
+            |  Repository adapter implementing IMessageRepository on |
+            |  top of PostgreSQL. Appends chat messages with their   |
+            |  rich pipeline metadata and serves the read/aggregate  |
+            |  queries the tutoring loop and analytics rely on.      |
+            |                                                       |
+        ____|________________                                       |
+   Pool -> | constructor() | -> PgMessageRepository  (writes attrs) |
+           -----------------                                        |
+            |   pool: Pool (injected pg pool)                       |
+        ____|_______________                                       |
+   Txt,Message -> | appendMessage() | -> Promise<void>  (reads attrs)|
+                  ---------------                                   |
+        ____|________________                                      |
+   Txt,Z -> | getLastMessages() | -> Promise<[Message]> (reads attrs)|
+            -----------------                                       |
+        ____|_______________                                       |
+   Txt -> | getAllMessages() | -> Promise<[Message]>    (reads attrs)|
+          ----------------                                          |
+        ____|___________________________                           |
+   Txt,[Txt] -> | countConsecutiveFromEnd() | -> Promise<Z> (reads attrs)|
+                -------------------------                          |
+        ____|_________________________                             |
+   Txt -> | countAssistantMessages() | -> Promise<Z>     (reads attrs)|
+          ------------------------                                  |
+        ____|__________________________                            |
+   Txt,Z -> | getLastAssistantMessages() | -> Promise<[Message]> (reads attrs)|
+            --------------------------                            |
+        ____|_______________                                       |
+   Txt -> | getLastMessage() | -> Promise<Message|null>  (reads attrs)|
+          ----------------                                          |
+        ____|_____________________                                 |
+   Txt -> | getAcEvidenceByUserId() | -> Promise<Obj>    (reads attrs)|
+          -----------------------                                   |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class PgMessageRepository extends IMessageRepository {
+  /*
+   Pool -> ____|________________
+          | constructor() | -> PgMessageRepository    (writes attribute pool (Pool))
+           -----------------
+      Stores the injected pg connection pool.
+  */
   constructor(pool) {
     super();
     this.pool = pool;
   }
 
+  /*
+   Txt, Message -> ____|_________________
+                  | appendMessage() | -> Promise<void>    (reads attribute pool (Pool))
+                   ---------------
+      Inserts a message at the next sequence number, persisting the legacy
+      guardrail columns and packing the remaining signals into extra_metadata,
+      then refreshes interacciones.fin. The $1::text cast lets PostgreSQL
+      deduce the type when the param is reused in the subselect (error 42P08).
+  */
   async appendMessage(interaccionId, message) {
     const meta = message.metadata;
-    // Cast explícito $1::text para que PostgreSQL pueda deducir el tipo del
-    // parámetro cuando se usa en dos sitios (columna interaccion_id + WHERE
-    // del subselect). Sin el cast, PG da error 42P08 "inconsistent types".
     const conceptsJson = JSON.stringify(Array.isArray(meta?.concepts) ? meta.concepts : []);
 
-    // Extra signals that don't have dedicated columns (migration 008).
-    // Mirrors PersistenceAgent → MessageMetadata so the export CSV/JSON
-    // can surface firstTokenMs, detectedACs, the new guardrails, and the
-    // diagnostic counters.
     const extraMetadata = {
       firstTokenMs: meta?.timing?.firstTokenMs ?? null,
       detectedACs: Array.isArray(meta?.detectedACs) ? meta.detectedACs : [],
@@ -154,13 +212,18 @@ class PgMessageRepository extends IMessageRepository {
         extraMetadataJson,
       ]
     );
-    // Also update interacciones.fin
     await this.pool.query(
       "UPDATE interacciones SET fin = NOW() WHERE id = $1",
       [interaccionId]
     );
   }
 
+  /*
+   Txt, Z -> ____|_________________
+            | getLastMessages() | -> Promise<[Message]>    (reads attribute pool (Pool))
+             -----------------
+      Returns the last count messages of an interaction in chronological order.
+  */
   async getLastMessages(interaccionId, count) {
     const { rows } = await this.pool.query(
       `SELECT * FROM messages
@@ -172,6 +235,12 @@ class PgMessageRepository extends IMessageRepository {
     return rows.reverse().map(rowToDomain);
   }
 
+  /*
+   Txt -> ____|________________
+         | getAllMessages() | -> Promise<[Message]>    (reads attribute pool (Pool))
+          ----------------
+      Returns every message of an interaction in ascending sequence order.
+  */
   async getAllMessages(interaccionId) {
     const { rows } = await this.pool.query(
       `SELECT * FROM messages
@@ -182,6 +251,13 @@ class PgMessageRepository extends IMessageRepository {
     return rows.map(rowToDomain);
   }
 
+  /*
+   Txt, [Txt] -> ____|_________________________
+                | countConsecutiveFromEnd() | -> Promise<Z>    (reads attribute pool (Pool))
+                 -------------------------
+      Counts how many of the latest assistant messages, from the end backwards,
+      carry one of the given classifications before the streak breaks.
+  */
   async countConsecutiveFromEnd(interaccionId, classificationTypes) {
     const { rows } = await this.pool.query(
       `SELECT classification FROM messages
@@ -200,6 +276,12 @@ class PgMessageRepository extends IMessageRepository {
     return count;
   }
 
+  /*
+   Txt -> ____|_________________________
+         | countAssistantMessages() | -> Promise<Z>    (reads attribute pool (Pool))
+          ------------------------
+      Returns the number of assistant messages in the interaction.
+  */
   async countAssistantMessages(interaccionId) {
     const { rows } = await this.pool.query(
       `SELECT COUNT(*) AS cnt FROM messages
@@ -209,6 +291,13 @@ class PgMessageRepository extends IMessageRepository {
     return parseInt(rows[0].cnt, 10);
   }
 
+  /*
+   Txt, Z -> ____|__________________________
+            | getLastAssistantMessages() | -> Promise<[Message]>    (reads attribute pool (Pool))
+             --------------------------
+      Returns the last count assistant messages of an interaction in
+      chronological order.
+  */
   async getLastAssistantMessages(interaccionId, count) {
     const { rows } = await this.pool.query(
       `SELECT * FROM messages
@@ -220,6 +309,12 @@ class PgMessageRepository extends IMessageRepository {
     return rows.reverse().map(rowToDomain);
   }
 
+  /*
+   Txt -> ____|________________
+         | getLastMessage() | -> Promise<Message|null>    (reads attribute pool (Pool))
+          ----------------
+      Returns the most recent message of an interaction, or null when none.
+  */
   async getLastMessage(interaccionId) {
     const { rows } = await this.pool.query(
       `SELECT * FROM messages
@@ -231,15 +326,16 @@ class PgMessageRepository extends IMessageRepository {
     return rowToDomain(rows[0]);
   }
 
+  /*
+   Txt -> ____|_____________________
+         | getAcEvidenceByUserId() | -> Promise<Obj>    (reads attribute pool (Pool))
+          -----------------------
+      Returns two aggregates in one round trip: the concepts the classifier
+      flagged on the user's assistant turns (by frequency), and the count of
+      each assistant classification (a coarse fallback for older messages
+      persisted before the concepts column existed).
+  */
   async getAcEvidenceByUserId(userId) {
-    // Two aggregates in one round trip:
-    //  1. concepts: every concept the classifier flagged on assistant turns,
-    //     across every interaccion of the user, counted by frequency.
-    //  2. classifications: how many times each assistant classification
-    //     fired (e.g. wrong_concept, correct_wrong_reasoning, ...). Lets
-    //     the AcTrackerAgent fall back to a coarse signal when concepts
-    //     happen to be empty for older messages persisted before the
-    //     concepts column existed.
     const conceptsQ = this.pool.query(
       `SELECT concept_value AS concept, COUNT(*)::int AS count
        FROM messages m

@@ -1,14 +1,26 @@
 "use strict";
 
-/**
- * NullHistorySummarizer: explicit no-op implementation of the historySummarizer
- * interface. Inject this when history summarization is intentionally disabled
- * (e.g. development environments without a local LLM, or short-session tests).
- *
- * Always returns null, which causes ContextAgent to skip the summary system
- * message and fall back to the recent-window-only behaviour.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  NULLHISTORYSUMMARIZER                |
+            |  No-op implementation of the historySummarizer        |
+            |  interface. Inject it when history summarization is   |
+            |  intentionally disabled (dev without a local LLM, or  |
+            |  short-session tests). Always returns null so the     |
+            |  ContextAgent falls back to recent-window-only.       |
+        ____|________________                                       |
+        | summarize() | -> Promise<null>                            |
+        ---------------                                             |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class NullHistorySummarizer {
+  /*
+       ____|________________
+      | summarize() | -> Promise<null>
+       ---------------
+      Always resolves to null, signalling no summary is available.
+  */
   async summarize() {
     return null;
   }

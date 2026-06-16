@@ -1,29 +1,59 @@
 "use strict";
 
-/**
- * Real (no-mock) diagnostic test. Run from backend/:
- *   node tests/diagnose.js
- *
- * Loads the actual guardrail and classifier code, hits real strings observed
- * in production, and reports which "focos de error" reproduce.
- *
- * No mocks. No fake LLM here (Ollama is exercised by the live-LLM step at the
- * bottom only if --live is passed).
- */
-
 const path = require("path");
 const ROOT = path.join(__dirname, "..");
 process.chdir(ROOT);
 require("dotenv").config({ path: path.join(ROOT, ".env") });
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                        DIAGNOSE                       |
+            |  Real (no-mock) diagnostic suite. Loads the actual    |
+            |  guardrail and classifier code, hits real production  |
+            |  strings, and reports which foci of error reproduce.  |
+        ____|________________                                       |
+   Txt -> | assert() | -> void                                      |
+          ------------                                              |
+        ____|_______                                                |
+   Txt -> | section() | -> void                                     |
+          -----------                                               |
+            |                                                       |
+   void -> | section8() | -> Promise<void>                          |
+   void -> | section9() | -> Promise<void>                          |
+   void -> | section10() | -> void                                  |
+   void -> | section11() | -> Promise<void>                         |
+   void -> | section12() | -> Promise<void>                         |
+   void -> | section13() | -> Promise<void>                         |
+   void -> | section14() | -> void                                  |
+   void -> | section15() | -> void                                  |
+   void -> | section16() | -> void                                  |
+   void -> | section17() | -> Promise<void>                         |
+   void -> | section18() | -> Promise<void>                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 const results = [];
+
+/*
+   IN -> ____|________________
+        | assert() | -> void
+         ----------
+      Records a check result and prints PASS/FAIL with the detail.
+   */
 function assert(name, ok, detail) {
   results.push({ name, ok, detail });
   console.log((ok ? "  PASS " : "  FAIL ") + name + (detail ? "  ::  " + detail : ""));
 }
+
+/*
+   IN -> ____|_________
+        | section() | -> void
+         -----------
+      Prints a section header to the console.
+   */
 function section(t) { console.log("\n=== " + t + " ==="); }
 
-// ─── Load real modules ──────────────────────────────────────────────────────
 const { createDefaultGuardrails } = require(path.join(ROOT, "src/infrastructure/guardrails"));
 const { classifyQuery } = require(path.join(ROOT, "src/domain/services/rag/queryClassifier"));
 const {
@@ -32,7 +62,6 @@ const {
 const guardrails = createDefaultGuardrails();
 const byId = {}; for (const g of guardrails) byId[g.id] = g;
 
-// ─── 1. STATE REVEAL pattern coverage ───────────────────────────────────────
 section("1. StateReveal: pattern coverage on real production strings");
 const sr = byId.state_reveal;
 const ctxSR = { evaluableElements: ["R1","R2","R3","R4","R5"], kgConceptPatterns: [], lang: "es" };
@@ -46,8 +75,6 @@ const stateCases = [
   { msg: "R5 tiene los terminales unidos, no opone resistencia.", expect: true, why: "topology-described state" },
   { msg: "El switch entre N2 y N3 está abierto, así que R3 no influye.", expect: true, why: "switch open + element" },
   { msg: "¿Por qué R1 contribuye a la diferencia de potencial?", expect: false, why: "Socratic question about KG concept (FP guard)" },
-  // BUG-G1 (2026-06-10): the LLM drops accents constantly. Accent-less state
-  // reveals used to slip through (dictionary was accented, input only lowered).
   { msg: "R5 esta cortocircuitada en este circuito.",          expect: true,  why: "G1 accent-less -ada LEAK" },
   { msg: "R3 esta abierto, no influye.",                       expect: true,  why: "G1 accent-less abierto LEAK" },
 ];
@@ -56,14 +83,8 @@ for (const c of stateCases) {
   assert(`SR ${c.expect ? "TP" : "FP"}: ${c.why}`, r.violated === c.expect, c.msg);
 }
 
-// ─── 2. FALSE CONFIRMATION: late-confirmation detection ──────────────────────
 section("2. FalseConfirmation: detects confirmations in the response head");
 const fc = byId.false_confirmation;
-// The 60-char window is long fixed (the guardrail now scans up to the first
-// "?" or 200 chars). Note: the guardrail only fires when the student actually
-// named an element (ctx.mentionedElements non-empty) — otherwise a "sí" may be
-// confirming a valid CONCEPTUAL observation, not a wrong final answer. These
-// tutor strings are evaluated against a turn where the student named R5.
 const fcCtx = { classification: "wrong_answer", lang: "es", mentionedElements: ["R5"] };
 const fcCases = [
   { msg: "Perfecto. Muy bien.",                                                     expect: true,  why: "opener" },
@@ -71,12 +92,7 @@ const fcCases = [
   { msg: "Eh, vamos a pensarlo. Has hecho un análisis interesante. Perfecto, ahora R1...", expect: true, why: "confirmation at char ~75 — likely MISSED" },
   { msg: "Vamos a pensar paso a paso, considerando la Ley de Ohm. Exactamente, así es como se calcula.", expect: true, why: "confirmation at char ~67 — likely MISSED" },
   { msg: "Sí, la corriente preferirá pasar por ese camino de baja resistencia.",    expect: true,  why: "opens with affirmative 'Sí'" },
-  // BUG-G2 (2026-06-10): a confirmation AFTER a leading rhetorical question used
-  // to be missed (window was cut at the first "?"). Now we skip question
-  // sentences instead of truncating at them.
   { msg: "¿Vamos a revisarlo? Exacto, R5 forma parte de la respuesta.",            expect: true,  why: "G2 confirmation after leading question" },
-  // FP guard that MUST survive the G2 change: a confirmation word INSIDE a
-  // Socratic question ("¿está claro?") is not a confirmation.
   { msg: "Vamos a revisar R5. ¿Está claro?",                                        expect: false, why: "G2 FP: 'claro' inside a question" },
 ];
 for (const c of fcCases) {
@@ -84,38 +100,27 @@ for (const c of fcCases) {
   assert(`FC ${c.expect ? "TP" : "FP"}: ${c.why}`, r.violated === c.expect, c.msg.slice(0, 80) + "...");
 }
 
-// ─── 2b. CompleteSolution + RepeatedQuestion guardrails ──────────────────────
 section("2b. CompleteSolution case-norm (G3) + RepeatedQuestion symmetry (G4)");
 const CompleteSolutionGuardrail = require(path.join(ROOT, "src/infrastructure/guardrails/CompleteSolutionGuardrail"));
 const cs = new CompleteSolutionGuardrail();
-// BUG-G3 (2026-06-10): membership was case-sensitive, so a lowercase proposed
-// element ("r4") that IS in the correct answer was mis-read as wrongly-proposed.
 const g3FP = cs.check("Perfecto, has acertado.", { correctAnswer: ["R1","R2","R4"], lang: "es", proposed: ["r4"], negated: [] });
 assert("G3: lowercase proposed 'r4' (in answer) → NOT a violation", g3FP.violated === false, "got violated=" + g3FP.violated);
-// Genuine wrong proposal must still fire (R3 is not in the answer).
 const g3TP = cs.check("Perfecto, has acertado.", { correctAnswer: ["R1","R2","R4"], lang: "es", proposed: ["R3"], negated: [] });
 assert("G3: genuinely wrong proposed 'R3' → still a violation", g3TP.violated === true, "got violated=" + g3TP.violated);
 
 const RepeatedQuestionGuardrail = require(path.join(ROOT, "src/infrastructure/guardrails/RepeatedQuestionGuardrail"));
-// BUG-G4 (2026-06-10): asymmetric min(len) denominator scored a short subset
-// question as a perfect repeat of a long unrelated one.
 const g4FP = RepeatedQuestionGuardrail._similarity(
   "¿Qué resistencias importan?",
   "¿Qué pasa con las resistencias que importan cuando el interruptor esta abierto y la corriente busca otro camino?");
 assert("G4: short-subset vs long question → below 0.7 threshold", g4FP < 0.7, "got sim=" + g4FP.toFixed(2));
-// A genuine near-identical repeat must still score high.
 const g4TP = RepeatedQuestionGuardrail._similarity(
   "¿Por qué circula corriente por esa rama?",
   "¿Por qué circula corriente por esta rama?");
 assert("G4: genuine repeat still scores >= 0.7", g4TP >= 0.7, "got sim=" + g4TP.toFixed(2));
 
-// ─── 2c. Surgical-fix repairs (S1-S4) ───────────────────────────────────────
 section("2c. Surgical fixes: accent-fold redact (S1), idioms (S2), gender (S3), spacing (S4)");
 const gr = require(path.join(ROOT, "src/domain/services/rag/guardrails"));
 
-// BUG-S1 (2026-06-10): the StateReveal surgical fix located the leaking
-// sentence accent-sensitively, so an accent-less reveal was DETECTED by check()
-// (after G1) but the redactor couldn't find it → leak passed through verbatim.
 const s1 = byId.state_reveal.surgicalFix(
   "R5 esta cortocircuitada, asi que no influye. Piensa en el resto.",
   { evaluableElements: ["R1","R2","R3","R4","R5"], lang: "es", messages: [] });
@@ -123,15 +128,12 @@ assert("S1: accent-less state reveal IS redacted (not passed through)",
   s1.applied === true && !/cortocircuitada/i.test(s1.text),
   "applied=" + s1.applied + " text=" + JSON.stringify(s1.text).slice(0, 80));
 
-// BUG-S2 (2026-06-10): "claro"/"justo" open idioms; stripping just the word
-// decapitated the sentence ("Claro está que…" → "Está que…").
 assert("S2: idiom 'Claro está que…' is NOT decapitated",
   gr.removeOpeningConfirmation("Claro está que R5 no va.", "es") === "Claro está que R5 no va.",
   "got: " + gr.removeOpeningConfirmation("Claro está que R5 no va.", "es"));
 assert("S2: idiom 'Justo por eso…' is NOT decapitated",
   gr.removeOpeningConfirmation("Justo por eso R5 importa.", "es") === "Justo por eso R5 importa.",
   "got: " + gr.removeOpeningConfirmation("Justo por eso R5 importa.", "es"));
-// Controls: real confirmations delimited by punctuation MUST still strip.
 assert("S2 control: 'Claro, R5 no va.' still strips 'Claro'",
   gr.removeOpeningConfirmation("Claro, R5 no va.", "es") === "R5 no va.",
   "got: " + gr.removeOpeningConfirmation("Claro, R5 no va.", "es"));
@@ -139,9 +141,6 @@ assert("S2 control: 'Claro que sí, R5 va.' still strips the multiword confirm",
   gr.removeOpeningConfirmation("Claro que sí, R5 va.", "es") === "R5 va.",
   "got: " + gr.removeOpeningConfirmation("Claro que sí, R5 va.", "es"));
 
-// BUG-S5 (2026-06-10): removeOpeningConfirmation ate the opening "¿"/"¡" of the
-// FOLLOWING Spanish sentence ("Exacto. ¿Qué pasa?" → "Qué pasa?"), producing a
-// malformed question. The opener must survive (and the word after it capitalised).
 assert("S5: opening '¿' of the following question is preserved",
   gr.removeOpeningConfirmation("Exacto. ¿Qué pasa con R3?", "es") === "¿Qué pasa con R3?",
   "got: " + gr.removeOpeningConfirmation("Exacto. ¿Qué pasa con R3?", "es"));
@@ -149,13 +148,11 @@ assert("S5: opening '¡' is preserved too",
   gr.removeOpeningConfirmation("Perfecto. ¡Cuidado con R5!", "es") === "¡Cuidado con R5!",
   "got: " + gr.removeOpeningConfirmation("Perfecto. ¡Cuidado con R5!", "es"));
 
-// BUG-S3 (2026-06-10): masculine placeholder + inherited feminine predicate.
 const s3 = gr.redactElementMentions("¿Por qué R1, R2 y R4 son las correctas?", ["R1","R2","R4"], "es").text;
 assert("S3: no gender clash ('esos elementos … son los correctos')",
   /esos\s+elementos/i.test(s3) && /los\s+correctos/i.test(s3) && !/las\s+correctas/i.test(s3),
   "got: " + JSON.stringify(s3));
 
-// BUG-S4 (2026-06-10): the untouched tail lost its inter-sentence spaces.
 const s4 = gr.redactStateRevealSentence(
   "Buen avance aqui. R5 está cortocircuitada. Ahora dime que ocurre en la otra rama. Sigue pensando bien.",
   ["R1","R5"], "está cortocircuitad", "es", 0).text;
@@ -163,38 +160,26 @@ assert("S4: no glued sentences in the untouched tail (no 'rama.Sigue')",
   !/[a-zñáéíóú][.!?][A-ZÁÉÍÓÚÑ]/.test(s4),
   "got: " + JSON.stringify(s4).slice(0, 120));
 
-// ─── 2d. SolutionLeak accents (SL) + Adherence tag-questions (AD) + ORC ──────
 section("2d. SolutionLeak accent-fold (SL), Adherence tag-questions (AD), orchestrator 1b (ORC)");
 const SolutionLeakGuardrail = require(path.join(ROOT, "src/infrastructure/guardrails/SolutionLeakGuardrail"));
 const sl = byId.solution_leak;
-// BUG-SL (2026-06-10): the guardrail compared raw-lowercased text against
-// accented dictionaries/regexes, so accent-less reveals (and the whole Valencian
-// set) slipped through. Now folded on both sides.
 assert("SL: accent-less semantic leak detected ('Asi es, esos elementos contribuyen.')",
   SolutionLeakGuardrail.looksLikeSemanticAffirmation("Asi es, esos elementos contribuyen.") === true);
 assert("SL: accent-less reveal phrase detected ('La solucion es R1.')",
   sl.check("La solucion es R1.", { correctAnswer: ["R1"], lang: "es" }).violated === true);
 assert("SL: Valencian accent-less reveal detected ('La resposta es R2.')",
   sl.check("La resposta es R2.", { correctAnswer: ["R2"], lang: "val" }).violated === true);
-// Controls: a pure Socratic question must NOT be flagged.
 assert("SL control: Socratic question is not a leak",
   sl.check("¿Qué pasa con la corriente en R1?", { correctAnswer: ["R1"], lang: "es" }).violated === false);
 
 const adg = byId.adherence;
-// BUG-AD (2026-06-10): a rhetorical tag-question ("¿verdad?") + the real
-// Socratic question used to count as 2 and trip the multi-question rule, and
-// surgicalFix truncated to the throwaway tag.
 assert("AD: tag-question + 1 real question → NOT a multi-question violation",
   adg.check("Eso tiene lógica, ¿verdad? Ahora, ¿qué pasa cuando el interruptor se abre?", { lang: "es" }).violated === false);
-// Two genuine questions still fire, and the fix keeps the first SUBSTANTIVE one.
 const adFix = adg.surgicalFix("¿Qué nodo conecta R1? ¿Y qué pasa con R2 cuando el switch abre?", { lang: "es" });
 assert("AD: two real questions → fix keeps the first substantive question",
   adFix.applied === true && /R1/.test(adFix.text) && !/R2/.test(adFix.text),
   "got: " + JSON.stringify(adFix.text));
 
-// BUG-ORC (2026-06-10): _normaliseWhitespace 1b split before any uppercase;
-// now only before openers / Title-case word starts (concat errors), not
-// acronym runs.
 const orch = Object.create(require(path.join(ROOT, "src/domain/agents/orchestrator")).prototype);
 function _nw(s) { const c = { finalResponse: s }; orch._normaliseWhitespace(c); return c.finalResponse; }
 assert("ORC: still splits real concat error 'identificarAhora'",
@@ -207,11 +192,8 @@ assert("ORC: leaves legitimate text untouched ('la Ley de Ohm')",
   _nw("Aplica la Ley de Ohm aqui") === "Aplica la Ley de Ohm aqui",
   "got: " + _nw("Aplica la Ley de Ohm aqui"));
 
-// ─── 2e. languageManager + ragPipeline (LM1-LM4) ────────────────────────────
 section("2e. normalizeToSpanish (LM1), polite switch (LM2), per-element case (LM3), stopwords (LM4)");
 const lmgr = require(path.join(ROOT, "src/domain/services/languageManager"));
-// BUG-LM1 (2026-06-10): "tensió" (Valencian) is a prefix of its Spanish value
-// "tensión", so the substring replace corrupted already-Spanish text.
 assert("LM1: normalizeToSpanish('divisor de tensión') is NOT corrupted",
   lmgr.normalizeToSpanish("divisor de tensión") === "divisor de tensión",
   "got: " + lmgr.normalizeToSpanish("divisor de tensión"));
@@ -219,7 +201,6 @@ assert("LM1: Valencian 'divisor de tensió' → 'divisor de tensión' (single n)
   lmgr.normalizeToSpanish("divisor de tensió") === "divisor de tensión",
   "got: " + lmgr.normalizeToSpanish("divisor de tensió"));
 
-// BUG-LM2 (2026-06-10): polite apologies blocked a genuine language switch.
 assert("LM2: 'sorry, can we continue in english' → switch to 'en'",
   lmgr.detectLanguageSwitch("sorry, can we continue in english") === "en",
   "got: " + lmgr.detectLanguageSwitch("sorry, can we continue in english"));
@@ -227,28 +208,16 @@ assert("LM2 control: 'lo siento, no entiendo nada en english' → still null (re
   lmgr.detectLanguageSwitch("lo siento, no entiendo nada en english please") === null,
   "got: " + lmgr.detectLanguageSwitch("lo siento, no entiendo nada en english please"));
 
-// BUG-LM3 (2026-06-10): per-element analysis was case-sensitive vs correctAnswer.
 const { analyzeStudentElements } = require(path.join(ROOT, "src/domain/services/rag/ragPipeline"));
 const lm3 = analyzeStudentElements({ proposed: ["R1","R3"], negated: ["R2"] }, ["r1","r2","r4"]);
 assert("LM3: lowercase correctAnswer → R1 still CORRECT, R2 still WRONG REJECTION",
   /CORRECT PROPOSALS: R1\b/.test(lm3) && /WRONG REJECTION/.test(lm3) && /WRONG PROPOSALS: R3\b/.test(lm3),
   "banner: " + JSON.stringify(lm3.replace(/\n/g, " ")).slice(0, 160));
 
-// BUG-LM4 (2026-06-10): multi-word Valencian stopwords were dead (tokenizer
-// splits on whitespace).
 assert("LM4: no multi-word Valencian stopwords remain",
   lmgr.HEURISTIC_STOPWORDS.val.filter((w) => w.includes(" ")).length === 0,
   "got: " + JSON.stringify(lmgr.HEURISTIC_STOPWORDS.val.filter((w) => w.includes(" "))));
 
-// ─── 3. ELEMENT NAMING (retired) ─────────────────────────────────────────────
-// ElementNamingGuardrail was retired in NS-32 (2026-05-03) and its file
-// deleted — the tutor may now say "Resistencia R1" verbatim. The old section 3
-// dereferenced byId.element_naming (now undefined) and crashed the whole suite
-// before sections 4-7 could run. Removed. The still-live ElementNaming retry
-// HINT (languageManager.getElementNamingInstruction) is a different thing and
-// is covered by section 6 below.
-
-// ─── 4. NEGATION DETECTOR window ─────────────────────────────────────────────
 section("4. NegationDetector: pre-window length");
 assert("'No es exactamente'   detected", isNegatedInContext("No es exactamente así", "exactamente") === true);
 assert("'No es para nada exactamente' detected (long pre-negation)",
@@ -259,7 +228,6 @@ assert("'Tampoco es exactamente' detected",
 assert("'Ni siquiera exactamente' detected",
   isNegatedInContext("Ni siquiera es exactamente así", "exactamente") === true);
 
-// ─── 5. CLASSIFIER edge cases ────────────────────────────────────────────────
 section("5. Classifier: edge cases that affect routing");
 const correct = ["R1","R2","R4"];
 const evalEl  = ["R1","R2","R3","R4","R5"];
@@ -268,12 +236,6 @@ assert("'hola' → greeting", c1.type === "greeting", "got: " + c1.type);
 const c2 = classifyQuery("hola, ahora voy a pensar en R1 y R2", correct, evalEl);
 assert("'hola, ahora voy a pensar en R1 y R2' is NOT swallowed as greeting (D1 fix)",
   c2.type !== "greeting", "got: " + c2.type);
-// INTENTIONAL (decidido 2026-06-01): respuesta correcta + un keyword de
-// concepto (serie/paralelo/divisor…) → correct_wrong_reasoning para que el
-// RAG/KG verifique si el concepto está bien aplicado ANTES de confirmar. No es
-// un bug: descripciones de ESTADO (abierto/cortocircuito) sí se aceptan como
-// buen razonamiento, pero los conceptos topológicos pueden estar mal aplicados
-// (p.ej. "en paralelo" siendo serie), así que se enrutan a verificación.
 const c3 = classifyQuery("r1 r2 r4 because they're in series", correct, evalEl);
 assert("correct answer + concept keyword 'series' → correct_wrong_reasoning (KG verification, intentional)",
   c3.type === "correct_wrong_reasoning",
@@ -282,27 +244,14 @@ const c4 = classifyQuery("r1 r2 r4", correct, evalEl);
 assert("'r1 r2 r4' → correct_no_reasoning", c4.type === "correct_no_reasoning", "got: " + c4.type);
 const c5 = classifyQuery("ni idea", correct, evalEl);
 assert("'ni idea' → dont_know", c5.type === "dont_know", "got: " + c5.type);
-// 'sí' without any tutor question context → wrong_answer (nothing concrete to evaluate).
-// The legacy classifier mapped this to "single_word"; that bucket has been removed —
-// short non-elements without context are treated as wrong_answer so the tutor demands
-// the student rephrase or elaborate.
 const c6 = classifyQuery("sí", correct, evalEl);
 assert("'sí' (no tutor context) → wrong_answer", c6.type === "wrong_answer", "got: " + c6.type);
-// 'sí' answering a CLOSED diagnostic question → closed_answer (don't escalate).
 const c6b = classifyQuery("sí", correct, evalEl, "Vale, ¿tienes alguna duda sobre el circuito?");
 assert("'sí' replying to '¿tienes dudas?' → closed_answer", c6b.type === "closed_answer", "got: " + c6b.type);
-// 'sí' answering a CLOSED reasoning question about an element NOT in the
-// correct answer. BUG-006 (2026-05-03): "¿Es R3 ... conduce corriente?" + "sí"
-// affirms R3, but R3 is not in the correct answer → wrong_concept (so the LLM
-// can't falsely confirm it). The pre-BUG-006 behaviour was correct_no_reasoning.
 const c6c = classifyQuery("sí", correct, evalEl, "¿Es R3 una resistencia que conduce corriente?");
 assert("'sí' affirming an element NOT in the answer → wrong_concept (BUG-006)",
   c6c.type === "wrong_concept", "got: " + c6c.type);
 
-// Negation attached to a LATER restatement of the same element (req5 in prod).
-// The element appears twice; the first mention is neutral, the second carries
-// "no influye". Before the multi-occurrence fix this was misread as
-// proposed=[R3] and the tutor contradicted a correct student → repeated loop.
 const c7msg = "El interruptor abierto impide el paso de la corriente por R3, por lo que R3 no influye en el valor de tensión entre N2 y 0";
 const c7 = classifyQuery(c7msg, correct, evalEl);
 assert("restated-negation 'R3 ... R3 no influye' → R3 negated, not proposed",
@@ -311,14 +260,11 @@ assert("restated-negation 'R3 ... R3 no influye' → R3 negated, not proposed",
 assert("restated-negation 'R3 no influye' (R3 not in correct) → partial_correct",
   c7.type === "partial_correct", "got: " + c7.type);
 
-// Block A — accent-insensitive negation. Students drop accents constantly.
-// "esta abierto" (no tilde) must negate R3 just like "está abierto".
 const cAccent = classifyQuery("R1 R2 R4 porque R3 esta abierto y R5 cortocircuitada", correct, evalEl);
 assert("accent-less 'R3 esta abierto' → R3 & R5 negated",
   cAccent.negated.indexOf("R3") >= 0 && cAccent.negated.indexOf("R5") >= 0,
   "got negated=[" + cAccent.negated.join(",") + "]");
 
-// Block B — set quantifiers.
 const quAll = classifyQuery("todas las resistencias", correct, evalEl);
 assert("'todas las resistencias' → proposes the full evaluable set",
   quAll.proposed.length === evalEl.length, "got P=[" + quAll.proposed.join(",") + "]");
@@ -333,73 +279,52 @@ const quRest = classifyQuery("R3 no influye, el resto si", correct, evalEl);
 assert("'R3 no influye, el resto si' → R3 negated, rest proposed (post-only polarity)",
   quRest.negated.indexOf("R3") >= 0 && quRest.proposed.indexOf("R3") < 0 && quRest.proposed.length === 4,
   "got P=[" + quRest.proposed.join(",") + "] N=[" + quRest.negated.join(",") + "]");
-// Idiom guard — "de todos modos" must NOT be read as the quantifier "todos".
 const quIdiom = classifyQuery("de todos modos no lo se", correct, evalEl);
 assert("'de todos modos no lo se' is NOT expanded (idiom guard) → dont_know",
   quIdiom.type === "dont_know" && quIdiom.proposed.length === 0,
   "got: " + quIdiom.type + " P=[" + quIdiom.proposed.join(",") + "]");
 
-// Block C — H6 (2026-06-10): verbose yes/no answers to a CLOSED tutor question.
-// The length<15 gate used to send these to wrong_answer; a yes/no reply to a
-// closed question is valid however long it is.
 const dudasQ = "Vale, ¿tienes alguna duda sobre el circuito?";
 const h6a = classifyQuery("sí, lo tengo claro", correct, evalEl, dudasQ);
 assert("H6: verbose 'sí, lo tengo claro' to '¿tienes dudas?' → closed_answer",
   h6a.type === "closed_answer", "got: " + h6a.type);
-// The nasty one: "ninguna duda" used to trip the NONE quantifier and negate
-// ALL five elements. The idiom guard must stop that, and the answer is a valid
-// closed reply.
 const h6b = classifyQuery("no, ninguna duda", correct, evalEl, dudasQ);
 assert("H6: 'no, ninguna duda' → closed_answer, NOT all elements negated",
   h6b.type === "closed_answer" && h6b.negated.length === 0,
   "got: " + h6b.type + " N=[" + h6b.negated.join(",") + "]");
-// Regression guard: the REAL set-quantifier "ninguna" must still negate the
-// whole evaluable set when it genuinely refers to the resistances.
 const h6c = classifyQuery("ninguna resistencia", correct, evalEl);
 assert("H6 guard does NOT break real 'ninguna resistencia' → all negated",
   h6c.negated.length === evalEl.length, "got N=[" + h6c.negated.join(",") + "]");
 
-// Block D — H5 (2026-06-10): postfix polarity markers "X no" / "X sí". A bare
-// "no" after an element used to (a) NOT negate that element, and (b) bleed into
-// the next element's pre-window. The comma is the disambiguator: "R1 no, R2"
-// rejects R1; "R1, no R2" rejects R2.
 const h5a = classifyQuery("R1 no, R2 sí", correct, evalEl);
 assert("H5: 'R1 no, R2 sí' → R1 negated, R2 proposed (not inverted)",
   h5a.negated.indexOf("R1") >= 0 && h5a.proposed.indexOf("R2") >= 0 &&
   h5a.negated.indexOf("R2") < 0 && h5a.proposed.indexOf("R1") < 0,
   "got P=[" + h5a.proposed.join(",") + "] N=[" + h5a.negated.join(",") + "]");
+
 const h5b = classifyQuery("R4 sí, R5 no", correct, evalEl);
 assert("H5: 'R4 sí, R5 no' → R4 proposed, R5 negated",
   h5b.proposed.indexOf("R4") >= 0 && h5b.negated.indexOf("R5") >= 0 &&
   h5b.proposed.indexOf("R5") < 0,
   "got P=[" + h5b.proposed.join(",") + "] N=[" + h5b.negated.join(",") + "]");
-// Disambiguation: comma BEFORE "no" → the "no" opens the next clause.
 const h5c = classifyQuery("R1, no R2", correct, evalEl);
 assert("H5: 'R1, no R2' → R1 proposed, R2 negated (comma before 'no')",
   h5c.proposed.indexOf("R1") >= 0 && h5c.negated.indexOf("R2") >= 0,
   "got P=[" + h5c.proposed.join(",") + "] N=[" + h5c.negated.join(",") + "]");
-// Regression guard: pre-negation WITHOUT a comma must still negate.
 const h5d = classifyQuery("R1 R2 pero no R3", correct, evalEl);
 assert("H5 guard does NOT break comma-less pre-negation 'pero no R3'",
   h5d.negated.indexOf("R3") >= 0 && h5d.proposed.indexOf("R3") < 0,
   "got P=[" + h5d.proposed.join(",") + "] N=[" + h5d.negated.join(",") + "]");
 
-// Block E — H1 (2026-06-10): STICKY NEGATION. If any occurrence of an element
-// is negated, the element is negated (replaces the previous "last mention
-// wins" rule). Fixes the common restate-to-explain pattern where the negated
-// element is mentioned again, neutrally, to justify the rejection.
 const h1a = classifyQuery("R3 no influye, pero R3 tiene resistencia alta", correct, evalEl);
 assert("H1: 'R3 no influye, pero R3 …' → R3 NEGATED (not proposed by last-wins)",
   h1a.negated.indexOf("R3") >= 0 && h1a.proposed.indexOf("R3") < 0,
   "got P=[" + h1a.proposed.join(",") + "] N=[" + h1a.negated.join(",") + "]");
-// The case last-wins was originally introduced for must still work under sticky.
 const h1b = classifyQuery("pasa corriente por R3, por lo que R3 no influye", correct, evalEl);
 assert("H1: restated-negation 'por R3 … R3 no influye' still → R3 negated",
   h1b.negated.indexOf("R3") >= 0 && h1b.proposed.indexOf("R3") < 0,
   "got P=[" + h1b.proposed.join(",") + "] N=[" + h1b.negated.join(",") + "]");
 
-// Block F — adversarial re-sweep of our own fixes (2026-06-10).
-// ADV1: bare quantifier tokens must NOT expand on element-free idioms.
 const adv1a = classifyQuery("he probado todas las opciones", correct, evalEl);
 assert("ADV1: 'todas las opciones' (idiom, no element) → no expansion",
   adv1a.proposed.length === 0 && adv1a.negated.length === 0,
@@ -408,11 +333,11 @@ const adv1b = classifyQuery("ninguno de estos R me convence", correct, evalEl);
 assert("ADV1: 'ninguno de estos' (idiom) → does NOT negate the whole set",
   adv1b.negated.length === 0,
   "got N=[" + adv1b.negated.join(",") + "]");
+
 const adv1c = classifyQuery("todos los caminos llevan a R1", correct, evalEl);
 assert("ADV1: 'todos los caminos…R1' → only R1, not the full set",
   adv1c.proposed.length === 1 && adv1c.proposed[0] === "R1",
   "got P=[" + adv1c.proposed.join(",") + "]");
-// ADV1 guard: legitimate quantifiers still expand.
 const adv1d = classifyQuery("todas las resistencias", correct, evalEl);
 assert("ADV1 guard: 'todas las resistencias' still expands to full set",
   adv1d.proposed.length === evalEl.length, "got P=[" + adv1d.proposed.join(",") + "]");
@@ -420,39 +345,32 @@ const adv1e = classifyQuery("todos los elementos contribuyen", correct, evalEl);
 assert("ADV1 guard: 'todos los elementos' (circuit noun) still expands",
   adv1e.proposed.length === evalEl.length, "got P=[" + adv1e.proposed.join(",") + "]");
 
-// ADV2: H1 sticky negation must not absorb a "no" from a PREVIOUS sentence.
 const adv2 = classifyQuery("R3 no influye. R1 si va. Ademas R1 es fundamental para todo", correct, evalEl);
 assert("ADV2: cross-sentence 'no' does NOT negate R1 (sentence-bounded pre-window)",
   adv2.negated.indexOf("R1") < 0 && adv2.negated.indexOf("R3") >= 0,
   "got P=[" + adv2.proposed.join(",") + "] N=[" + adv2.negated.join(",") + "]");
 
-// ADV3: a standalone "¿Claro?" question must not be reduced to a headless "?".
 assert("ADV3: '¿Claro? Piensa en R5.' keeps the question (not '? Piensa…')",
   gr.removeOpeningConfirmation("¿Claro? Piensa en R5.", "es") === "¿Claro? Piensa en R5.",
   "got: " + gr.removeOpeningConfirmation("¿Claro? Piensa en R5.", "es"));
 
-// Block F2 — focused adversarial pass over the Block-F fixes themselves.
-// ADV1b: an ADJECTIVE containing "resist"/"element" ("elemental", "resistente")
-// must NOT anchor a bare quantifier (whole-noun anchor, not substring).
 const f2a = classifyQuery("muy elemental todo, todas", correct, evalEl);
 assert("ADV1b: adjective 'elemental' does NOT anchor 'todas' → no expansion",
   f2a.proposed.length === 0 && f2a.negated.length === 0,
   "got P=[" + f2a.proposed.join(",") + "] N=[" + f2a.negated.join(",") + "]");
+
 const f2b = classifyQuery("todas las elementales, R1", correct, evalEl);
 assert("ADV1b: 'todas las elementales' (adjective noun) → only R1, not full set",
   f2b.proposed.length === 1 && f2b.proposed[0] === "R1",
   "got P=[" + f2b.proposed.join(",") + "]");
-// ADV2b: an ellipsis ("...") must not be read as a sentence break that drops a
-// real negation phrase ("no es... R3" must still negate R3).
 const f2c = classifyQuery("no es... R3", correct, evalEl);
 assert("ADV2b: ellipsis does not break 'no es… R3' negation",
   f2c.negated.indexOf("R3") >= 0, "got N=[" + f2c.negated.join(",") + "]");
+
 const f2d = classifyQuery("R1 si. no R3", correct, evalEl);
 assert("ADV2b guard: a real sentence break still bounds the window ('R1 si. no R3' → R3 negated)",
   f2d.negated.indexOf("R3") >= 0 && f2d.negated.indexOf("R1") < 0,
   "got P=[" + f2d.proposed.join(",") + "] N=[" + f2d.negated.join(",") + "]");
-// ADV3b: an OPENING "¡Claro!" before real content IS a confirmation → strip it
-// (the "!" is consumed cleanly); a standalone "¡Claro!" survives.
 assert("ADV3b: '¡Claro! R5 no influye' → strips the opening confirmation",
   gr.removeOpeningConfirmation("¡Claro! R5 no influye, piensa", "es") === "R5 no influye, piensa",
   "got: " + gr.removeOpeningConfirmation("¡Claro! R5 no influye, piensa", "es"));
@@ -460,9 +378,6 @@ assert("ADV3b guard: standalone '¡Claro!' survives",
   gr.removeOpeningConfirmation("¡Claro!", "es") === "¡Claro!",
   "got: " + gr.removeOpeningConfirmation("¡Claro!", "es"));
 
-// Block G — real-server run (2026-06-10). Flow-negation over a LIST of elements.
-// Production failure: "no deja pasar la corriente por r3 r4 ni r5" classified
-// R3/R4 as proposed (only R5 negated), tangling the whole conversation.
 const g1 = classifyQuery("Que no deja pasar la corriente por r3 r4 ni r5", correct, evalEl);
 assert("G(run): 'no deja pasar la corriente por r3 r4 ni r5' → R3,R4,R5 ALL negated",
   ["R3","R4","R5"].every((x) => g1.negated.indexOf(x) >= 0) && g1.proposed.length === 0,
@@ -471,19 +386,15 @@ const g2 = classifyQuery("no pasa corriente por R3, R4 y R5", correct, evalEl);
 assert("G(run): flow-negation over a comma list negates the WHOLE list",
   ["R3","R4","R5"].every((x) => g2.negated.indexOf(x) >= 0),
   "got N=[" + g2.negated.join(",") + "]");
-// Contrastive connector bounds the flow span: "…por R3 pero R4 sí" → R4 positive.
 const g3 = classifyQuery("no pasa corriente por R3 pero R4 si", correct, evalEl);
 assert("G(run): contrast 'pero R4 sí' keeps R4 proposed, R3 negated",
   g3.negated.indexOf("R3") >= 0 && g3.proposed.indexOf("R4") >= 0 && g3.negated.indexOf("R4") < 0,
   "got P=[" + g3.proposed.join(",") + "] N=[" + g3.negated.join(",") + "]");
-// "ningún momento" is a temporal idiom, not the NONE quantifier.
 const g4 = classifyQuery("No he dicho en ningún momento que r4 influya", correct, evalEl);
 assert("G(run): 'en ningún momento' does NOT negate the whole set",
   g4.negated.length === 0,
   "got N=[" + g4.negated.join(",") + "]");
 
-// C (run req9): the student asking the tutor to EXPLAIN a concept is detected,
-// so tutorAgent can answer the concept instead of restarting the scaffold.
 const { isExplanationRequest } = require(path.join(ROOT, "src/domain/services/rag/queryClassifier"));
 assert("C(run): 'puedes explicarme el concepto de divisor de tensión?' → explanation request",
   isExplanationRequest("puedes explicarme el concepto de divisor de tensión?") === true);
@@ -493,12 +404,9 @@ assert("C(run) guard: a plain element answer is NOT an explanation request",
   isExplanationRequest("Sí, de R1 y R2") === false &&
   isExplanationRequest("ni idea") === false);
 
-// ─── Block H — 2nd real-server run (2026-06-10) ──────────────────────────────
 section("H. Run-2: false-premise question guardrail (T1) + topology/flow leaks");
 const adh = byId.adherence;
 const tctx = { lang: "es", correctAnswer: ["R1","R2","R4"] };
-// T1: a question presupposing a CORRECT element is irrelevant must be caught
-// deterministically (the system-prompt rule alone did not stop qwen2.5).
 assert("H/T1: '¿por qué R4 no influye?' (R4 correct) → adherence violation",
   adh.check("R1 y R2 son resistencias. ¿Por qué crees que R4 no influye en la tensión?", tctx).violated === true);
 assert("H/T1: false premise survives an intervening relative clause (R2)",
@@ -510,28 +418,18 @@ assert("H/T1 guard: 'R4 importa pero R3 no influye' does not false-fire on R4",
 
 const srg = byId.state_reveal;
 const sctx = { evaluableElements: ["R1","R2","R3","R4","R5"], kgConceptPatterns: [], lang: "es", messages: [] };
-// Topology assertion leaks (fire even inside a question).
 assert("H/topo: 'R4 conectada en paralelo con R2' → state_reveal",
   srg.check("R4 está conectada en paralelo con R2 entre N2 y tierra.", sctx).violated === true);
 assert("H/topo: topology assertion inside a question still leaks",
   srg.check("¿Te das cuenta de que R4 está conectada en paralelo con R2?", sctx).violated === true);
-// Current-path reveal (affirmation), even with intervening text.
 assert("H/flow: 'la corriente … pasa por R2 y R4' → state_reveal",
   srg.check("La corriente desde N2 hacia tierra pasa por R2 y R4.", sctx).violated === true);
-// Guards: a probing flow QUESTION and a NEGATED flow are not leaks.
 assert("H/flow guard: '¿pasa la corriente por R2?' is a legitimate question",
   srg.check("¿Pasa la corriente por R2 hacia tierra?", sctx).violated === false);
 assert("H/flow guard: 'la corriente no pasa por R3' (correct exclusion) is not a leak",
   srg.check("La corriente no pasa por R3, está bien excluida.", sctx).violated === false);
 
-// ─── 6. ELEMENT_NAMING retry hint plagiarism ────────────────────────────────
 section("6. ElementNaming retry hint contains a quotable example");
-// C5: the retry hint must NOT always contain the same example phrase the LLM
-// would otherwise plagiarize. We sample 6 invocations and confirm the example
-// rotates (i.e. at least 2 distinct rendered hints across 6 samples).
-// NOTE: the ElementNamingGuardrail was retired (NS-32), but the retry HINT it
-// used to build now lives in languageManager.getElementNamingInstruction, which
-// rotates examples via _pickConceptExample. We test that live function.
 const { getElementNamingInstruction } = require(path.join(ROOT, "src/domain/services/languageManager"));
 const hintSamples = new Set();
 for (let i = 0; i < 6; i++) hintSamples.add(getElementNamingInstruction("es"));
@@ -539,13 +437,9 @@ assert("retry hint rotates examples across calls (C5 fix)",
   hintSamples.size >= 2,
   "got " + hintSamples.size + " distinct samples in 6 calls");
 
-// ─── 7. STREAK/REPETITION DETECTION (CONTEXT AGENT) ──────────────────────────
 section("7. ContextAgent question-similarity threshold");
 const ContextAgent = require(path.join(ROOT, "src/domain/agents/contextAgent"));
 const ca = new (class extends ContextAgent { constructor() {
-  // historySummarizer became a required dep after this test was written; the
-  // methods exercised here (_questionSimilarity, _detectRepetition) don't use
-  // it, so an empty stub satisfies the constructor guard.
   super({ ejercicioRepo: {}, interaccionRepo: {}, messageRepo: {}, config: {}, historySummarizer: {} });
 }})();
 const q1 = "¿qué condiciones se necesitan para que circule corriente por una rama del circuito?";
@@ -557,9 +451,6 @@ const repeated = ca._detectRepetition([
 ]);
 assert("_detectRepetition fires on 3 same-ish questions", repeated === true);
 
-// BUG-A2 (2026-06-10): same asymmetry as guardrail G4, but in contextAgent. A
-// short question that is a lexical subset of a longer, unrelated one used to
-// score high and raise a spurious [ANTI-LOOP] banner.
 const a2short = "¿qué resistencias importan aquí?";
 const a2long = "¿qué resistencias importan aquí cuando el interruptor esta abierto y la corriente busca otro camino?";
 assert("A2: similarity is symmetric (subset vs superset)",
@@ -569,9 +460,6 @@ assert("A2: short-subset vs long unrelated → NOT flagged as repetition",
   ca._detectRepetition([{ content: a2short }, { content: a2long }]) === false,
   "got: " + ca._detectRepetition([{ content: a2short }, { content: a2long }]));
 
-// BUG-A3 (2026-06-10): _detectStuckOnElement only scanned each message's LAST
-// interrogative fragment, so an Rn obsessed over across turns was undercounted
-// when a later sentence asked about a different element.
 const a3msgs = [
   { content: "¿R1 no conduce corriente en esa rama?" },
   { content: "¿Qué nodo conecta R1 con el resto? ¿Y qué opinas de R2?" },
@@ -582,7 +470,12 @@ assert("A3 control: different elements per turn → not stuck (null)",
   ca._detectStuckOnElement([{ content: "¿Y R1?" }, { content: "¿Y R2?" }]) === null,
   "got: " + ca._detectStuckOnElement([{ content: "¿Y R1?" }, { content: "¿Y R2?" }]));
 
-// ─── 8. SAME-CLASSIFICATION STREAK (LOOP BREAKER, A) ─────────────────────────
+/*
+   IN -> ____|___________
+        | section8() | -> Promise<void>
+         -----------
+      Checks the same-classification streak loop breaker and the TutorAgent strategy hint.
+   */
 async function section8() {
   section("8. ContextAgent._lastClassificationStreak + TutorAgent strategy hint");
   function fakeMsg(role, classification) {
@@ -621,11 +514,8 @@ async function section8() {
   assert("streak: empty assistant history returns 0",
     r3.type === null && r3.streak === 0, JSON.stringify(r3));
 
-  // TutorAgent strategy hint logic
   const TutorAgent = require(path.join(ROOT, "src/domain/agents/tutorAgent"));
   const tStub = new (class extends TutorAgent { constructor() {
-    // debugLogger became a required dep after this test was written;
-    // _buildStrategyHint (the only method exercised) doesn't use it.
     super({ llmService: {}, buildSystemPrompt: () => "", config: {}, debugLogger: {} });
   }})();
   assert("strategyHint fires for correct_no_reasoning streak>=2",
@@ -639,11 +529,6 @@ async function section8() {
   assert("strategyHint fires for dont_know streak>=2",
     tStub._buildStrategyHint("dont_know", 2, "dont_know").includes("ESCALATE"));
 
-  // BUG-A1 (2026-06-10): the verdict banner gate required proposed.length>0, so
-  // an "only_negation" turn (student wrongly rejected a correct element) dropped
-  // the whole banner — the LLM never learned of the wrong rejection. The gate
-  // now also fires on wronglyNegated. We verify the extracted predicate against
-  // the REAL verdict produced by AcDetectorAgent.
   const AcDetectorAgent = require(path.join(ROOT, "src/domain/agents/acDetectorAgent"));
   const acd = new AcDetectorAgent({});
   const onlyNegCtx = { classification: { proposed: [], negated: ["R1"] }, correctAnswer: ["R1","R2","R4"], exerciseNum: null };
@@ -654,7 +539,6 @@ async function section8() {
     JSON.stringify(onlyNegCtx.turnVerdict.verdict) + " wn=" + JSON.stringify(onlyNegCtx.turnVerdict.wronglyNegated));
   assert("A1: verdict banner IS rendered for only_negation (wrong rejection reaches LLM)",
     tStub._shouldRenderVerdictBanner(onlyNegCtx.turnVerdict) === true);
-  // Controls: proposed-only still renders; a null/empty verdict does not.
   assert("A1 control: proposed-only verdict still renders",
     tStub._shouldRenderVerdictBanner({ proposed: ["R1"], wronglyNegated: [] }) === true);
   assert("A1 control: empty verdict does NOT render",
@@ -662,26 +546,16 @@ async function section8() {
     tStub._shouldRenderVerdictBanner(null) === false);
 }
 
-// ─── 9. FULL GUARDRAIL PIPELINE (end-to-end, the layer that actually ships) ──
-//
-// BUG-CRIT (2026-06-11): every section above checks guardrails in ISOLATION
-// (g.check / g.surgicalFix). But what reaches the student is whatever
-// GuardrailPipeline.validate() RETURNS after composing check → surgical →
-// retry. A guardrail can fire perfectly in isolation and STILL leak if the
-// pipeline never acts on it. That is exactly what happened with adherence's
-// false_premise rule: check() returned violated=true (section H/T1 passes),
-// but the rule has no surgicalFix AND "adherence" was missing from the
-// pipeline's CRITICAL_GUARDRAILS set, so the consolidated retry was skipped
-// and the "¿Por qué crees que R4 no influye?" question was sent VERBATIM —
-// the precise failure seen in the production transcript. These tests drive the
-// REAL pipeline with a stub LLM and assert on the user-visible output, so a
-// dead detection (fires-but-never-acts) FAILS here even when its unit test passes.
+/*
+   IN -> ____|___________
+        | section9() | -> Promise<void>
+         -----------
+      Drives the real GuardrailPipeline end-to-end so detections must act, not just fire.
+   */
 async function section9() {
   section("9. GuardrailPipeline end-to-end: detections must ACT, not just fire");
   const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
 
-  // Stub LLM whose retry returns a clean, false-premise-free Socratic question.
-  // We count calls so we can distinguish "retried" from "passed through".
   function makePipeline(retryText) {
     let calls = 0;
     const llm = { chatCompletion: async function () { calls++; return retryText; } };
@@ -696,9 +570,6 @@ async function section9() {
   };
   const sysMsgs = [{ role: "system", content: "tutor prompt" }, { role: "user", content: "r1 y r2" }];
 
-  // (a) THE REGRESSION: a false-premise question about a CORRECT element must
-  // NOT reach the student. Pre-fix this returned path=non_critical_only with the
-  // false premise intact and llmRetryCount=0 (LLM never called).
   const cleanQ = "¿Has tenido en cuenta todas las resistencias conectadas a ese nodo?";
   const h1 = makePipeline(cleanQ);
   const r1 = await h1.pipeline.validate(
@@ -711,8 +582,6 @@ async function section9() {
     r1.llmRetryCount === 1 && h1.calls() === 1,
     "retries=" + r1.llmRetryCount + " llmCalls=" + h1.calls() + " path=" + r1.path);
 
-  // (b) GUARD: a clean Socratic turn must pass through untouched with NO retry
-  // (no spurious LLM round-trip / latency from the adherence-critical change).
   const h2 = makePipeline(cleanQ);
   const r2 = await h2.pipeline.validate(
     "R1 y R2 están en el camino de la corriente. ¿Qué otra resistencia conecta el nodo N2 con tierra?",
@@ -721,9 +590,6 @@ async function section9() {
     r2.path === "primary_ok" && r2.llmRetryCount === 0 && h2.calls() === 0,
     "path=" + r2.path + " retries=" + r2.llmRetryCount + " llmCalls=" + h2.calls());
 
-  // (c) GUARD: a guard against the *opposite* regression — '¿por qué R3 no
-  // influye?' (R3 genuinely irrelevant) is a legitimate Socratic move and must
-  // NOT be rewritten away.
   const h3 = makePipeline(cleanQ);
   const r3 = await h3.pipeline.validate(
     "¿Por qué pensaste que R3 también influía en la tensión entre N2 y tierra?",
@@ -732,9 +598,6 @@ async function section9() {
     r3.path === "primary_ok" && /R3/.test(r3.response) && h3.calls() === 0,
     "path=" + r3.path + " sent=" + JSON.stringify(r3.response).slice(0, 80));
 
-  // (d) THE OTHER PRODUCTION LEAK: a topology reveal inside a question
-  // ("R4 está conectada en paralelo con R2") must be REDACTED before sending —
-  // the user-visible text must not contain the "en paralelo con" connection.
   const h4 = makePipeline(cleanQ);
   const r4 = await h4.pipeline.validate(
     "¿Te das cuenta de que R4 está conectada en paralelo con R2 entre N2 y tierra?",
@@ -743,8 +606,6 @@ async function section9() {
     !/en paralelo con|en serie con/i.test(r4.response),
     "path=" + r4.path + " sent=" + JSON.stringify(r4.response).slice(0, 90));
 
-  // (e) THE FLOW LEAK: current-path reveal ("la corriente pasa por R2 y R4")
-  // must be redacted; the final text must still ask the student something.
   const h5 = makePipeline(cleanQ);
   const r5 = await h5.pipeline.validate(
     "La corriente desde N2 hacia tierra pasa por R2 y R4. ¿Hay algún interruptor en el circuito?",
@@ -753,12 +614,6 @@ async function section9() {
     !/pasa por r2 y r4/i.test(r5.response) && /\?/.test(r5.response),
     "path=" + r5.path + " sent=" + JSON.stringify(r5.response).slice(0, 90));
 
-  // (f) BUG-ALGUNOS (2026-06-11, req11 of the real transcript): the student
-  // ANSWERED the full correct set ("pasa por r1 r2 r4", verdict=correct). The
-  // tutor's honest acknowledgment "R1, R2 y R4 están en el camino" must NOT be
-  // rewritten into the FALSE "Algunos de los elementos que has propuesto están
-  // en el camino" ("some" when it was ALL). Pre-fix this fired solution_leak
-  // and the surgical fix produced exactly that misleading "Algunos…" string.
   const correctCtx = Object.assign({}, e2eCtx, {
     proposed: ["R1", "R2", "R4"],
     turnVerdict: { verdict: "correct", hits: ["R1", "R2", "R4"], missing: [], errors: [] },
@@ -775,9 +630,6 @@ async function section9() {
     /r1[,\s].*r2.*r4/i.test(r6.response),
     "sent=" + JSON.stringify(r6.response).slice(0, 90));
 
-  // (g) GUARD against re-opening a leak: a WRONG superset answer (student
-  // proposed R1 R2 R3 R4, verdict != correct) must STILL have its correct
-  // subset protected — the verdict-correct exception must not bleed into it.
   const supersetCtx = Object.assign({}, e2eCtx, {
     proposed: ["R1", "R2", "R3", "R4"],
     turnVerdict: { verdict: "wrong_concept", hits: ["R1", "R2", "R4"], errors: ["R3"], missing: [] },
@@ -792,15 +644,12 @@ async function section9() {
     "path=" + r7.path + " sent=" + JSON.stringify(r7.response).slice(0, 90));
 }
 
-// ─── 10. CUMULATIVE ANSWER STATE (BUG-LOOP root cause) ───────────────────────
-//
-// The per-turn verdict forgets what the student already established, so the
-// tutor re-interrogates R1/R2/R4 turn after turn (the loop Irene flagged in the
-// 2026-06-11 transcript). computeCumulativeAnswer replays the classifier over
-// the whole conversation (each user turn with its preceding tutor question as
-// context) to reconstruct the union of what's named/excluded. These tests
-// replay the REAL transcript turns and assert the state the per-turn verdict
-// loses.
+/*
+   IN -> ____|____________
+        | section10() | -> void
+         ------------
+      Replays transcript turns to verify the conversation-level cumulative answer state.
+   */
 function section10() {
   section("10. cumulativeAnswer: the conversation-level state the per-turn verdict forgets");
   const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
@@ -812,9 +661,6 @@ function section10() {
     return out;
   }
 
-  // (a) THE ANTI-FORGETTING CORE: the student names the full set in ONE turn,
-  // then a LATER turn only negates R5. Per-turn verdict would report
-  // missing=[R1,R2,R4] again; the cumulative state must still know it's complete.
   const loopMsgs = pairsToMessages([
     ["¿cómo se distribuye la corriente?", "pasa por r1 r2 r4"],
     ["¿Está R5 conectada a tierra en ambos extremos?", "No porque está en corto"],
@@ -827,8 +673,6 @@ function section10() {
   assert("10/CORE: R5 (context-resolved 'No porque está en corto') is in excluded",
     cum.excluded.indexOf("R5") >= 0, "excluded=[" + cum.excluded + "]");
 
-  // (b) FULL TRANSCRIPT → closureReady (criterion: full set named AND exclusions
-  // reasoned). R3 excluded (req9 "No"), R5 excluded (req12 corto), R1/R2/R4 named.
   const fullMsgs = pairsToMessages([
     ["¿Está R3 en el camino de la corriente que va de N2 a tierra?", "No"],
     ["¿cómo se distribuye la corriente?", "pasa por r1 r2 r4"],
@@ -842,8 +686,6 @@ function section10() {
     full.reasoningConcepts.length > 0,
     "excluded=[" + full.excluded + "] concepts=[" + full.reasoningConcepts + "] closureReady=" + full.closureReady);
 
-  // (c) GUARD: an INCOMPLETE session (R4 never named, never excluded) must NOT
-  // be complete and must NOT be closureReady.
   const partialMsgs = pairsToMessages([
     ["¿Está R3 en el camino?", "No"],
     ["¿qué resistencias?", "r1 y r2"],
@@ -855,8 +697,6 @@ function section10() {
     partial.stillMissing.indexOf("R4") >= 0,
     "stillMissing=[" + partial.stillMissing + "] complete=" + partial.complete);
 
-  // (d) GUARD: a wrongly-excluded CORRECT element surfaces, but is CLEARED if the
-  // student later names it (self-correction; naming wins).
   const wrongExclMsgs = pairsToMessages([
     ["¿Está R4 en el camino?", "no, R4 no influye"],
   ]);
@@ -874,15 +714,16 @@ function section10() {
     "wronglyExcluded=[" + corrected.wronglyExcluded + "] namedCorrect=[" + corrected.namedCorrect + "]");
 }
 
-// ─── 11. LOOP FIX WIRING: settled-element guardrail + cumulative closure ─────
+/*
+   IN -> ____|____________
+        | section11() | -> Promise<void>
+         ------------
+      Verifies the settled-element guardrail wiring and cumulative closure logic.
+   */
 async function section11() {
   section("11. Loop fix: settled-element guardrail (pipeline) + cumulative closure");
   const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
 
-  // (a) The req18 loop string, with the cumulative state that existed at that
-  // point (R1,R2,R4 named; R3,R5 excluded). The pipeline must DETECT the
-  // settled-element re-ask and RETRY (settled_element_question is retry-only and
-  // must be in CRITICAL_GUARDRAILS, or the detection would be dead — BUG-CRIT class).
   let calls = 0;
   const pivot = "Has identificado las resistencias correctas. ¿Qué condición hace que una rama no transporte corriente?";
   const llm = { chatCompletion: async function () { calls++; return pivot; } };
@@ -900,8 +741,6 @@ async function section11() {
     !/¿est[aá]\s+r1\s+en el camino/i.test(rLoop.response),
     "path=" + rLoop.path + " retries=" + rLoop.llmRetryCount + " sent=" + JSON.stringify(rLoop.response).slice(0, 70));
 
-  // (b) GUARD: a CONCEPTUAL consolidation question about settled elements is
-  // GOOD (demanding reasoning) — it must pass through with NO retry.
   let calls2 = 0;
   const llm2 = { chatCompletion: async function () { calls2++; return pivot; } };
   const pipeline2 = new GuardrailPipeline({ guardrails: createDefaultGuardrails(), llmService: llm2, budgetMs: 45000 });
@@ -912,9 +751,6 @@ async function section11() {
     rConcept.path === "primary_ok" && calls2 === 0,
     "path=" + rConcept.path + " retries=" + rConcept.llmRetryCount);
 
-  // (c) Orchestrator closure on the cumulative criterion (chosen with Irene:
-  // full set named + exclusions reasoned). Drive the real methods on a bare
-  // prototype instance (same technique as section 2d's _normaliseWhitespace).
   const Orchestrator = require(path.join(ROOT, "src/domain/agents/orchestrator"));
   const orch = Object.create(Orchestrator.prototype);
   const readyCum = { closureReady: true, wronglyNamed: [], wronglyExcluded: [] };
@@ -928,10 +764,6 @@ async function section11() {
     orch._shouldFinishDeterministically({ classification: { type: "partial_correct" }, cumulativeAnswer: { closureReady: false, wronglyNamed: [], wronglyExcluded: [] } }) === false);
   assert("11/CLOSE: legacy correct_good_reasoning ×2 path still finishes",
     orch._shouldFinishDeterministically({ classification: { type: "correct_good_reasoning" }, loopState: { prevGoodReasoningTurns: 1 } }) === true);
-  // GAP fix (2026-06-11): the explanation gate referenced a non-existent
-  // ctx.asksExplanation (a tutorAgent local) so it never blocked. A solved
-  // student who NOW asks the tutor to explain a concept must be ANSWERED, not
-  // closed. Computed inline from the current message in _shouldFinishDeterministically.
   assert("11/CLOSE guard: closureReady but student asks to EXPLAIN a concept → NO finish",
     orch._shouldFinishDeterministically({
       classification: { type: "wrong_concept", concepts: ["divisor de tensión"] },
@@ -939,13 +771,9 @@ async function section11() {
       cumulativeAnswer: readyCum,
     }) === false);
 
-  // (c-bis) DE-STICKY (gap 3 fix): closureReady stays true forever once reached,
-  // so a follow-up turn after a close must NOT re-close. exerciseAlreadyClosed
-  // short-circuits the deterministic finish.
   assert("11/DESTICKY: closureReady but exercise already closed → NO re-finish",
     orch._shouldFinishDeterministically({ classification: { type: "closed_answer" }, cumulativeAnswer: readyCum, exerciseAlreadyClosed: true }) === false);
 
-  // (d) The <END_EXERCISE> token is AUTHORISED (kept) when closureReady, stripped otherwise.
   const ctxKeep = { finalResponse: "¡Bien! <END_EXERCISE>", classification: { type: "wrong_concept" }, cumulativeAnswer: readyCum };
   orch._stripUnauthorizedFinToken(ctxKeep);
   assert("11/CLOSE: FIN token kept when closureReady",
@@ -954,15 +782,18 @@ async function section11() {
   orch._stripUnauthorizedFinToken(ctxStrip);
   assert("11/CLOSE guard: unauthorised FIN token is stripped",
     !/<END_EXERCISE>/.test(ctxStrip.finalResponse), "got: " + ctxStrip.finalResponse);
-  // De-sticky: a fresh FIN token in a follow-up after a prior close is stripped
-  // (not re-authorised) even though closureReady is still true.
   const ctxReClose = { finalResponse: "¡Excelente! <END_EXERCISE>", classification: { type: "closed_answer" }, cumulativeAnswer: readyCum, exerciseAlreadyClosed: true, loopState: {} };
   orch._stripUnauthorizedFinToken(ctxReClose);
   assert("11/DESTICKY: FIN token in a post-close follow-up is stripped (no double close)",
     !/<END_EXERCISE>/.test(ctxReClose.finalResponse), "got: " + ctxReClose.finalResponse);
 }
 
-// ─── 12. TutorAgent cumulative banner (Block 2 wiring) ───────────────────────
+/*
+   IN -> ____|____________
+        | section12() | -> Promise<void>
+         ------------
+      Checks the TutorAgent cumulative-progress banner and stale-Missing suppression.
+   */
 async function section12() {
   section("12. TutorAgent [PROGRESO ACUMULADO] banner + stale-'Missing' suppression");
   const TutorAgent = require(path.join(ROOT, "src/domain/agents/tutorAgent"));
@@ -975,10 +806,6 @@ async function section12() {
       debugLogger: { logPrompt: function () {}, traceLlmCall: function () {}, logLlmOut: function () {} },
     });
   }})();
-  // The exact failure shape: the student already named R1,R2,R4 in earlier turns
-  // (cumulative), and THIS turn only negates R5 — so the per-turn verdict says
-  // missing=[R1,R2,R4] (stale). The banner must reflect the cumulative truth and
-  // the stale Missing line must be suppressed.
   const ctx = {
     exercise: {}, lang: "es", userMessage: "No porque está en corto", reqId: "t", config: {},
     classification: { type: "correct_no_reasoning", concepts: ["corto"], proposed: [], negated: ["R5"] },
@@ -1004,8 +831,6 @@ async function section12() {
   assert("12/BANNER: complete-but-not-closure → asks for ONE consolidation",
     /consolidaci[oó]n del razonamiento/.test(userMsg));
 
-  // Localised banner (gap 1 fix, 2026-06-11): the banner must follow the
-  // conversation language, not inject Spanish into a val/en session.
   const cumComplete = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: false };
   const bEn = agent._buildCumulativeBanner(cumComplete, "en", false);
   assert("12/I18N: English session → English banner ('CUMULATIVE PROGRESS')",
@@ -1014,9 +839,6 @@ async function section12() {
   assert("12/I18N: Valencian session → Valencian banner ('PROGRÉS ACUMULAT')",
     /PROGR[ÉE]S ACUMULAT/.test(bVal) && /L'alumne JA ha identificat/.test(bVal), bVal.slice(0, 40));
 
-  // De-sticky banner (gap 3 fix): once the exercise was already closed, the
-  // banner must drop the "cierra/close" instruction and tell the tutor to
-  // answer the follow-up instead — while still keeping the settled facts.
   const cumClosure = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true };
   const bOpen = agent._buildCumulativeBanner(cumClosure, "es", false);
   const bClosed = agent._buildCumulativeBanner(cumClosure, "es", true);
@@ -1028,8 +850,12 @@ async function section12() {
     bClosed.slice(0, 60));
 }
 
-// ─── 13. 3rd real-server run (2026-06-11): cumulative fair-game, false
-//        accusation, question-leak, settled flow phrases ────────────────────
+/*
+   IN -> ____|____________
+        | section13() | -> Promise<void>
+         ------------
+      Replays run-3: cumulative fair-game, false accusation, question-leak and settled flow phrases.
+   */
 async function section13() {
   section("13. Run-3: cumulative fair-game (SL), false accusation (AD), question-leak (SL), flow re-asks (SEQ)");
   const slg = byId.solution_leak;
@@ -1047,10 +873,6 @@ async function section13() {
     proposed: [], negated: ["R3", "R5"], cumulativeAnswer: cum13,
   };
 
-  // (a) BUG-ALGUNOS-2: turn-7 of the run-3 transcript. The student named the
-  // full set in an EARLIER turn; this turn only negates R3/R5 (verdict
-  // only_negation). The per-turn fair-game gate alone missed it and the
-  // "Algunos…" lie came back. The cumulative gate must exempt the echo.
   const echo13 = "R1, R2 y R4 están en el camino de la corriente. Bien razonado.";
   assert("13/SL: echo of the set is fair game when CUMULATIVE complete (verdict only_negation)",
     slg.check(echo13, ctx13).violated === false);
@@ -1058,10 +880,6 @@ async function section13() {
   assert("13/SL guard: same echo with cumulative INCOMPLETE → still a leak",
     slg.check(echo13, Object.assign({}, ctx13, { cumulativeAnswer: cumPartial13, turnVerdict: { verdict: "partial_correct" } })).violated === true);
 
-  // (b) FALSE ACCUSATION: "¿Por qué pensaste que R3 también influía?" right
-  // after the student wrote "porque r3 está en interruptor abierto y r5 en
-  // corto" (negated, never proposed). The student replied, furious: "no dije
-  // que r3 influía". Retry-only rule in adherence.
   const acc13 = "¿Por qué pensaste que R3 también influía en la tensión entre N2 y tierra?";
   assert("13/AD: accusation about a negated, never-proposed element → violation",
     adg13.check(acc13, ctx13).violated === true);
@@ -1075,10 +893,6 @@ async function section13() {
   assert("13/AD guard: legacy ctx without negated/cumulative info → no violation (H/T1 compat)",
     adg13.check(acc13, { lang: "es", correctAnswer: correct13 }).violated === false);
 
-  // (c) QUESTION-LEAK: a question naming the FULL correct set + influence verb
-  // before the student named anything hands over the answer ("me da la
-  // respuesta implícitamente"). Exempt once cumulative complete; never fires
-  // when extra Rn are listed (enumerating everything reveals nothing).
   const qleak13 = "¿Has considerado cómo las resistencias conectadas a N2, como R1, R2 y R4, podrían afectar la tensión entre N2 y tierra?";
   assert("13/SL-Q: full-set + 'podrían afectar' question with nothing named yet → leak",
     slg.check(qleak13, { correctAnswer: correct13, lang: "es" }).violated === true);
@@ -1089,8 +903,6 @@ async function section13() {
   assert("13/SL-Q guard: '¿por qué R3 y R5 no influyen?' (names no correct element) → no leak",
     slg.check("¿Por qué R3 y R5 no influyen en la diferencia de potencial pedida?", ctx13).violated === false);
 
-  // (d) SETTLED flow phrasing: run-3 turns 8–11 re-asked R5/R3 exclusions with
-  // flow wording the original phrase list missed.
   assert("13/SEQ: 'no puede fluir a través de R3' (R3 settled) → violation",
     seq13.check("¿Significa el interruptor abierto que la corriente no puede fluir a través de R3?", { cumulativeAnswer: cum13 }).violated === true);
   assert("13/SEQ: 4th re-ask of R5's both-ends-grounded → violation",
@@ -1098,28 +910,15 @@ async function section13() {
   assert("13/SEQ guard: the same probe BEFORE R5 is settled → legitimate Socratic probe",
     seq13.check("¿Está R5 conectada a tierra en ambos extremos?", { cumulativeAnswer: { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3"], stillMissing: [], complete: true } }).violated === false);
 
-  // (d2) BUG-NEG-INT — THE ROOT of the run-3 turn-7 disaster. The student's
-  // "porque r3 está en interruptor abierto y r5 en corto" was classified as
-  // R3 PROPOSED (polar opposite): the state phrase needs 28 chars after the
-  // element but POST_WINDOW was 25, and "en interruptor abierto" wasn't in the
-  // dictionary. The misread made AcDetector emit errors=[R3] and the verdict
-  // banner literally instructed the LLM to ask "¿por qué pensaste que también
-  // R3?" → the false accusation came from OUR OWN banner. Fix: dictionary
-  // entries + POST_WINDOW 40 (still sentence- and next-element-bounded).
   const t7 = classifyQuery("porque r3 está en interruptor abierto y r5 en corto", correct13, ["R1","R2","R3","R4","R5"], "¿Por qué R3 y R5 no influyen?");
   assert("13/NEG-INT: 'r3 está en interruptor abierto y r5 en corto' → R3,R5 negated, nothing proposed",
     t7.negated.indexOf("R3") >= 0 && t7.negated.indexOf("R5") >= 0 && t7.proposed.length === 0,
     "got P=[" + t7.proposed.join(",") + "] N=[" + t7.negated.join(",") + "]");
-  // FP guard for the wider window: a positive claim with an unrelated trailing
-  // clause must NOT pick up a distant negation from the next element's context.
   const t7g = classifyQuery("R4 influye porque R3 está en interruptor abierto", correct13, ["R1","R2","R3","R4","R5"]);
   assert("13/NEG-INT guard: 'R4 influye porque R3 está en interruptor abierto' → R4 proposed, R3 negated",
     t7g.proposed.indexOf("R4") >= 0 && t7g.negated.indexOf("R3") >= 0 && t7g.negated.indexOf("R4") < 0,
     "got P=[" + t7g.proposed.join(",") + "] N=[" + t7g.negated.join(",") + "]");
 
-  // (d3) FULL run-3 replay → the cumulative state must reach closureReady at
-  // turn 7 and the orchestrator must CLOSE instead of letting the tutor loop
-  // (turns 8-11 of the production transcript would never happen).
   const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
   const run3 = [
     ["¿qué identificas en el enunciado?", "las resistencias por las que pasa la corriente"],
@@ -1144,10 +943,6 @@ async function section13() {
       cumulativeAnswer: run3cum, loopState: {},
     }) === true);
 
-  // (e) PIPELINE e2e of the run-3 turn-7 disaster: LLM emits the honest echo
-  // PLUS the false accusation. Expected: solution_leak does NOT rewrite the
-  // echo (cumulative fair game), adherence false_accusation forces ONE retry,
-  // and the student receives the clean pivot — not "Algunos…" nor the accusation.
   const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
   let calls13 = 0;
   const pivot13 = "Exacto: esa exclusión es correcta. ¿Qué ley te permite calcular ahora la tensión entre N2 y tierra?";
@@ -1163,16 +958,17 @@ async function section13() {
     "path=" + r13.path + " retries=" + r13.llmRetryCount + " sent=" + JSON.stringify(r13.response).slice(0, 80));
 }
 
-// ─── 14. 4th real-server run (2026-06-11): article variants, quantifier
-//        'todo', excluding-state yes/no inversion, path-accusation verbs ─────
+/*
+   IN -> ____|____________
+        | section14() | -> void
+         ------------
+      Replays run-4: article variants, the 'todo' quantifier, state-question polarity and path accusations.
+   */
 function section14() {
   section("14. Run-4: 'en UN interruptor' (NEG), 'todo menos' (QUANT), state-question polarity (STATEQ), path accusation (AD)");
   const correct14 = ["R1", "R2", "R4"];
   const eval14 = ["R1", "R2", "R3", "R4", "R5"];
 
-  // (a) BUG-TODO: the student OPENED with the complete answer via the SINGULAR
-  // quantifier "todo menos r3 r5" — only plural forms were listed, so the
-  // first message was read as bare negations and 'complete' was delayed.
   const q14a = classifyQuery("todo menos r3 r5", correct14, eval14);
   assert("14/QUANT: 'todo menos r3 r5' expands → R1,R2,R4 proposed, R3,R5 negated",
     ["R1", "R2", "R4"].every((r) => q14a.proposed.indexOf(r) >= 0) &&
@@ -1181,9 +977,6 @@ function section14() {
   assert("14/QUANT guard: idiom 'todo el rato pensando' does NOT expand",
     classifyQuery("todo el rato pensando en eso", correct14, eval14).proposed.length === 0);
 
-  // (b) BUG-NEG-INT-2: "en UN interruptor abierto" — the ARTICLE variant broke
-  // the substring match and R3 flipped to PROPOSED again (run-4 turn 3), which
-  // re-triggered the whole errors=[R3] → banner-driven accusation chain.
   const q14b = classifyQuery("porque r3 esta en un interruptor abierto y r5 en corto", correct14, eval14, "¿Por qué crees que R3 y R5 no influyen?");
   assert("14/NEG: 'r3 esta en UN interruptor abierto y r5 en corto' → both negated, none proposed",
     q14b.negated.indexOf("R3") >= 0 && q14b.negated.indexOf("R5") >= 0 && q14b.proposed.length === 0,
@@ -1192,11 +985,6 @@ function section14() {
     classifyQuery("r1 r2 r4 porque el interruptor esta abierto", correct14, eval14).negated.indexOf("R4") < 0,
     "N=[" + classifyQuery("r1 r2 r4 porque el interruptor esta abierto", correct14, eval14).negated + "]");
 
-  // (c) BUG-STATEQ: "sí" confirming an EXCLUDING-STATE question ("¿está R5
-  // conectada a tierra en ambos extremos?") is the student agreeing R5 is
-  // shorted — an EXCLUSION, not a proposal. The old polarity read it as
-  // proposed=[R5] → errors=[R5] → "¿por qué pensaste que R5 también estaba en
-  // el camino?" (run-4 turn 5 false accusation).
   const q14c = classifyQuery("sí", correct14, eval14, "¿Puedes confirmar si la resistencia R5 está conectada a tierra en ambos extremos?");
   assert("14/STATEQ: 'sí' to an excluding-state question → R5 NEGATED, correct_no_reasoning",
     q14c.negated.indexOf("R5") >= 0 && q14c.proposed.length === 0 && q14c.type === "correct_no_reasoning",
@@ -1206,8 +994,6 @@ function section14() {
   assert("14/STATEQ guard: 'No porque está en corto' (answer carries the state) still negates R5",
     classifyQuery("No porque está en corto", correct14, eval14, "¿Está R5 conectada a tierra en ambos extremos?").negated.indexOf("R5") >= 0);
 
-  // (d) Accusation with a PATH predicate ("¿por qué pensaste que R5 también
-  // ESTABA EN EL CAMINO?") — the influence-verb list missed it (run-4 turn 5).
   const adg14 = byId.adherence;
   const cum14 = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [], perTurn: [{ proposed: ["R1", "R2", "R4"], negated: ["R3", "R5"] }] };
   assert("14/AD: '¿por qué pensaste que R5 también estaba en el camino?' → false accusation",
@@ -1217,9 +1003,6 @@ function section14() {
     adg14.check("¿Por qué pensaste que R5 no estaba en el camino?",
       { lang: "es", correctAnswer: correct14, proposed: [], negated: [], cumulativeAnswer: cum14 }).violated === false);
 
-  // (e) FULL run-4 replay: with the fixes, the session reaches closureReady at
-  // turn 3 ("porque r3 esta en un interruptor abierto y r5 en corto") and the
-  // orchestrator CLOSES — turns 4-5 of the production transcript never happen.
   const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
   const run4 = [
     { role: "user", content: "todo menos r3 r5" },
@@ -1232,8 +1015,6 @@ function section14() {
   assert("14/REPLAY: run-4 reaches closureReady at turn 3",
     run4cum.closureReady === true && run4cum.wronglyNamed.length === 0,
     "excluded=[" + run4cum.excluded + "] wronglyNamed=[" + run4cum.wronglyNamed + "] closureReady=" + run4cum.closureReady);
-  // Turn-1 alone must NOT close (complete set but no reasoning yet — the tutor
-  // must still demand the justification).
   const run4t1 = computeCumulativeAnswer(run4.slice(0, 1), correct14, eval14);
   assert("14/REPLAY guard: turn 1 ('todo menos r3 r5', no reasoning) → complete but NOT closureReady",
     run4t1.complete === true && run4t1.closureReady === false,
@@ -1248,8 +1029,12 @@ function section14() {
     }) === true);
 }
 
-// ─── 15. 5th real-server run (2026-06-11): flow-probe FP + stale PER-ELEMENT
-//        MISSING + run-5 replay (closes at turn 1) ───────────────────────────
+/*
+   IN -> ____|____________
+        | section15() | -> void
+         ------------
+      Replays run-5: state_reveal flow-probe false positives, cumulative per-element analysis and replay.
+   */
 function section15() {
   section("15. Run-5: state_reveal flow-probe FP (SR), cumulative [PER-ELEMENT ANALYSIS] (PEA), replay");
   const correct15 = ["R1", "R2", "R4"];
@@ -1257,11 +1042,6 @@ function section15() {
   const sr15 = byId.state_reveal;
   const srCtx15 = { evaluableElements: eval15, kgConceptPatterns: [], lang: "es", messages: [] };
 
-  // (a) Run-5 req6 FP: the hardcoded dict entry "pasa corriente por" fired on a
-  // probing QUESTION (the legitimate Socratic lead toward R3's exclusion),
-  // forcing a useless retry whose identical output was sent anyway. Flow-like
-  // hardcoded patterns must follow the FLOW_REVEAL rules: questions and negated
-  // flows are exempt; affirmations still fire.
   assert("15/SR: probe '¿Pasa corriente por R3 hacia tierra?' is NOT a reveal",
     sr15.check("Establecido sobre R5. ¿Pasa corriente por R3 hacia tierra en este circuito?", srCtx15).violated === false);
   assert("15/SR: affirmation 'Pasa corriente por R2 hacia tierra.' IS still a reveal",
@@ -1271,10 +1051,6 @@ function section15() {
   assert("15/SR: non-flow state inside a question still fires ('¿Sabías que R5 está cortocircuitada?')",
     sr15.check("¿Sabías que R5 está cortocircuitada?", srCtx15).violated === true);
 
-  // (b) Run-5 req4: [PER-ELEMENT ANALYSIS] told the LLM "MISSING: R1, R2, R4"
-  // one turn AFTER the student named them ("a pesar de habérselo dicho antes
-  // me hace repetirlo"). With classification.cumulativeNamedCorrect stamped by
-  // the orchestrator, those become ALREADY ESTABLISHED, not MISSING.
   const { analyzeStudentElements } = require(path.join(ROOT, "src/domain/services/rag/ragPipeline"));
   const pea = analyzeStudentElements(
     { proposed: [], negated: ["R3", "R5"], cumulativeNamedCorrect: ["R1", "R2", "R4"] }, correct15);
@@ -1285,11 +1061,6 @@ function section15() {
   assert("15/PEA guard: without cumulative info, MISSING still reported (legacy behaviour)",
     /MISSING: The student has not mentioned R1, R2, R4/.test(peaFresh));
 
-  // (c) FULL run-5 replay with the CURRENT classifier: the opening message
-  // "todas menos r3 porque el interruptor está abierto y r5 por estar en
-  // cortocircuito" is the complete reasoned answer — closureReady at TURN 1.
-  // (The production server classified it as bare negations → stale classifier;
-  // the boot-time deploy stamp now catches that mismatch.)
   const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
   const open5 = "todas menos r3 porque el interruptor está abierto y r5 por estar en cortocircuito";
   const cls5 = classifyQuery(open5, correct15, eval15);
@@ -1309,7 +1080,12 @@ function section15() {
     "closureReady=" + cum5.closureReady);
 }
 
-// ─── 16. Adversarial code review (2026-06-11): 16 confirmed findings ─────────
+/*
+   IN -> ____|____________
+        | section16() | -> void
+         ------------
+      Exercises the confirmed adversarial review findings on coordination, closure and guardrail FP/FN.
+   */
 function section16() {
   section("16. Review findings: coordination/windows (A1-A9), closure integrity (A3-A10), guardrail FP/FN (C1-C10)");
   const correct16 = ["R1", "R2", "R4"];
@@ -1319,11 +1095,11 @@ function section16() {
   const orch16 = Object.create(Orch16.prototype);
   const SL16 = require(path.join(ROOT, "src/infrastructure/guardrails/SolutionLeakGuardrail"));
 
-  // A1 — negation distributes over coordinated element lists.
   const a1 = classifyQuery("r3 y r5 no influyen", correct16, eval16);
   assert("16/A1: 'r3 y r5 no influyen' negates BOTH (coordination propagation)",
     a1.negated.indexOf("R3") >= 0 && a1.negated.indexOf("R5") >= 0 && a1.proposed.length === 0,
     "P=[" + a1.proposed + "] N=[" + a1.negated + "]");
+
   const a1g = classifyQuery("r1 r2 r4 y r5 en corto", correct16, eval16);
   assert("16/A1 guard: state description does NOT propagate ('…y r5 en corto' keeps R4 proposed)",
     a1g.proposed.indexOf("R4") >= 0 && a1g.negated.indexOf("R4") < 0,
@@ -1332,20 +1108,19 @@ function section16() {
   assert("16/A1 guard: contrast 'pero R4 sí' still bounds propagation",
     a1h.proposed.indexOf("R4") >= 0 && a1h.negated.indexOf("R3") >= 0);
 
-  // A2 — articles in except-lists ("todas menos la r3 y la r5").
   const a2 = classifyQuery("todas menos la r3 y la r5", correct16, eval16);
   assert("16/A2: 'todas menos la r3 y la r5' → full set minus both",
     ["R1", "R2", "R4"].every((r) => a2.proposed.indexOf(r) >= 0) &&
     ["R3", "R5"].every((r) => a2.negated.indexOf(r) >= 0),
     "P=[" + a2.proposed + "] N=[" + a2.negated + "]");
 
-  // A3 — a guess/dont_know turn does not arm closureReady.
   const a3 = computeCumulativeAnswer([
     { role: "user", content: "r1 r2 y r4" },
     { role: "assistant", content: "¿Y por qué no las otras?" },
     { role: "user", content: "no se, igual es porque r3 esta abierta y r5 en corto?" },
   ], correct16, eval16);
   assert("16/A3: guess turn ('no sé… ?') does NOT arm closureReady", a3.closureReady === false);
+
   const a3b = computeCumulativeAnswer([
     { role: "user", content: "r1 r2 y r4" },
     { role: "assistant", content: "¿Y por qué no las otras?" },
@@ -1353,7 +1128,6 @@ function section16() {
   ], correct16, eval16);
   assert("16/A3 guard: the ASSERTIVE version still arms closureReady", a3b.closureReady === true);
 
-  // A4 — reflexive "no se va" is not dont_know when elements are named.
   const a4 = classifyQuery("r1 r2 y r4 porque por r3 y r5 no se va la corriente", correct16, eval16);
   assert("16/A4: 'no se va la corriente' with elements → NOT dont_know, full parse",
     a4.type !== "dont_know" && ["R1", "R2", "R4"].every((r) => a4.proposed.indexOf(r) >= 0) &&
@@ -1362,7 +1136,6 @@ function section16() {
   assert("16/A4 guard: bare 'ni idea' still dont_know",
     classifyQuery("ni idea", correct16, eval16).type === "dont_know");
 
-  // A5 — state MENTION in a contribution question does not invert polarity.
   const a5 = classifyQuery("no", correct16, eval16, "¿Crees que R3 contribuye, con el interruptor abierto entre N2 y N3?");
   assert("16/A5: 'no' to a CONTRIBUTION question that mentions the state → R3 negated",
     a5.negated.indexOf("R3") >= 0 && a5.proposed.length === 0,
@@ -1370,11 +1143,9 @@ function section16() {
   assert("16/A5 guard: 'sí' to a pure state question still inverts (R5 negated)",
     classifyQuery("sí", correct16, eval16, "¿Está R5 conectada a tierra en ambos extremos?").negated.indexOf("R5") >= 0);
 
-  // A6 — already-closed blocks the LEGACY closing branch too.
   assert("16/A6: correct_good_reasoning ×2 after a close does NOT re-close",
     orch16._shouldFinishDeterministically({ classification: { type: "correct_good_reasoning" }, loopState: { prevGoodReasoningTurns: 2 }, exerciseAlreadyClosed: true }) === false);
 
-  // A7 — retraction removes the element from namedCorrect (complete drops).
   const a7 = computeCumulativeAnswer([
     { role: "user", content: "r1 r2 r4" },
     { role: "assistant", content: "¿Y R3?" },
@@ -1384,7 +1155,6 @@ function section16() {
     a7.namedCorrect.indexOf("R4") < 0 && a7.complete === false,
     "namedCorrect=[" + a7.namedCorrect + "] complete=" + a7.complete);
 
-  // A8 — cognitive-verb meta-talk does not expand the quantifier.
   const a8 = classifyQuery("vale, ya entiendo todas las resistencias", correct16, eval16);
   assert("16/A8: 'ya entiendo todas las resistencias' does NOT expand",
     a8.proposed.length === 0 && a8.negated.length === 0,
@@ -1392,7 +1162,6 @@ function section16() {
   assert("16/A8 guard: real 'todas las resistencias' still expands",
     classifyQuery("todas las resistencias", correct16, eval16).proposed.length === eval16.length);
 
-  // A9 — trailing tag "no?" is not a rejection.
   const a9 = classifyQuery("r1 r2 r4 no?", correct16, eval16);
   assert("16/A9: 'r1 r2 r4 no?' proposes all three (tag question)",
     ["R1", "R2", "R4"].every((r) => a9.proposed.indexOf(r) >= 0) && a9.negated.length === 0,
@@ -1400,17 +1169,16 @@ function section16() {
   assert("16/A9 guard: 'R4 sí, R5 no' still negates R5",
     classifyQuery("R4 sí, R5 no", correct16, eval16).negated.indexOf("R5") >= 0);
 
-  // C1/C2 — semantic-leak rule (c): refutations and fair-game confirmations.
   assert("16/C1: 'No es correcto. Piensa en esas resistencias.' is NOT a semantic leak",
     SL16.looksLikeSemanticAffirmation("No es correcto. Piensa de nuevo en esas resistencias. ¿Cuál falta?") === false);
   assert("16/C1 guard: 'Así es, esos elementos contribuyen.' still IS",
     SL16.looksLikeSemanticAffirmation("Así es, esos elementos contribuyen.") === true);
+
   const slg16 = byId.solution_leak;
   const cumC16 = { namedCorrect: correct16, excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [], perTurn: [] };
   assert("16/C2: post-completion confirmation is exempt from rule (c)",
     slg16.check("Correcto, esas resistencias son las que influyen. Repasa si te queda alguna duda.", { correctAnswer: correct16, lang: "es", cumulativeAnswer: cumC16 }).violated === false);
 
-  // C3 — per-occurrence flow negation.
   const srg16 = byId.state_reveal;
   const srCtx16 = { evaluableElements: eval16, kgConceptPatterns: [], lang: "es", messages: [] };
   assert("16/C3: 'no pasa por R3, pero sí fluye por R2 y R4' → affirmed flow caught",
@@ -1418,7 +1186,6 @@ function section16() {
   assert("16/C3 guard: fully negated flow still exempt",
     srg16.check("La corriente no pasa por R3, está bien excluida.", srCtx16).violated === false);
 
-  // C4/C7 — question-leak with flow verbs and partial extras.
   assert("16/C4: '¿te das cuenta de que la corriente pasa por R1, R2 y R4?' → leak",
     slg16.check("¿Te das cuenta de que la corriente pasa por R1, R2 y R4?", { correctAnswer: correct16, lang: "es", evaluableElements: eval16 }).violated === true);
   assert("16/C7: full set + ONE extra ('a diferencia de R3') is still a leak",
@@ -1426,25 +1193,20 @@ function section16() {
   assert("16/C7 guard: full evaluable enumeration still exempt",
     slg16.check("¿Cuáles de R1, R2, R3, R4 y R5 influyen en la tensión?", { correctAnswer: correct16, lang: "es", evaluableElements: eval16 }).violated === false);
 
-  // C5 — false premise with path predicate.
   assert("16/C5: '¿por qué crees que R4 no está en el camino?' (R4 correct) → violation",
     byId.adherence.check("¿Por qué crees que R4 no está en el camino?", { lang: "es", correctAnswer: correct16 }).violated === true);
 
-  // C6 — consolidation questions are allowed on settled elements.
   assert("16/C6: '¿Qué impide que la corriente fluya a través de R3?' is consolidation, not a re-ask",
     byId.settled_element_question.check("¿Qué impide que la corriente fluya a través de R3?", { cumulativeAnswer: cumC16 }).violated === false);
 
-  // C8 — [TURN CONTEXT] does not contaminate student mentions.
   const banner16 = "[TURN CONTEXT — x]\nMissing: R4\n[/TURN CONTEXT]\n\nhola";
   assert("16/C8: KG-pattern check fires for elements only named in the injected banner",
     srg16.check("R4 contribuye a la diferencia de potencial del nodo.",
       { evaluableElements: eval16, kgConceptPatterns: ["diferencia de potencial"], lang: "es", messages: [{ role: "user", content: banner16 }] }).violated === true);
 
-  // C9 — CompleteSolution retry hint names the offending elements.
   assert("16/C9: complete_solution retry hint names the wrongly proposed element",
     /R3/.test(byId.complete_solution.buildRetryHint("es", { proposed: ["R3"], negated: [], correctAnswer: correct16 })));
 
-  // C10 — no contradictory 'only task' directives when a fresh error lands.
   const TutorAgent16 = require(path.join(ROOT, "src/domain/agents/tutorAgent"));
   const tut16 = Object.create(TutorAgent16.prototype);
   const bErr = tut16._buildCumulativeBanner(cumC16, "es", false, true);
@@ -1455,17 +1217,11 @@ function section16() {
   assert("16/C10 guard: without fresh errors the closure line is back",
     /Cierra con un reconocimiento/.test(bNoErr));
 
-  // A10 — FIN-token authorisation shares the full deterministic criterion.
   const ctxFin = { finalResponse: "ok <END_EXERCISE>", classification: { type: "dont_know" }, cumulativeAnswer: cumC16, loopState: {}, userMessage: "no se" };
   orch16._stripUnauthorizedFinToken(ctxFin);
   assert("16/A10: LLM FIN token on a dont_know turn is stripped even with closureReady",
     !/<END_EXERCISE>/.test(ctxFin.finalResponse));
 
-  // RUN-6 (2026-06-11): a justification WITHOUT a reasoning marker. The student
-  // answered the tutor's why-question with "r3 está en un interruptor abierto y
-  // r5 en corto" — no "porque", so the syntactic hasReasoning was false and the
-  // session stalled at complete+excluded with closureReady=false. The excluding
-  // STATE attached to a negated element IS the reason.
   const run6 = [
     { role: "user", content: "r1 r2 r4" },
     { role: "assistant", content: "Los elementos R1, R2 y R4 están correctamente identificados. ¿Por qué crees que R3 y R5 no influyen en la tensión entre N2 y tierra?" },
@@ -1481,8 +1237,6 @@ function section16() {
       classification: { type: run6cls.type, concepts: run6cls.concepts },
       userMessage: run6[2].content, cumulativeAnswer: run6cum, loopState: {},
     }) === true);
-  // Guard: a bare unjustified negation ("r3 y r5 no") carries no excluding
-  // concept and must still NOT arm closure.
   const run6g = computeCumulativeAnswer([
     { role: "user", content: "r1 r2 r4" },
     { role: "assistant", content: "¿por qué?" },
@@ -1493,16 +1247,12 @@ function section16() {
     "closureReady=" + run6g.closureReady);
 }
 
-// ─── 17. INTEGRATION: real orchestrator pipeline closes run-7 at turn 2 ──────
-//
-// Run-7 (2026-06-11) replayed perfectly in unit tests yet production did not
-// close. Every prior test exercised the PIECES (classifier, cumulativeAnswer,
-// _shouldFinishDeterministically) in isolation — this section runs the REAL
-// TutoringOrchestrator.process() with the REAL ContextAgent, ClassifierAgent
-// and AcDetectorAgent over in-memory repos, turn by turn, asserting the
-// deterministic finish fires through the actual integration path. If this
-// passes locally and production still does not close, the deployed files are
-// stale — full stop.
+/*
+   IN -> ____|____________
+        | section17() | -> Promise<void>
+         ------------
+      Runs the real orchestrator.process() end-to-end over in-memory repos to verify run-7 closure.
+   */
 async function section17() {
   section("17. Integration: orchestrator.process() end-to-end closure (run-7)");
   const TutoringOrchestrator = require(path.join(ROOT, "src/domain/agents/orchestrator"));
@@ -1510,7 +1260,6 @@ async function section17() {
   const ClassifierAgent = require(path.join(ROOT, "src/domain/agents/classifierAgent"));
   const AcDetectorAgent = require(path.join(ROOT, "src/domain/agents/acDetectorAgent"));
 
-  // In-memory message store mimicking the Message entity surface ContextAgent uses.
   const store = [];
   function mkMsg(role, content, classification) {
     return {
@@ -1561,29 +1310,23 @@ async function section17() {
     const ctx = await orch17.process({
       userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: userMessage,
     });
-    // The tutor stub reads _scriptedReply off the ctx; set it via closure instead:
     return ctx;
   }
-  // Re-bind tutor stub per turn with the scripted production reply so the
-  // persisted history matches the real transcript.
   let scripted = "";
   agents.tutor = { execute: async (ctx) => { ctx.llmResponse = scripted; ctx.llmMessages = []; } };
 
-  // Turn 1: "r1 r2 r4" — must NOT close (no exclusions/reasoning yet).
   scripted = "Los elementos R1, R2 y R4 están correctamente identificados. ¿Por qué crees que R3 y R5 no influyen en la tensión entre N2 y 0?";
   const t1 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "r1 r2 r4" });
   assert("17/INT: turn 1 ('r1 r2 r4') does NOT close",
     t1.deterministicFinish !== true,
     "deterministicFinish=" + t1.deterministicFinish + " final=" + String(t1.finalResponse).slice(0, 60));
 
-  // Turn 2: the reasoned exclusions — the REAL pipeline must close HERE.
   scripted = "(no debería llegar al tutor)";
   const t2 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "porque r3 está en circuito abierto y r5 en corto" });
   assert("17/INT: turn 2 (reasoned exclusions) CLOSES through the real pipeline",
     t2.deterministicFinish === true && /<END_EXERCISE>/.test(t2.finalResponse || ""),
     "deterministicFinish=" + t2.deterministicFinish + " final=" + JSON.stringify(String(t2.finalResponse).slice(0, 80)));
 
-  // Turn 3 (post-close follow-up): must NOT re-close.
   scripted = "Respuesta normal al follow-up. ¿Alguna duda más?";
   const t3 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "gracias, ya lo entiendo" });
   assert("17/INT: post-close follow-up does NOT re-close (de-sticky through real pipeline)",
@@ -1591,8 +1334,12 @@ async function section17() {
     "deterministicFinish=" + t3.deterministicFinish + " final=" + String(t3.finalResponse).slice(0, 60));
 }
 
-// ─── 18. CLOSURE BATTERY: 20 realistic conversations through the real
-//        pipeline (15 phrasings that must close + 5 guards that must not) ────
+/*
+   IN -> ____|____________
+        | section18() | -> Promise<void>
+         ------------
+      Runs the closure battery: realistic conversations end-to-end through the real pipeline.
+   */
 async function section18() {
   section("18. Closure battery (tests/closure_battery.js): realistic phrasings end-to-end");
   const { runBattery, SCENARIOS } = require(path.join(ROOT, "tests/closure_battery"));
@@ -1602,7 +1349,6 @@ async function section18() {
     r.fail + " failed: " + r.failures.join(" | ").slice(0, 300));
 }
 
-// ─── Summary ────────────────────────────────────────────────────────────────
 (async function main() {
   await section8();
   await section9();

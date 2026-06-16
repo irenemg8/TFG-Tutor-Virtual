@@ -1,17 +1,39 @@
-// JSON Lines logging for RAG evaluation
-
 const fs = require("fs");
 const path = require("path");
 const config = require("./config");
 
-// Make sure the log directory exists
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                         LOGGER                        |
+            |  JSON Lines logging for RAG evaluation. Appends one    |
+            |  interaction per line to a daily log file.            |
+            |                                                       |
+            |          -> | ensureLogDir() | -> void                |
+            |          -> | getLogPath()   | -> Txt                 |
+            |   Obj -> | logInteraction()  | -> void                |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+       ____|________________
+      | ensureLogDir() | -> void
+       -----------------
+      Creates the configured log directory (recursively) if it does
+      not already exist.
+*/
 function ensureLogDir() {
   if (!fs.existsSync(config.LOG_DIR)) {
     fs.mkdirSync(config.LOG_DIR, { recursive: true });
   }
 }
 
-// Get today's log file path (one file per day)
+/*
+       ____|______________
+      | getLogPath() | -> Txt
+       ---------------
+      Returns today's log file path, one "YYYY-MM-DD.jsonl" file per day
+      inside the configured log directory.
+*/
 function getLogPath() {
   const now = new Date();
   const year = now.getFullYear();
@@ -21,7 +43,13 @@ function getLogPath() {
   return path.join(config.LOG_DIR, fileName);
 }
 
-// Log one RAG interaction as a JSON line
+/*
+   Obj -> ____|__________________
+         | logInteraction() | -> void
+          -------------------
+      Appends one RAG interaction as a JSON line to today's log file.
+      Failures are caught and logged to the console, never thrown.
+*/
 function logInteraction(data) {
   try {
     ensureLogDir();

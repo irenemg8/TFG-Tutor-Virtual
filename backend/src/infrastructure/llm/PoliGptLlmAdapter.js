@@ -6,23 +6,61 @@ const ILlmService = require("../../domain/ports/services/ILlmService");
 const { BudgetExhaustedError } = require("../../domain/ports/services/ILlmService");
 const config = require("./config");
 
-/**
- * PoliGptLlmAdapter: ILlmService backed by the OpenAI-compatible PoliGPT API
- * (LiteLLM proxy at https://api.poligpt.upv.es).
- *
- * Why not the openai SDK: we already use axios for Ollama, the API surface
- * is small (POST /v1/chat/completions + SSE), and avoiding the dependency
- * keeps the bundle thin and the failure modes transparent.
- *
- * Differences vs OllamaLlmAdapter:
- *   - Endpoint: POST /v1/chat/completions (OpenAI) instead of /api/chat
- *   - Auth: Authorization: Bearer sk-... header
- *   - Sampling params live at the top level of the body (max_tokens,
- *     temperature) instead of nested under `options`
- *   - Streaming wire format: SSE ("data: {...}\n\n", terminator "data: [DONE]")
- *     instead of newline-delimited JSON
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  POLIGPT LLM ADAPTER                  |
+            |  ILlmService backed by the OpenAI-compatible PoliGPT  |
+            |  API (LiteLLM proxy). Uses axios over POST            |
+            |  /v1/chat/completions + SSE, Bearer auth, top-level   |
+            |  sampling params, and keep_alive to fight cold-start. |
+        ____|________________                                       |
+   Obj -> | constructor() | -> PoliGptLlmAdapter     (writes attrs) |
+          -----------------                                         |
+            |                                                       |
+            |   baseUrl: Txt           apiKey: Txt                  |
+            |   model: Txt             defaultTemperature: R        |
+            |   defaultMaxTokens: Z    keepAlive: Txt               |
+            |   defaultTimeoutMs: Z    httpsAgent: Obj | null       |
+        ____|_____________                                          |
+        | _headers() | -> Obj                    (reads attrs)      |
+        -------------                                               |
+        ____|________________                                       |
+        | _axiosOpts() | -> Obj                  (reads attrs)      |
+        ---------------                                             |
+        ____|____________________                                   |
+        | _resolveTimeout() | -> Z               (reads attrs)      |
+        --------------------                                        |
+        ____|__________________                                     |
+        | _buildPayload() | -> Obj               (reads attrs)      |
+        ------------------                                          |
+        ____|___________________                                    |
+        | chatCompletion() | -> Promise<Txt>     (reads attrs)      |
+        -------------------                                         |
+        ____|_________________________                              |
+        | chatCompletionStream() | -> Promise<Obj>  (reads attrs)   |
+        -------------------------                                   |
+        ____|_____________________________________                  |
+        | chatCompletionStreamWithCallback() | -> Promise<Txt>      |
+        -------------------------------------                       |
+        ____|______________                                         |
+        | isHealthy() | -> Promise<T/F>          (reads attrs)      |
+        --------------                                              |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class PoliGptLlmAdapter extends ILlmService {
+  /*
+   Obj -> ____|________________
+         | constructor() | -> PoliGptLlmAdapter    (writes attributes baseUrl (Txt),
+          -----------------                         apiKey (Txt), model (Txt),
+                                                    defaultTemperature (R), defaultMaxTokens (Z),
+                                                    keepAlive (Txt), defaultTimeoutMs (Z),
+                                                    httpsAgent (Obj|null))
+      Builds the adapter from an options object, defaulting to config,
+      warning on missing key/url and stripping a trailing slash. keepAlive
+      keeps the model resident to avoid the 30-150s cold reload. Builds one
+      reusable keep-alive HTTPS agent for the hot chat path.
+  */
   constructor(opts) {
     super();
     opts = opts || {};
@@ -31,13 +69,6 @@ class PoliGptLlmAdapter extends ILlmService {
     this.model = opts.model || config.POLIGPT_MODEL;
     this.defaultTemperature = opts.temperature != null ? opts.temperature : config.OLLAMA_TEMPERATURE;
     this.defaultMaxTokens = opts.maxTokens != null ? opts.maxTokens : config.OLLAMA_NUM_PREDICT;
-    // COLD-START (2026-06-14): PoliGPT is Ollama-backed and unloads the model
-    // from GPU when idle, so the next student turn after a gap pays a 30-150s
-    // cold reload (the production "tardando demasiado" timeouts). Ollama's
-    // `keep_alive` keeps the model resident: "60m" = stay loaded 60min after the
-    // last call, "-1" = never unload. Verified PoliGPT accepts the field. This
-    // only fights IDLE eviction; memory-pressure eviction by another model needs
-    // a pinned instance on the UPV side.
     this.keepAlive = opts.keepAlive != null ? opts.keepAlive : config.OLLAMA_KEEP_ALIVE;
     this.defaultTimeoutMs = opts.timeoutMs != null
       ? opts.timeoutMs
@@ -50,11 +81,8 @@ class PoliGptLlmAdapter extends ILlmService {
       console.warn("[PoliGptLlmAdapter] POLIGPT_BASE_URL is not set — defaulting to https://api.poligpt.upv.es");
       this.baseUrl = "https://api.poligpt.upv.es";
     }
-    // Strip trailing slash so we can safely concatenate "/v1/chat/completions"
     this.baseUrl = String(this.baseUrl).replace(/\/+$/, "");
 
-    // Reusable HTTPS agent with TCP/TLS keep-alive so we don't pay the
-    // handshake on every turn (the chat path is hot).
     this.httpsAgent = this.baseUrl.startsWith("https://")
       ? new https.Agent({
           rejectUnauthorized: true,
@@ -65,12 +93,26 @@ class PoliGptLlmAdapter extends ILlmService {
       : null;
   }
 
+  /*
+       ____|_____________
+      | _headers() | -> Obj    (reads attribute apiKey (Txt))
+       -------------
+      Builds the request headers, adding a Bearer Authorization header
+      when an API key is set.
+  */
   _headers() {
     const h = { "Content-Type": "application/json" };
     if (this.apiKey) h["Authorization"] = "Bearer " + this.apiKey;
     return h;
   }
 
+  /*
+   Z, Obj -> ____|________________
+            | _axiosOpts() | -> Obj    (reads attributes httpsAgent (Obj|null), apiKey (Txt))
+             ---------------
+      Builds the axios request options with headers, the cached HTTPS
+      agent and the abort signal when present.
+  */
   _axiosOpts(timeoutMs, abortSignal) {
     const base = { timeout: timeoutMs, headers: this._headers() };
     if (this.httpsAgent) base.httpsAgent = this.httpsAgent;
@@ -78,11 +120,26 @@ class PoliGptLlmAdapter extends ILlmService {
     return base;
   }
 
+  /*
+   Z -> ____|____________________
+       | _resolveTimeout() | -> Z    (reads attribute defaultTimeoutMs (Z))
+        --------------------
+      Returns the default timeout, or the smaller of it and the budget
+      when a positive budget is given.
+  */
   _resolveTimeout(budgetMs) {
     if (budgetMs == null || budgetMs <= 0) return this.defaultTimeoutMs;
     return Math.min(this.defaultTimeoutMs, budgetMs);
   }
 
+  /*
+   [Obj], Obj, T/F -> ____|__________________
+                     | _buildPayload() | -> Obj    (reads attributes model (Txt),
+                      ------------------            defaultTemperature (R), defaultMaxTokens (Z),
+                                                    keepAlive (Txt))
+      Builds the OpenAI-style request body, sending keep_alive on every
+      call so the idle timer resets each turn.
+  */
   _buildPayload(messages, options, stream) {
     options = options || {};
     return {
@@ -93,12 +150,18 @@ class PoliGptLlmAdapter extends ILlmService {
       max_tokens: options.numPredict != null
         ? options.numPredict
         : (options.maxTokens != null ? options.maxTokens : this.defaultMaxTokens),
-      // Keep the model warm between turns (Ollama-native param, see constructor).
-      // Sent on every call so the idle timer resets each turn.
       keep_alive: options.keepAlive != null ? options.keepAlive : this.keepAlive,
     };
   }
 
+  /*
+   [Obj], Obj -> ____|___________________
+                | chatCompletion() | -> Promise<Txt>    (reads attribute baseUrl (Txt))
+                 -------------------
+      Posts a non-streaming chat request and resolves the assistant
+      content. Maps timeout/abort to BudgetExhaustedError when a budget
+      was set.
+  */
   async chatCompletion(messages, options) {
     options = options || {};
     const timeoutMs = this._resolveTimeout(options.budgetMs);
@@ -128,6 +191,13 @@ class PoliGptLlmAdapter extends ILlmService {
     }
   }
 
+  /*
+   [Obj], Obj -> ____|_________________________
+                | chatCompletionStream() | -> Promise<Obj>    (reads attribute baseUrl (Txt))
+                 -------------------------
+      Posts a streaming chat request and resolves the raw SSE response
+      stream. No timeout unless a budget is given.
+  */
   async chatCompletionStream(messages, options) {
     options = options || {};
     const timeoutMs = options.budgetMs != null ? this._resolveTimeout(options.budgetMs) : 0;
@@ -140,13 +210,14 @@ class PoliGptLlmAdapter extends ILlmService {
     return resp.data;
   }
 
-  /**
-   * Streaming with per-token callback. Parses OpenAI SSE format:
-   *   data: {"choices":[{"delta":{"content":"tok"},"index":0,"finish_reason":null}],...}\n\n
-   *   data: [DONE]\n\n
-   *
-   * Buffers across TCP segments because deltas can split arbitrarily.
-   */
+  /*
+   [Obj], Obj, Fn -> ____|_____________________________________
+                    | chatCompletionStreamWithCallback() | -> Promise<Txt>    (reads attributes
+                     -------------------------------------                      baseUrl (Txt), model (Txt))
+      Parses OpenAI SSE deltas, calls onChunk(token) per content piece
+      and resolves the accumulated full text. Buffers across TCP segments
+      and maps abort to BudgetExhaustedError when a budget was set.
+  */
   async chatCompletionStreamWithCallback(messages, options, onChunk) {
     options = options || {};
     const callback = typeof onChunk === "function" ? onChunk : null;
@@ -183,8 +254,6 @@ class PoliGptLlmAdapter extends ILlmService {
       };
 
       const handleSseEvent = (raw) => {
-        // Each SSE event is "field: value\n" lines, terminated by blank line.
-        // We only care about the `data:` field.
         const lines = raw.split("\n");
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
@@ -206,15 +275,12 @@ class PoliGptLlmAdapter extends ILlmService {
               try { callback(piece); } catch (_) {}
             }
           }
-          // OpenAI marks completion via finish_reason on the last delta;
-          // [DONE] handled above is the canonical terminator.
         }
       };
 
       stream.on("data", (raw) => {
         if (settled) return;
         buffer += raw.toString("utf8");
-        // Split on the SSE event terminator (blank line).
         let sep;
         while ((sep = buffer.indexOf("\n\n")) >= 0) {
           const evt = buffer.slice(0, sep);
@@ -245,6 +311,12 @@ class PoliGptLlmAdapter extends ILlmService {
     });
   }
 
+  /*
+       ____|______________
+      | isHealthy() | -> Promise<T/F>    (reads attribute baseUrl (Txt))
+       --------------
+      True when GET /v1/models returns HTTP 200, false on any error.
+  */
   async isHealthy() {
     try {
       const r = await axios.get(

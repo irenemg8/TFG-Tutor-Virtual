@@ -1,29 +1,24 @@
 #!/usr/bin/env node
 "use strict";
 
-/**
- * Seed script para desarrollo local (sin MongoDB).
- *
- * FUENTE PRIMARIA — `backend/src/data/contextos-ejercicios/
- *   tutorContext_por_ejercicio.json`
- *   (datos pedagógicos de Irene; pueden estar incompletos o duplicados).
- *
- * FUENTE SECUNDARIA / FALLBACK — `backend/src/data/ohm_exercises.json`
- *   (datos curados con title, description, question, netlist, correct_answer,
- *    explanation/calculation, alternative_conceptions, concepts).
- *
- * Política de fusión (introducida 2026-04-27 tras detectar que Ej 2 era
- * CLON literal de Ej 1 y Ej 3 estaba prácticamente vacío en la fuente
- * primaria, dejando al LLM sin OBJECTIVE / EXPERT REASONING / ACs):
- *   - Si tutorContext_por_ejercicio.json tiene un campo no vacío, se respeta.
- *   - Si está vacío Y existe equivalente en ohm_exercises.json, se rellena.
- *   - Para Ej 2 detectamos clon de Ej 1 (objetivo idéntico) y forzamos
- *     fallback a ohm_exercises (diferente entre ej 1 y 2).
- *
- * Idempotente:
- *   node src/scripts/seed_ejercicios_local.js              # skip si existe
- *   node src/scripts/seed_ejercicios_local.js --reset      # DELETE antes
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  SEED EJERCICIOS LOCAL                |
+            |  Idempotent dev seed script that merges                |
+            |  tutorContext_por_ejercicio.json (primary) with        |
+            |  ohm_exercises.json (fallback) and inserts ejercicios  |
+            |  and tutor_contexts into PostgreSQL. Supports --reset. |
+            |                                                       |
+            |   Txt -> | difficultyToNivel() | -> Z                  |
+            |   Txt -> | normalizeNetlistLine() | -> Txt             |
+            |   Obj,Obj -> | buildNetlist() | -> Txt                 |
+            |   Obj,Obj -> | buildObjetivo() | -> Txt                |
+            |   Obj,Obj -> | buildModoExperto() | -> Txt             |
+            |   Obj,Obj -> | buildAcRefs() | -> [Txt]                |
+            |   Obj,Obj -> | isCloneOfFirst() | -> T/F               |
+            |          | main() | -> Promise<void>                   |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env") });
@@ -37,15 +32,25 @@ const CTX_JSON = path.join(DATA_DIR, "contextos-ejercicios", "tutorContext_por_e
 
 const RESET = process.argv.includes("--reset");
 
+/*
+   Txt -> ____|_____________________
+         | difficultyToNivel() | -> Z
+          ---------------------
+      Maps a difficulty token ("easy"/"hard"/other) to a numeric level.
+*/
 function difficultyToNivel(d) {
   if (d === "easy") return 1;
   if (d === "hard") return 3;
   return 2;
 }
 
-// ohm_exercises usa formatos como "R1(N1,A,2)" mientras que el promptBuilder
-// (buildResistanceSummary) espera "R1 N1 N2 1". Normalizamos para que el
-// LLM reciba la "CIRCUIT TOPOLOGY" rendereada correctamente.
+/*
+   Txt -> ____|________________________
+         | normalizeNetlistLine() | -> Txt
+          ------------------------
+      Converts a netlist line like "R1(N1,A,2)" into the space-separated
+      form "R1 N1 A 2" the prompt builder expects; leaves other lines trimmed.
+*/
 function normalizeNetlistLine(line) {
   if (typeof line !== "string") return "";
   const m = line.match(/^([A-Za-z]\d+)\(([^)]+)\)\s*$/);
@@ -57,6 +62,13 @@ function normalizeNetlistLine(line) {
   return line.trim();
 }
 
+/*
+   Obj,Obj -> ____|_____________
+             | buildNetlist() | -> Txt
+              ---------------
+      Returns the primary netlist when long enough, otherwise builds one
+      from the ohm exercise netlist, falling back to the primary value.
+*/
 function buildNetlist(tc, ex) {
   if (tc.netlist && tc.netlist.length > 30) return tc.netlist;
   if (Array.isArray(ex.netlist) && ex.netlist.length > 0) {
@@ -65,9 +77,13 @@ function buildNetlist(tc, ex) {
   return tc.netlist || "";
 }
 
-// Fabrica un OBJECTIVE genérico pero específico al ejercicio cuando la
-// fuente primaria no lo trae. La pregunta concreta y el enunciado dan
-// suficiente contexto para que el LLM no responda solo "Ohm en general".
+/*
+   Obj,Obj -> ____|______________
+             | buildObjetivo() | -> Txt
+              ----------------
+      Returns the primary objective when present, otherwise fabricates a
+      Socratic-tutor objective from the exercise statement and question.
+*/
 function buildObjetivo(tc, ex) {
   if (tc.objetivo && tc.objetivo.trim().length > 30) return tc.objetivo;
   const enunciado = ex.description || "";
@@ -83,8 +99,13 @@ function buildObjetivo(tc, ex) {
   );
 }
 
-// modoExperto = razonamiento experto. Si la fuente primaria lo tiene,
-// se usa. Si no, fabricamos uno desde explanation/calculation.
+/*
+   Obj,Obj -> ____|_________________
+             | buildModoExperto() | -> Txt
+              -------------------
+      Returns the primary expert reasoning when present, otherwise builds
+      one from the exercise explanation/calculation.
+*/
 function buildModoExperto(tc, ex) {
   if (tc.modoExperto && tc.modoExperto.trim().length > 50) return tc.modoExperto;
   const expl = ex.explanation || ex.calculation || "";
@@ -96,6 +117,13 @@ function buildModoExperto(tc, ex) {
   );
 }
 
+/*
+   Obj,Obj -> ____|____________
+             | buildAcRefs() | -> [Txt]
+              --------------
+      Returns the primary alternative-conception refs, falling back to the
+      keys of the ohm exercise alternative_conceptions object.
+*/
 function buildAcRefs(tc, ex) {
   if (Array.isArray(tc.ac_refs) && tc.ac_refs.length > 0) return tc.ac_refs;
   const acs = ex.alternative_conceptions;
@@ -103,10 +131,13 @@ function buildAcRefs(tc, ex) {
   return [];
 }
 
-// Detecta el caso "Ej N (N>1) es clon literal del de Ej 1". El objetivo del
-// JSON deficiente difiere solo en el número ("ejercicio 1" vs "ejercicio 2"),
-// pero el modoExperto y el netlist son IDÉNTICOS palabra por palabra. Esos
-// dos campos son la firma fiable del clon.
+/*
+   Obj,Obj -> ____|_______________
+             | isCloneOfFirst() | -> T/F
+              -----------------
+      True when an exercise's expert reasoning and netlist match those of
+      exercise 1 exactly, flagging it as a literal clone of the first.
+*/
 function isCloneOfFirst(tc, firstTc) {
   if (!firstTc) return false;
   if (!tc.modoExperto || !tc.netlist) return false;
@@ -116,6 +147,13 @@ function isCloneOfFirst(tc, firstTc) {
   );
 }
 
+/*
+        ____|_______
+       | main() | -> Promise<void>
+        --------
+      Loads both data sources, merges them per exercise, and inserts
+      ejercicios and tutor_contexts into PostgreSQL; --reset deletes first.
+*/
 async function main() {
   const conn = process.env.PG_CONNECTION_STRING;
   if (!conn) {
@@ -151,10 +189,7 @@ async function main() {
         continue;
       }
 
-      // Fusión de fuentes
       let tc = ctxByEx.get(ex.id) || {};
-      // Si el ejercicio N (con N>1) es clon literal de Ej 1, descartamos
-      // la fuente primaria y construimos todo desde ohm_exercises.
       if (ex.id > 1 && isCloneOfFirst(tc, firstTc)) {
         console.log(`[merge] Ej ${ex.id}: tutorContext clon de Ej 1, usando ohm_exercises como fuente`);
         tc = {};
@@ -177,10 +212,6 @@ async function main() {
         return Array.from(set);
       })();
 
-      // NS-1.b: prefer tutorContext.enunciado when present so the UI cabecera
-      // matches the tutor's actual exercise (image + tutorContext + enunciado
-      // align). ohm_exercises.json's description+question are kept as a
-      // fallback because tests / RAG scripts still consume that file.
       const enunciado = (tc.enunciado && String(tc.enunciado).trim().length > 20)
         ? String(tc.enunciado).trim()
         : [ex.description, ex.question].filter(Boolean).join("\n\n");

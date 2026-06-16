@@ -1,12 +1,37 @@
-// backend/src/utils/languageManager.js
-// Central module for multilingual support (Spanish, Valencian, English)
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    LANGUAGEMANAGER                    |
+            |  Module. Central multilingual support (Spanish,       |
+            |  Valencian, English): language detection, prompt      |
+            |  language rules, deterministic messages, pattern      |
+            |  dictionaries and guardrail retry/instruction hints.  |
+            |                                                       |
+            |  Txt -> | detectLanguageSwitch() | -> Txt | null      |
+            |  Txt -> | detectLanguageHeuristic() | -> Txt | null   |
+            |  [Obj] -> | resolveLanguage() | -> Txt                |
+            |  Txt -> | getLanguageRules() | -> Txt                 |
+            |  Txt -> | getFinishMessages() | -> Obj                |
+            |  Txt, T/F -> | getGreetingResponse() | -> Txt         |
+            |  Txt -> | getStrongerInstruction() | -> Txt           |
+            |  Txt -> | getFalseConfirmationInstruction() | -> Txt  |
+            |  Txt, Txt -> | getPartialConfirmationInstruction() | -> Txt |
+            |  Txt, [Txt], [Txt] -> | getCompleteSolutionInstruction() | -> Txt |
+            |  Txt -> | getStateRevealInstruction() | -> Txt        |
+            |  Txt -> | getElementNamingInstruction() | -> Txt      |
+            |  Txt -> | getDidacticFallbackQuestions() | -> [Txt]   |
+            |  Txt -> | getDidacticFallbackPrefix() | -> Txt        |
+            |  Txt -> | getLanguageDriftRetryHint() | -> Txt        |
+            |  Txt, Txt -> | getRepeatedQuestionRetryHint() | -> Txt|
+            |  Txt, Txt -> | getIntermediateFeedback() | -> [Txt]   |
+            |  Txt, Txt -> | getRandomIntermediatePhrase() | -> Txt |
+            |  Txt -> | startsWithIntermediatePhrase() | -> T/F     |
+            |  Txt -> | normalizeToSpanish() | -> Txt               |
+            |  Obj -> | getAllPatterns() | -> [Txt]                 |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const SUPPORTED_LANGS = ["es", "val", "en"];
 const DEFAULT_LANG = "es";
-
-// =====================
-// Language switch detection
-// =====================
 
 const switchPatterns = {
   es: [
@@ -36,35 +61,34 @@ const switchPatterns = {
   ],
 };
 
-// Negative prefixes that flip the meaning of a "switch language" pattern.
-// Without this, "lo siento, no entiendo nada en english please" matched
-// "english please" and switched to English — the opposite of the student's
-// intent. We scan the ~40 chars immediately before the matched pattern.
-// BUG-LM2 (2026-06-10): standalone apologies ("lo siento", "sorry", "i'm
-// sorry") were treated as negations of switch INTENT, so a polite request
-// ("Sorry, can we continue in English?") was rejected — contradicting the
-// project rule "never refuse a language switch". Removed them: the real case
-// that motivated the negative-context guard ("lo siento, no entiendo nada en
-// english please") is still blocked by "no entiendo"/"don't understand".
 const NEGATIVE_PREFIXES = [
-  // Spanish
   "no entiendo", "no me entiendo", "no sé", "no lo entiendo",
   "no quiero", "no me",
-  // Valencian
   "no entenc", "no ho entenc", "no vull",
-  // English
   "don't", "do not", "i don't understand", "i can't",
   "not in", "no in",
 ];
 
+/*
+   Txt, Z -> ____|______________________
+            | _hasNegativeContext() | -> T/F
+             -----------------------
+      True when one of the negative prefixes appears in the ~40 chars
+      immediately before a matched switch pattern (flips its meaning).
+*/
 function _hasNegativeContext(lowerMessage, matchIndex) {
   const start = Math.max(0, matchIndex - 40);
   const before = lowerMessage.slice(start, matchIndex);
   return NEGATIVE_PREFIXES.some((neg) => before.includes(neg));
 }
 
-// Check if a user message requests a language switch
-// Returns "es", "val", "en", or null
+/*
+   Txt -> ____|______________________
+         | detectLanguageSwitch() | -> Txt | null
+          ------------------------
+      Scans a message for an explicit "switch to X" request and returns the
+      target language ("es"/"val"/"en"), or null when none (or negated).
+*/
 function detectLanguageSwitch(message) {
   if (typeof message !== "string") return null;
   const lower = message.toLowerCase().trim();
@@ -80,14 +104,6 @@ function detectLanguageSwitch(message) {
   return null;
 }
 
-// =====================
-// BUG-003: passive language heuristic — sostenir el idioma orgánicamente
-// sin esperar a que el usuario diga "habla en X". Cuenta tokens cortos
-// muy frecuentes en cada idioma (stopwords) y devuelve el dominante.
-// Conservador: requiere ≥2 stopwords del idioma candidato y ratio ≥1.5x
-// sobre el siguiente idioma para evitar disparos en mensajes ambiguos
-// como "R3?" o "no sé".
-// =====================
 const HEURISTIC_STOPWORDS = {
   es: [
     "el", "la", "los", "las", "un", "una", "que", "qué", "es", "son",
@@ -95,12 +111,6 @@ const HEURISTIC_STOPWORDS = {
     "en", "se", "su", "sus", "no", "sí", "creo", "pienso", "yo", "tú",
     "esto", "eso", "aquí", "allí", "cómo", "cuál", "cuándo", "dónde",
     "está", "están", "tiene", "hay",
-    // BUG-LM-DRIFT (2026-06-14): "No te preocupes, vamos paso a paso." (español
-    // perfecto) se clasificaba como inglés porque "a" y "no" cuentan para EN y
-    // la lista ES no incluía "a"/"te"/"vamos"… → el guardrail language_drift
-    // borraba la frase. Añadidas las palabras función más frecuentes del español
-    // para que una frase ES gane con holgura. Solo ayuda: una frase realmente
-    // inglesa apenas contiene estas formas.
     "a", "al", "te", "me", "lo", "le", "les", "nos", "mi", "mis", "tu", "tus",
     "vamos", "va", "van", "voy", "vas", "más", "ya", "muy", "también", "tan",
     "este", "esta", "estos", "estas", "ese", "esa", "esos", "esas",
@@ -112,12 +122,7 @@ const HEURISTIC_STOPWORDS = {
     "i", "o", "però", "perquè", "per", "amb", "sense", "de", "del",
     "en", "es", "no", "sí", "crec", "pense", "jo", "tu", "açò", "això",
     "ací", "allí", "com", "quin", "quan", "on", "està", "estan", "té",
-    // BUG-LM4 (2026-06-10): the heuristic tokenizes on whitespace, so multi-word
-    // entries ("hi ha", "moltes vegades") could never match a token — dead
-    // signal. Kept the single-token forms only.
     "moltes", "mentre",
-    // BUG-LM-DRIFT (2026-06-14): same enrichment as ES so a Valencian sentence
-    // wins reliably over the ambiguous EN function words ("a", "no").
     "a", "al", "et", "em", "ho", "li", "ens", "meu", "teu", "anem", "va",
     "més", "ja", "molt", "també", "tan", "aquest", "aquesta", "aquests",
     "aquestes", "tot", "tota", "tots", "totes", "cada", "així", "entre",
@@ -132,6 +137,12 @@ const HEURISTIC_STOPWORDS = {
   ],
 };
 
+/*
+   [Txt], [Txt] -> ____|________________
+                  | _countMatches() | -> Z
+                   ------------------
+      Counts how many tokens appear in the given word list.
+*/
 function _countMatches(tokens, words) {
   const set = {};
   for (let i = 0; i < words.length; i++) set[words[i]] = true;
@@ -142,63 +153,70 @@ function _countMatches(tokens, words) {
   return n;
 }
 
+/*
+   Txt -> ____|_________________________
+         | detectLanguageHeuristic() | -> Txt | null
+          ---------------------------
+      Tokenises the message and counts stopwords per language; returns the
+      dominant language when it has >=2 hits and a >=1.5x lead, else null.
+*/
 function detectLanguageHeuristic(message) {
   if (typeof message !== "string" || message.trim().length === 0) return null;
-  // Tokeniza por whitespace + signos de puntuación; pasa a lowercase.
   const tokens = message
     .toLowerCase()
     .replace(/[.,;:!?¿¡()"'`´‘’“”]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
-  if (tokens.length < 3) return null; // mensajes ultra-cortos no detectan
+  if (tokens.length < 3) return null;
 
   const counts = {
     es: _countMatches(tokens, HEURISTIC_STOPWORDS.es),
     val: _countMatches(tokens, HEURISTIC_STOPWORDS.val),
     en: _countMatches(tokens, HEURISTIC_STOPWORDS.en),
   };
-  // Ranking
   const sorted = Object.keys(counts)
     .map((k) => ({ k: k, v: counts[k] }))
     .sort((a, b) => b.v - a.v);
   const top = sorted[0];
   const second = sorted[1];
-  if (top.v < 2) return null;          // muy poca señal
-  if (top.v < second.v * 1.5) return null; // empate técnico (es/val)
+  if (top.v < 2) return null;
+  if (top.v < second.v * 1.5) return null;
   return top.k;
 }
 
-// Scan conversation history (most recent first) to find the active language.
-// Returns the last EXPLICITLY requested language; if none found, falls back
-// to the heuristic on the most recent user message (BUG-003 fix). Defaults
-// to "es" when neither path yields a result.
+/*
+   [Obj] -> ____|___________________
+           | resolveLanguage() | -> Txt
+            -------------------
+      Scans the history newest-first for the last explicit switch request;
+      falls back to the heuristic on the last user message, else "es".
+*/
 function resolveLanguage(conversationHistory) {
   if (!Array.isArray(conversationHistory)) return DEFAULT_LANG;
 
-  // 1) Switch explícito en cualquier turno previo (más reciente primero).
   for (let i = conversationHistory.length - 1; i >= 0; i--) {
     const msg = conversationHistory[i];
     if (msg.role !== "user") continue;
     const detected = detectLanguageSwitch(msg.content);
     if (detected) return detected;
   }
-  // 2) Heurística pasiva sobre el ÚLTIMO mensaje del usuario. Si la
-  //    heurística da una señal clara (≥2 stopwords del idioma + ratio
-  //    1.5x sobre el siguiente), usamos ese idioma. Si no, default.
   for (let i = conversationHistory.length - 1; i >= 0; i--) {
     const msg = conversationHistory[i];
     if (msg.role !== "user") continue;
     const heur = detectLanguageHeuristic(msg.content);
     if (heur) return heur;
-    break; // sólo miramos el último mensaje del usuario para la heurística
+    break;
   }
   return DEFAULT_LANG;
 }
 
-// =====================
-// System prompt language rules
-// =====================
-
+/*
+   Txt -> ____|___________________
+         | getLanguageRules() | -> Txt
+          --------------------
+      Returns the per-language system-prompt rules block (valencian /
+      english / spanish default), including grammar and terminology.
+*/
 function getLanguageRules(lang) {
   if (lang === "val") {
     return `- Respon en valencià (varietat formal/estàndard) en aquest torn.
@@ -234,16 +252,11 @@ function getLanguageRules(lang) {
 - Maintain a clear, patient, and technical tone.`;
   }
 
-  // Default: Spanish (current behavior)
   return `- Responde en español en este turno.
 - Si el alumno pide cambiar de idioma (por ejemplo "speak in english", "can we continue in english", "parla en valencià"), CAMBIA inmediatamente y confírmaselo brevemente en el nuevo idioma. Nunca te niegues a cambiar de idioma. El idioma por defecto es el español, pero el alumno puede elegir.
 - Usa terminología correcta en español: di "tierra" (no "suelo"), "nudo" (no "nodo"), "condensador" (no "capacitor").
 - Mantén un tono claro, paciente y técnico.`;
 }
-
-// =====================
-// Deterministic finish messages
-// =====================
 
 const finishMessages = {
   es: {
@@ -260,14 +273,16 @@ const finishMessages = {
   },
 };
 
+/*
+   Txt -> ____|____________________
+         | getFinishMessages() | -> Obj
+          ---------------------
+      Returns the deterministic finish-message strings for a language,
+      defaulting to Spanish.
+*/
 function getFinishMessages(lang) {
   return finishMessages[lang] || finishMessages.es;
 }
-
-// =====================
-// Deterministic greeting responses (used to handle "hola"/"hi" without an LLM
-// call, which avoids leaking the answer through the legacy fallback handler).
-// =====================
 
 const greetingResponses = {
   es: {
@@ -305,15 +320,18 @@ const greetingResponses = {
   },
 };
 
+/*
+   Txt, T/F -> ____|_____________________
+              | getGreetingResponse() | -> Txt
+               -----------------------
+      Returns a random greeting from the first-turn or repeat pool for the
+      given language, defaulting to Spanish.
+*/
 function getGreetingResponse(lang, isFirstTurn) {
   const pool = greetingResponses[lang] || greetingResponses.es;
   const list = isFirstTurn ? pool.first : pool.repeat;
   return list[Math.floor(Math.random() * list.length)];
 }
-
-// =====================
-// Multi-language pattern dictionaries
-// =====================
 
 const greetingPatterns = {
   es: ["hola", "buenos días", "buenas tardes", "buenas noches", "qué tal", "hey", "buenas"],
@@ -346,8 +364,6 @@ const frustrationPatterns = {
     "ya te dije", "me repites lo mismo", "siempre lo mismo",
     "otra vez lo mismo", "ya respondí a eso", "ya contesté a eso",
     "no me entiendes", "no me escuchas", "que sí", "que si",
-    // BUG-C (2026-05-11): nuevos patrones observados en logs de prod
-    // donde el alumno se frustraba y el tutor no se daba cuenta.
     "eso ya me lo has preguntado", "ya me lo has preguntado",
     "me has preguntado antes", "ya te lo he dicho antes",
     "ya te lo dije", "te lo dije", "te lo estoy diciendo",
@@ -403,10 +419,6 @@ const conceptKeywords = {
   ],
 };
 
-// =====================
-// Multi-language guardrail patterns
-// =====================
-
 const revealPhrases = {
   es: [
     "la respuesta es", "la respuesta correcta es", "las resistencias son",
@@ -454,25 +466,15 @@ const confirmPhrases = {
     "eso es", "así es", "bien hecho", "en efecto", "efectivamente",
     "has identificado correctamente", "estás en lo correcto",
     "buena observación", "buen trabajo",
-    // Soft confirmations that also validate wrong answers
     "interesante", "buena idea", "buen punto", "buen razonamiento",
     "tiene sentido", "tienes razón", "claro que sí", "por supuesto",
     "desde luego", "vas bien", "vas por buen camino", "bien pensado",
     "gran observación",
-    // Phrases detected in real tutor responses
     "estás en el camino correcto", "en el camino correcto",
     "eso es correcto", "bien razonado", "buen análisis",
     "justo", "lo has entendido", "has comprendido",
-    // Superlative confirmations seen in production tutor responses.
-    // ONLY pure praise — never things that could appear in legitimate
-    // Socratic questions ("¿Has considerado X?") or corrective phrases
-    // ("hay que pulir unos detalles", "eso no es así", "no del todo").
     "genial", "estupendo", "fenomenal", "fantástico", "magnífico",
     "maravilloso", "excelente",
-    // Bare affirmative openers that validate a wrong answer when the tutor
-    // starts with them. Word-boundary match prevents matching inside other
-    // words (e.g. "siempre" is not "sí"). NegationDetector still skips them
-    // when preceded by "no" / "tampoco".
     "sí", "si", "claro", "obvio",
   ],
   val: [
@@ -516,16 +518,11 @@ const stateRevealPatterns = {
     "tiene diferencia de potencial cero",
     "no tiene caída de tensión",
     "ambos terminales", "mismo nudo", "mismo punto",
-    // Variants the LLM produces in real tutor responses (caught by diagnose.js).
     "está en corto", "queda en corto", "queda cortocircuitad",
     "se cortocircuita", "se cortocircuit",
     "interruptor abierto", "interruptor cerrado",
     "switch abierto", "switch cerrado",
     "está abierto entre", "está cerrado entre",
-    // Bare "está abierto"/"está cerrado" only fires when the surrounding
-    // sentence also names an element (StateRevealGuardrail requires it),
-    // so this avoids false positives on conceptual questions like
-    // "¿qué pasa si el camino está abierto?".
     "está abierto", "está cerrado",
     "los dos terminales unidos", "terminales unidos",
     "no opone resistencia",
@@ -565,10 +562,13 @@ const stateRevealPatterns = {
   ],
 };
 
-// =====================
-// Guardrail instruction generators
-// =====================
-
+/*
+   Txt -> ____|________________________
+         | getStrongerInstruction() | -> Txt
+          --------------------------
+      Returns the retry instruction for a solution-leak violation in the
+      given language (valencian / english / spanish default).
+*/
 function getStrongerInstruction(lang) {
   if (lang === "val") {
     return (
@@ -594,6 +594,13 @@ function getStrongerInstruction(lang) {
   );
 }
 
+/*
+   Txt -> ____|_________________________________
+         | getFalseConfirmationInstruction() | -> Txt
+          -----------------------------------
+      Returns the retry instruction for when a wrong answer was confirmed,
+      in the given language.
+*/
 function getFalseConfirmationInstruction(lang) {
   if (lang === "val") {
     return (
@@ -619,8 +626,13 @@ function getFalseConfirmationInstruction(lang) {
   );
 }
 
-// Instruction when the LLM prematurely confirms a partially correct answer
-// (correct resistances but missing or wrong reasoning)
+/*
+   Txt, Txt -> ____|___________________________________
+              | getPartialConfirmationInstruction() | -> Txt
+               -------------------------------------
+      Returns the retry instruction for a premature/partial confirmation,
+      branching on whether reasoning was missing or wrong, per language.
+*/
 function getPartialConfirmationInstruction(lang, classificationType) {
   var noReasoning = classificationType === "correct_no_reasoning";
 
@@ -658,7 +670,6 @@ function getPartialConfirmationInstruction(lang, classificationType) {
     );
   }
 
-  // Default: Spanish
   if (noReasoning) {
     return (
       "\n\nCRÍTICO: Tu respuesta anterior dio por buena la respuesta del alumno SIN que haya justificado su razonamiento. " +
@@ -675,9 +686,13 @@ function getPartialConfirmationInstruction(lang, classificationType) {
   );
 }
 
-// Instruction when the LLM affirms a wrong proposal or wrongly-negated correct
-// element. Different from FalseConfirmation because it carries the SPECIFIC
-// elements the student got wrong, so the retry prompt can be more pointed.
+/*
+   Txt, [Txt], [Txt] -> ____|________________________________
+                       | getCompleteSolutionInstruction() | -> Txt
+                        ----------------------------------
+      Returns the retry instruction for a validated-but-incorrect part of
+      the answer, naming the wrongly negated/proposed elements, per language.
+*/
 function getCompleteSolutionInstruction(lang, wronglyNegated, wronglyProposed) {
   var negList = Array.isArray(wronglyNegated) && wronglyNegated.length > 0 ? wronglyNegated.join(", ") : "";
   var propList = Array.isArray(wronglyProposed) && wronglyProposed.length > 0 ? wronglyProposed.join(", ") : "";
@@ -706,6 +721,13 @@ function getCompleteSolutionInstruction(lang, wronglyNegated, wronglyProposed) {
   return msg;
 }
 
+/*
+   Txt -> ____|___________________________
+         | getStateRevealInstruction() | -> Txt
+          -----------------------------
+      Returns the retry instruction for when an element state was revealed,
+      in the given language.
+*/
 function getStateRevealInstruction(lang) {
   if (lang === "val") {
     return (
@@ -733,10 +755,6 @@ function getStateRevealInstruction(lang) {
     "Por ejemplo: '¿Qué observas en los nudos donde está conectada esa resistencia?'"
   );
 }
-
-// =====================
-// Intermediate feedback phrases (hybrid: deterministic prefix + LLM continuation)
-// =====================
 
 const intermediateFeedback = {
   wrong: {
@@ -802,6 +820,13 @@ const intermediateFeedback = {
   },
 };
 
+/*
+   Txt, Txt -> ____|________________________
+              | getIntermediateFeedback() | -> [Txt]
+               ---------------------------
+      Returns the intermediate-feedback phrase pool for a type ("wrong" /
+      "partial") and language, defaulting to Spanish; [] for unknown types.
+*/
 function getIntermediateFeedback(type, lang) {
   lang = lang || "es";
   var phrases = intermediateFeedback[type];
@@ -809,19 +834,25 @@ function getIntermediateFeedback(type, lang) {
   return phrases[lang] || phrases.es || [];
 }
 
+/*
+   Txt, Txt -> ____|___________________________
+              | getRandomIntermediatePhrase() | -> Txt
+               -------------------------------
+      Returns a random phrase from the matching pool, "" when empty.
+*/
 function getRandomIntermediatePhrase(type, lang) {
   var phrases = getIntermediateFeedback(type, lang);
   if (phrases.length === 0) return "";
   return phrases[Math.floor(Math.random() * phrases.length)];
 }
 
-// NS-34: detect whether a response already starts with one of the corrective
-// "intermediate feedback" phrases that surgical fixes prepend. Used by the
-// guardrail surgical fixes to avoid stacking a second prefix on top of one
-// that a sibling guardrail already added in the same pipeline pass. Some of
-// those intermediate phrases overlap with confirmPhrases ("Vas por buen
-// camino" is BOTH), so re-running the guardrail check is not enough to detect
-// the already-corrected state.
+/*
+   Txt -> ____|_________________________
+         | _normaliseForPrefixMatch() | -> Txt
+          ----------------------------
+      Lowercases, strips accents and leading punctuation/space so a
+      response head can be compared against the intermediate phrases.
+*/
 function _normaliseForPrefixMatch(s) {
   return String(s || "")
     .toLowerCase()
@@ -831,6 +862,13 @@ function _normaliseForPrefixMatch(s) {
     .trim();
 }
 
+/*
+   Txt -> ____|_______________________________
+         | startsWithIntermediatePhrase() | -> T/F
+          ------------------------------
+      True when the response begins with any intermediate-feedback phrase
+      in any supported language (so surgical fixes don't stack prefixes).
+*/
 function startsWithIntermediatePhrase(response) {
   if (typeof response !== "string" || response.length === 0) return false;
   var head = _normaliseForPrefixMatch(response);
@@ -849,14 +887,6 @@ function startsWithIntermediatePhrase(response) {
   return false;
 }
 
-// =====================
-// Element naming guardrail instruction (generic, not resistance-specific)
-// =====================
-
-// Pool of CONCEPT-LEVEL example questions used inside the element_naming
-// retry hint. Rotated every call so the LLM cannot just copy the same example
-// verbatim into its next response (which is what produced the visible
-// infinite loop with gemma3:27b in the original conversations).
 const _conceptExamplesByLang = {
   es: [
     "el recorrido de la corriente desde la fuente hasta tierra",
@@ -881,11 +911,25 @@ const _conceptExamplesByLang = {
   ],
 };
 
+/*
+   Txt -> ____|_____________________
+         | _pickConceptExample() | -> Txt
+          -----------------------
+      Returns a random concept-level example question for the language,
+      rotated so the LLM cannot copy the same example verbatim.
+*/
 function _pickConceptExample(lang) {
   const pool = _conceptExamplesByLang[lang] || _conceptExamplesByLang.es;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+/*
+   Txt -> ____|______________________________
+         | getElementNamingInstruction() | -> Txt
+          ------------------------------
+      Returns the retry instruction for when a specific element was named,
+      embedding a rotated concept example, per language.
+*/
 function getElementNamingInstruction(lang) {
   if (lang === "val") {
     return (
@@ -911,12 +955,7 @@ function getElementNamingInstruction(lang) {
   );
 }
 
-// =====================
-// Term normalization for retrieval
-// =====================
-
 const termToSpanish = {
-  // Valencian → Spanish
   "curtcircuit": "cortocircuito",
   "curtcircuitada": "cortocircuitada",
   "curtcircuitat": "cortocircuitado",
@@ -930,7 +969,6 @@ const termToSpanish = {
   "resistència": "resistencia",
   "interruptor tancat": "interruptor cerrado",
   "interruptor obert": "interruptor abierto",
-  // English → Spanish
   "short circuit": "cortocircuito",
   "shorted": "cortocircuitada",
   "open circuit": "circuito abierto",
@@ -945,26 +983,24 @@ const termToSpanish = {
   "switch open": "interruptor abierto",
 };
 
-// Normalize non-Spanish technical terms to Spanish for dataset retrieval
+/*
+   Txt -> ____|____________________
+         | normalizeToSpanish() | -> Txt
+          ----------------------
+      Lowercases the query and replaces Valencian/English technical terms
+      with their Spanish equivalents (longest key first, Unicode-letter
+      boundaries) so dataset retrieval works on a single canonical language.
+*/
 function normalizeToSpanish(query) {
   if (typeof query !== "string") return query;
   let result = query.toLowerCase();
 
-  // Sort keys by length (longest first) to avoid partial replacements
   const keys = Object.keys(termToSpanish).sort(function (a, b) {
     return b.length - a.length;
   });
 
   for (let i = 0; i < keys.length; i++) {
     if (result.includes(keys[i])) {
-      // BUG-LM1 (2026-06-10): the replacement used a plain substring regex with
-      // no word boundaries, so a Valencian key that is a PREFIX of its own
-      // Spanish value (e.g. "tensió" → "tensión") matched INSIDE the already-
-      // Spanish word and appended an extra letter ("tensión" → "tensiónn", and
-      // "divisor de tensió" → "...tensiónnn"). This corrupted the CRAG retrieval
-      // query for the most common term in the domain. We anchor each key with
-      // Unicode-letter boundaries (\p{L} + 'u' flag) so "tensió" no longer
-      // matches when followed by the letter "n" of "tensión".
       const safe = keys[i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       result = result.replace(new RegExp("(?<![\\p{L}])" + safe + "(?![\\p{L}])", "giu"), termToSpanish[keys[i]]);
     }
@@ -972,21 +1008,13 @@ function normalizeToSpanish(query) {
   return result;
 }
 
-// =====================
-// SolutionLeak guardrail patterns
-// Centralised here so adding a 4th language only requires editing this file.
-// =====================
-
 const SOLUTION_LEAK_AFFIRM_PATTERNS = [
-  // es
   /\b(?:son|eran)\s+(?:las|los)\s+que\b/i,
   /\b(?:contribuyen|importan|aportan|cuentan|afectan|determinan)\b[^.?!]*\b(?:son|eran)\s+(?:las|los)\b/i,
   /\b(?:exactamente|así\s+es|tienes\s+razón|en\s+efecto|correcto)\b/i,
-  // val
   /\b(?:són|eren)\s+les\s+que\b/i,
   /\b(?:contribueixen|importen|aporten|afecten|determinen)\b[^.?!]*\b(?:són|eren)\s+les\b/i,
   /\b(?:exactament|així\s+és|tens\s+raó|correcte)\b/i,
-  // en
   /\b(?:are|were)\s+the\s+ones\s+that\b/i,
   /\b(?:contribute|matter|count|affect|determine)\b[^.?!]*\b(?:are|were)\s+the\s+ones\b/i,
   /\b(?:exactly|that's\s+right|you'?re\s+right|correct)\b/i,
@@ -1005,10 +1033,6 @@ const SOLUTION_LEAK_PLACEHOLDER_PATTERNS = [
   /\beixos\s+elements\b/i,
   /\bthose\s+elements\b/i,
 ];
-
-// =====================
-// DidacticExplanation guardrail patterns
-// =====================
 
 const DIDACTIC_FALLBACK_QUESTIONS = {
   es: [
@@ -1037,27 +1061,30 @@ const DIDACTIC_FALLBACK_PREFIX = {
   en: "Let's hold off on the explanation.",
 };
 
+/*
+   Txt -> ____|_______________________________
+         | getDidacticFallbackQuestions() | -> [Txt]
+          -------------------------------
+      Returns the didactic-fallback Socratic questions for a language,
+      defaulting to Spanish.
+*/
 function getDidacticFallbackQuestions(lang) {
   return DIDACTIC_FALLBACK_QUESTIONS[lang] || DIDACTIC_FALLBACK_QUESTIONS.es;
 }
 
+/*
+   Txt -> ____|____________________________
+         | getDidacticFallbackPrefix() | -> Txt
+          ----------------------------
+      Returns the didactic-fallback prefix sentence for a language,
+      defaulting to Spanish.
+*/
 function getDidacticFallbackPrefix(lang) {
   return DIDACTIC_FALLBACK_PREFIX[lang] || DIDACTIC_FALLBACK_PREFIX.es;
 }
 
-// =====================
-// Adherence guardrail verb patterns (Spanish/Valencian conjugations)
-// If a 4th language is added, extend these regex strings.
-// =====================
-
-const ADHERENCE_NEGATIVE_VERBS = "(?:no|tampoco)\\s+(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
+const ADHERENCE_NEGATIVE_VERBS ="(?:no|tampoco)\\s+(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
 const ADHERENCE_POSITIVE_VERBS = "(?:s[ií]\\s+)?(?:es|son|cumple|cumplen|contribuye|contribuyen|forma|forman|influye|influyen|interviene|intervienen|aporta|aportan)";
-
-// =====================
-// RepeatedQuestion stopwords (question-frame function words, es-dominant)
-// These supplement HEURISTIC_STOPWORDS when tokenizing questions for
-// similarity comparison. Extend if a 4th language is added.
-// =====================
 
 const QUESTION_FRAME_STOPWORDS = [
   "del", "u", "te", "le", "me", "lo",
@@ -1067,11 +1094,13 @@ const QUESTION_FRAME_STOPWORDS = [
   "más", "mas", "menos", "muy", "tan", "tanto", "ya", "aún", "también",
 ];
 
-// =====================
-// Guardrail hints: language drift + repeated question
-// Centralised here so adding a 4th language only requires editing this file.
-// =====================
-
+/*
+   Txt -> ____|___________________________
+         | getLanguageDriftRetryHint() | -> Txt
+          ---------------------------
+      Returns the retry hint for a language-drift violation (reply slipped
+      into another language/script), per language.
+*/
 function getLanguageDriftRetryHint(lang) {
   if (lang === "en") {
     return (
@@ -1097,6 +1126,13 @@ function getLanguageDriftRetryHint(lang) {
   );
 }
 
+/*
+   Txt, Txt -> ____|______________________________
+              | getRepeatedQuestionRetryHint() | -> Txt
+               ------------------------------
+      Returns the retry hint for a repeated-question violation, embedding
+      the previous question to avoid, per language.
+*/
 function getRepeatedQuestionRetryHint(lang, prevQ) {
   const literal = prevQ && prevQ.length > 0
     ? "\n" + (lang === "en"
@@ -1132,10 +1168,13 @@ function getRepeatedQuestionRetryHint(lang, prevQ) {
   );
 }
 
-// =====================
-// Utility: flatten all language arrays into one
-// =====================
-
+/*
+   Obj -> ____|_________________
+         | getAllPatterns() | -> [Txt]
+          ------------------
+      Flattens a per-language pattern dictionary into one deduplicated
+      array across all supported languages.
+*/
 function getAllPatterns(dict) {
   const result = [];
   for (const lang of SUPPORTED_LANGS) {
@@ -1145,7 +1184,6 @@ function getAllPatterns(dict) {
       }
     }
   }
-  // Deduplicate
   const seen = {};
   const unique = [];
   for (let i = 0; i < result.length; i++) {

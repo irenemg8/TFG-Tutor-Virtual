@@ -15,20 +15,29 @@ const {
 
 const revealPhrases = getAllPatterns(revealDict);
 
-// BUG-SL (2026-06-10): this was the last guardrail in the set still comparing
-// raw-lowercased text against ACCENTED dictionaries/regexes, so an accent-less
-// LLM reveal ("La solucion es R1", "Asi es, esos elementos contribuyen") — and
-// the ENTIRE Valencian reveal set — slipped through. Same recurring class as
-// G1/S1. We fold accents on both sides: precompute accent-stripped copies of
-// the reveal phrases and of the regex patterns (stripping accents from the
-// pattern .source), and match against accent-folded text.
+// Accent-folded copies of the reveal phrases and regex patterns so accent-less
+// LLM reveals ("La solucion es R1") and the Valencian set still match.
 const revealPhrasesF = revealPhrases.map(function (p) { return stripAccents(p); });
+
+/*
+   RegExp -> ____|______________
+            | _foldPattern() | -> RegExp
+             ----------------
+      Returns the regex with accents stripped from its source (same flags),
+      falling back to the original on error.
+*/
 function _foldPattern(re) {
   try { return new RegExp(stripAccents(re.source), re.flags); } catch (_) { return re; }
 }
 const SEMANTIC_AFFIRM_PATTERNS_F = SEMANTIC_AFFIRM_PATTERNS.map(_foldPattern);
 const PLACEHOLDER_PATTERNS_F = PLACEHOLDER_PATTERNS.map(_foldPattern);
 
+/*
+   Txt -> ____|_______________________
+         | _sentenceHasPlaceholder() | -> T/F
+          -------------------------
+      True when the sentence matches a placeholder noun-phrase pattern.
+*/
 function _sentenceHasPlaceholder(s) {
   const folded = stripAccents(s);
   for (let p = 0; p < PLACEHOLDER_PATTERNS_F.length; p++) {
@@ -37,14 +46,18 @@ function _sentenceHasPlaceholder(s) {
   return false;
 }
 
+/*
+   Txt -> ____|___________________
+         | _sentenceHasAffirm() | -> T/F
+          --------------------
+      True when the sentence carries an affirmative "you got it right"
+      pattern; a preceding negation ("No es correcto") is skipped.
+*/
 function _sentenceHasAffirm(s) {
   const folded = stripAccents(s);
   for (let q = 0; q < SEMANTIC_AFFIRM_PATTERNS_F.length; q++) {
     const m = SEMANTIC_AFFIRM_PATTERNS_F[q].exec(folded);
     if (!m) continue;
-    // Review C1 (2026-06-11): a NEGATED affirmation is a refutation, not a
-    // confirmation — "No es correcto." was matching /correcto/ and flagging a
-    // legitimate correction as a semantic leak (then forcing a useless retry).
     const before = folded.slice(Math.max(0, m.index - 16), m.index);
     if (/\b(no|tampoco|ni)\b[\s,]*(es|era|son|eran|esta|estas|fue|seria)?\s*$/i.test(before)) continue;
     return true;
@@ -52,19 +65,22 @@ function _sentenceHasAffirm(s) {
   return false;
 }
 
+/*
+   Txt -> ____|____________________________
+         | looksLikeSemanticAffirmation() | -> T/F
+          ------------------------------
+      True when a declarative sentence pairs a placeholder with an affirm, or
+      a pure affirm sentence is immediately followed by a placeholder one —
+      both forms being implicit post-redaction confirmation.
+*/
 function looksLikeSemanticAffirmation(text) {
   if (typeof text !== "string" || text.length === 0) return false;
   const sentences = splitSentencesKeepEnd(text);
-  // Caso 1: placeholder + affirm en la MISMA frase declarativa.
   for (let i = 0; i < sentences.length; i++) {
     const s = sentences[i];
     if (s.includes("?")) continue;
     if (_sentenceHasPlaceholder(s) && _sentenceHasAffirm(s)) return true;
   }
-  // Caso 2: frase 1 = affirm puro ("Tienes razón.", "Exacto.", "Sí."),
-  //         frase 2 = placeholder en declarativa. La proximidad declarativa
-  //         entre afirmación y placeholder constituye confirmación implícita
-  //         post-redacción.
   for (let i = 0; i < sentences.length - 1; i++) {
     const s1 = sentences[i];
     const s2 = sentences[i + 1];
@@ -75,41 +91,53 @@ function looksLikeSemanticAffirmation(text) {
   return false;
 }
 
-/**
- * Detects when the tutor reveals the correct answer by either:
- *   (a) using an explicit reveal phrase ("la respuesta es...") when all
- *       correct elements are also mentioned,
- *   (b) listing ALL correct elements together in an affirmative sentence
- *       — order-INDEPENDENT (BUG-001 fix), or
- *   (c) post-redaction semantic leak where a placeholder noun phrase is
- *       still the subject of an affirmative verb that means "you got it
- *       right" (BUG-005).
- *
- * Surgical fix: delegate to redactElementMentions + strip affirmative
- * openers + ensure the response ends with a Socratic question.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  SOLUTIONLEAKGUARDRAIL              |
+            |  Guardrail adapter (IGuardrail). Catches the tutor     |
+            |  revealing the answer: an explicit reveal phrase, the  |
+            |  full correct set listed/asked together (order-        |
+            |  independent), or a post-redaction placeholder +       |
+            |  affirmative connector. Scoped by a fair-game gate so  |
+            |  echoing what the student already named is not a leak. |
+        ____|_____________________                                   |
+        | check() | -> Obj  (reads correctAnswer, turnVerdict, cum…) |
+        -----------                                                  |
+        ____|_______________________                                 |
+        | surgicalFix() | -> Obj | null          (reads response)    |
+        -----------------                                            |
+        ____|___________________                                     |
+        | buildRetryHint() | -> Txt                                  |
+        --------------------                                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class SolutionLeakGuardrail extends IGuardrail {
   get id() { return "solution_leak"; }
   get severity() { return "high"; }
 
+  /*
+   Txt, Obj -> ____|_________
+              | check() | -> Obj
+               -----------
+      True (violated) on rules (a) explicit reveal phrase, (b)/(b2) full set
+      in a sentence/question, or (c) semantic placeholder leak — all gated by
+      whether the student already named the full answer.
+  */
   check(response, ctx) {
     const correctAnswer = (ctx && ctx.correctAnswer) || [];
     if (typeof response !== "string" || correctAnswer.length === 0) {
       return { violated: false };
     }
 
-    // Fair-game gate, computed FIRST because it scopes rules (b), (b2) AND (c)
-    // — review C2 (2026-06-11): rule (c) used to ignore it, so a legitimate
-    // post-completion confirmation ("Correcto, esas resistencias son las que
-    // influyen.") still fired semantic_leak. See the BUG-ALGUNOS comments at
-    // rule (b) for the full rationale of each disjunct.
+    // Fair-game gate: scopes rules (b), (b2) and (c) — echoing what the
+    // student already named in full is not a leak.
     const verdictStr = ctx && ctx.turnVerdict &&
       (typeof ctx.turnVerdict === "string" ? ctx.turnVerdict : ctx.turnVerdict.verdict);
     const cum = ctx && ctx.cumulativeAnswer;
     const studentNamedFullAnswer = verdictStr === "correct" || !!(cum && cum.complete);
 
-    // (c) Post-redaction semantic leak — fires even when no R\d+ remains
-    //     because the redaction already swapped them out.
+    // (c) Post-redaction semantic leak.
     if (!studentNamedFullAnswer && looksLikeSemanticAffirmation(response)) {
       return {
         violated: true,
@@ -123,7 +151,7 @@ class SolutionLeakGuardrail extends IGuardrail {
       return { violated: false };
     }
 
-    // (a) explicit reveal phrase — matched accent-folded (BUG-SL).
+    // (a) explicit reveal phrase, matched accent-folded.
     for (let i = 0; i < revealPhrasesF.length; i++) {
       if (lowerFolded.includes(revealPhrasesF[i])) {
         return {
@@ -133,28 +161,9 @@ class SolutionLeakGuardrail extends IGuardrail {
       }
     }
 
-    // (b) all correct elements listed together in one AFFIRMATIVE sentence,
-    //     order-INDEPENDENT. We split into sentences, drop questions, and
-    //     check whether any non-question sentence mentions every correct
-    //     element regardless of permutation.
-    //
-    // BUG-ALGUNOS (2026-06-11): EXCEPTION — if the student THIS TURN already
-    // produced the exact correct set (turnVerdict.verdict === "correct": every
-    // correct element proposed, no errors, nothing missing), the tutor echoing
-    // those same elements reveals NOTHING — the student supplied them. Treating
-    // it as a leak triggered the surgical rewrite that turned the honest
-    // acknowledgment "R1, R2 y R4 están en el camino" into the FALSE and
-    // demoralising "Algunos de los elementos que has propuesto están en el
-    // camino" ("algunos" = some, when it was ALL). That misrewrite made the
-    // student think they were only partly right and the conversation looped.
-    // The fair-game gate is scoped to verdict==="correct" (an EXACT match, set
-    // by AcDetector only when proposed === correctAnswer), so a wrong/superset
-    // answer like "R1 R2 R3 R4" still has its correct subset protected. The
-    // "don't confirm without reasoning" policy is a SEPARATE concern handled by
-    // the false/premature-confirmation guardrails, not by faking a partial leak.
-    // (BUG-ALGUNOS-2 note: studentNamedFullAnswer is computed at the top of
-    // check() — per-turn verdict OR cumulative complete — because it also
-    // scopes rule (c). See comment there.)
+    // (b) all correct elements listed together in one affirmative sentence,
+    // order-independent. Gated so echoing a fully-correct student answer is
+    // not flagged as a leak.
     if (!studentNamedFullAnswer && correctAnswer.length >= 2) {
       const sentences = splitSentencesKeepEnd(response);
       for (let i = 0; i < sentences.length; i++) {
@@ -176,29 +185,9 @@ class SolutionLeakGuardrail extends IGuardrail {
         }
       }
 
-      // (b2) QUESTION-LEAK (2026-06-11). Rule (b) skips questions, but a
-      // QUESTION that names the COMPLETE correct set together with an
-      // influence verb hands the student the answer wrapped in "¿has
-      // considerado…?" — production: "¿has considerado cómo las resistencias
-      // conectadas a N2, como R1, R2 y R4, podrían afectar la tensión…?" when
-      // the student had named NOTHING yet. That was the "me da la respuesta
-      // implícitamente" complaint. Guards against false positives:
-      //   - only when the student has NOT named the full set (outer gate);
-      //   - the question must name ALL correct elements; extra Rn only exempt
-      //     it when they cover the WHOLE remaining evaluable set (review C7,
-      //     2026-06-11: "¿cómo R1, R2 y R4, a diferencia de R3, afectan…?"
-      //     still hands over the answer — one token extra is not a neutral
-      //     enumeration; "¿cuáles de R1…R5 influyen?" lists everything and
-      //     reveals nothing);
-      //   - an influence/affect/FLOW verb must be present (review C4: "¿te das
-      //     cuenta de que la corriente pasa por R1, R2 y R4?" is the same leak
-      //     with flow phrasing — StateReveal exempts flow questions by design,
-      //     so this rule is the net for the full-set variant).
-      // BUG-SL-EXACT (2026-06-14): broadened with the neutral "what about X"
-      // verbs ("ocurre", "sucede", "identific…", "considera", "piensa en",
-      // "recuerda", "fíjate", "ten en cuenta"). Production CONV[109] leaked
-      // "¿Y qué ocurre con … R1, R2 y R4 en esa ruta?" — no influence verb, so
-      // it escaped even though it named the full set before the student did.
+      // (b2) question-leak: a question that names the COMPLETE correct set.
+      // Exempt only a full enumeration of every evaluable element; a partial
+      // enumeration with extras still leaks if an influence verb is present.
       const INFLUENCE_RE = /\b(influy|influir|afect|contribu|relevant|important|depend|pasa|circula|fluye|passa|flueix|flows?|passes?|ocurre|sucede|identific|considera|piensa|recuerda|fijate|ten en cuenta|tienes en cuenta|que hay de|que pasa con)/;
       const correctSetB2 = new Set(correctAnswer.map((c) => String(c).toUpperCase()));
       const evalSetB2 = ((ctx && ctx.evaluableElements) || []).map((e) => String(e).toUpperCase());
@@ -215,25 +204,16 @@ class SolutionLeakGuardrail extends IGuardrail {
         if (!allCorrectIn) continue;
         const extras = found.filter((f) => !correctSetB2.has(f));
         if (extras.length > 0) {
-          // Exempt only a full enumeration: the extras must cover EVERY
-          // non-correct evaluable element. Without evaluableElements in ctx we
-          // can't judge coverage, so any extra exempts (legacy behaviour).
           const coversAll = nonCorrectEval.length === 0 ||
             nonCorrectEval.every((e) => found.indexOf(e) >= 0);
           if (coversAll) continue;
-          // Extras present but not a full enumeration (e.g. a comparison
-          // "¿cómo R1,R2,R4 frente a R3…?"): still requires an influence verb,
-          // otherwise it could be a neutral mention of a wrong element.
           if (!INFLUENCE_RE.test(stripAccents(sent.toLowerCase()))) continue;
           return {
             violated: true,
             evidence: "question names the full correct set + influence verb: '" + sent.trim().slice(0, 90) + "'",
           };
         }
-        // BUG-SL-EXACT (2026-06-14): the question names EXACTLY the correct set
-        // and no other element. Listing precisely R1,R2,R4 together hands the
-        // student the answer regardless of the verb ("¿has identificado ya R1,
-        // R2 y R4?", "¿qué ocurre con R1, R2 y R4…?"). No influence verb needed.
+        // Question names EXACTLY the correct set — leaks regardless of verb.
         return {
           violated: true,
           evidence: "question names exactly the correct set: '" + sent.trim().slice(0, 90) + "'",
@@ -243,12 +223,14 @@ class SolutionLeakGuardrail extends IGuardrail {
     return { violated: false };
   }
 
-  /**
-   * Surgical fix: redact element list AND strip affirmative openers/connectors
-   * that semantically confirm the answer post-redaction.
-   * Returns null when the response would be empty after the surgery so the
-   * pipeline can escalate to an LLM retry.
-   */
+  /*
+   Txt, Obj -> ____|_______________
+              | surgicalFix() | -> Obj | null
+               -----------------
+      Redacts the element list, strips semantic affirmations and affirmative
+      openers, fixes a dangling antecedent, and ensures a closing question.
+      Returns null when nothing survives so the pipeline can retry.
+  */
   surgicalFix(response, ctx) {
     if (typeof response !== "string") return null;
     const correctAnswer = (ctx && ctx.correctAnswer) || [];
@@ -264,26 +246,15 @@ class SolutionLeakGuardrail extends IGuardrail {
     let text = r && r.redacted ? r.text : response;
     let applied = !!(r && r.redacted);
 
-    // Strip semantic affirmation patterns even if redactElementMentions
-    // didn't touch the response — BUG-005 fires when the LLM emitted a
-    // placeholder-form leak directly (qwen2.5 sometimes does this when the
-    // previous turn's redacted response is in its history).
     if (looksLikeSemanticAffirmation(text)) {
       text = stripSemanticAffirmation(text);
       applied = true;
     }
 
-    // Always also trim affirmative openers — "Sí, ", "Exacto, ", "Tienes
-    // razón, " — because they propagate the implicit confirmation past the
-    // redaction.
     const beforeOpener = text;
     text = removeOpeningConfirmation(text, lang);
     if (text !== beforeOpener) applied = true;
 
-    // After all the trimming the bubble may start with a dangling
-    // "esos elementos sí contribuyen…" — promote that to a form with an
-    // explicit antecedent ("Algunos de los elementos que has propuesto…")
-    // so the first sentence of the bubble parses as a complete utterance.
     const beforeAntecedent = text;
     text = fixOpeningAntecedent(text, lang);
     if (text !== beforeAntecedent) applied = true;
@@ -295,22 +266,30 @@ class SolutionLeakGuardrail extends IGuardrail {
     return { applied: true, text: text, before: response, after: text };
   }
 
+  /*
+   Txt -> ____|___________________
+         | buildRetryHint() | -> Txt
+          --------------------
+      Returns the stronger no-reveal instruction for the given language.
+  */
   buildRetryHint(lang) {
     return getStrongerInstruction(lang || "es");
   }
 }
 
-// Strip every sentence that combines a placeholder + affirmative connector.
-// Keeps interrogative sentences intact. If everything gets stripped the
-// caller (surgicalFix) returns null so the pipeline can retry.
+/*
+   Txt -> ____|_________________________
+         | stripSemanticAffirmation() | -> Txt
+          --------------------------
+      Drops every declarative sentence pairing a placeholder with an affirm,
+      keeping questions; returns "" when nothing remains.
+*/
 function stripSemanticAffirmation(text) {
   const sentences = splitSentencesKeepEnd(text);
   const kept = [];
   for (let i = 0; i < sentences.length; i++) {
     const s = sentences[i];
     if (s.includes("?")) { kept.push(s); continue; }
-    // Reuse the accent-folded helpers (BUG-SL) so the stripper catches the same
-    // accent-less leaks that looksLikeSemanticAffirmation now detects.
     if (_sentenceHasPlaceholder(s) && _sentenceHasAffirm(s)) continue;
     kept.push(s);
   }

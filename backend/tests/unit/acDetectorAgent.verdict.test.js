@@ -2,6 +2,25 @@
 
 const AcDetectorAgent = require("../../src/domain/agents/acDetectorAgent");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |       ACDETECTORAGENT.VERDICT — UNIT TESTS (NS-30)    |
+            |  Verifies AcDetectorAgent.execute() builds turnVerdict |
+            |  correctly: correct / partial_correct / incorrect /   |
+            |  only_negation verdicts, wronglyNegated detection,    |
+            |  token normalisation and the null-verdict empty case. |
+        ____|______________                                         |
+        | makeContext() | -> Obj                                    |
+        -----------------                                           |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+     IN -> ____|____________
+          | makeContext() | -> Obj
+           -----------------
+    Builds an AgentContext with classification, correctAnswer and exerciseNum.
+*/
 function makeContext(proposed, negated, correctAnswer, exerciseNum) {
   return {
     classification: { proposed, negated },
@@ -60,7 +79,6 @@ describe("AcDetectorAgent.turnVerdict (NS-30)", () => {
     const ctx = makeContext(["R1"], ["R2"], correct, 1);
     await agent.execute(ctx);
     expect(ctx.turnVerdict.wronglyNegated).toEqual(["R2"]);
-    // R2 is in negated, NOT in proposed, NOT in missing.
     expect(ctx.turnVerdict.missing).toEqual(["R4"]);
   });
 

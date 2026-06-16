@@ -1,4 +1,17 @@
-// Main agentic RAG pipeline: classifier -> retrieval -> CRAG -> augmentation
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                      RAG PIPELINE                     |
+            |  Agentic RAG module: a query classifier routes the    |
+            |  student message, hybrid + KG retrieval gathers        |
+            |  context, CRAG reformulates on low scores, and the     |
+            |  augmentation block is assembled for the tutor LLM.    |
+            |  LEGACY duplicate kept under src/rag/ for A/B testing  |
+            |  against the hexagonal pipeline.                       |
+        ____|________________________                               |
+   IN -> | runFullPipeline() | -> OUT                                |
+          ---------------------                                      |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const config = require("./config");
 const { classifyQuery, extractResistances, types } = require("./queryClassifier");
@@ -7,24 +20,17 @@ const { searchKG, searchKGByAC } = require("./knowledgeGraph");
 const { emitEvent } = require("./ragEventBus");
 const Resultado = require("../models/resultado");
 
-// Format dataset examples as context for the LLM
+/*
+   IN -> ____|________________
+        | formatExamples() | -> Txt
+         ------------------
+      Renders the retrieved dataset examples ([Obj]) into a reference
+      block of student/tutor pairs for the LLM. Returns "" when empty.
+*/
 function formatExamples(results) {
   if (results.length === 0) {
     return "";
   }
-
-/*-------------------------------------------------------------------------
-[REFERENCE EXAMPLES]
-The following are examples of how an expert tutor responds...
-
-Example 1:
-Student: "R1 y R2 por el divisor de tensión"
-Tutor: "En un divisor de tensión todos los componentes están en serie..."
-
-Example 2:
-Student: "R5"
-Tutor: "¿Por qué piensas que R5 ...?"
--------------------------------------------------------------------------*/
 
   let text = "[REFERENCE EXAMPLES]\n";
   text = text + "The following are examples of how an expert tutor responds to similar student answers.\n";
@@ -38,28 +44,21 @@ Tutor: "¿Por qué piensas que R5 ...?"
   return text;
 }
 
-// Format knowledge graph results as context for the LLM
+/*
+   IN -> ____|_________________
+        | formatKGContext() | -> Txt
+         -------------------
+      Renders knowledge-graph entries ([Obj]) into a domain-knowledge
+      block with concepts, expert reasoning, Socratic questions and ACs.
+*/
 function formatKGContext(kgResults) {
   if (kgResults.length === 0) {
     return "";
   }
 
-/*-------------------------------------------------------------------------
-[DOMAIN KNOWLEDGE]
-Concept: "Dispositivos pueden conectarse en serie y en paralelo"
-Expert reasoning: "En una conexión en serie, los dispositivos se conectan uno tras otro,
-formando un único camino para la corriente..."
-Socratic questions: "¿En un divisor de tensión todos los componentes están conectados en serie?"
-
-Concept: "Un cortocircuito tiene diferencia de potencial cero"
-Expert reasoning: "Cuando un componente está cortocircuitado, la corriente no pasa por él..."
-Socratic questions: "¿Qué ocurre con la corriente cuando un componente está cortocircuitado?"
--------------------------------------------------------------------------*/
-
   let text = "[DOMAIN KNOWLEDGE]\n";
   for (let i = 0; i < kgResults.length; i++) {
     const entry = kgResults[i];
-    // Concept definition and relationship
     text = text + "Concept: \"" + entry.node1 + " " + entry.relation + " " + entry.node2 + "\"\n";
     if (entry.expertReasoning) {
       text = text + "Expert reasoning: \"" + entry.expertReasoning + "\"\n";
@@ -67,7 +66,6 @@ Socratic questions: "¿Qué ocurre con la corriente cuando un componente está c
     if (entry.socraticQuestions) {
       text = text + "Socratic questions: \"" + entry.socraticQuestions + "\"\n";
     }
-    // First alternative conception
     if (entry.acName) {
       text = text + "Alternative conception (AC): \"" + entry.acName + "\"\n";
     }
@@ -77,7 +75,6 @@ Socratic questions: "¿Qué ocurre con la corriente cuando un componente está c
     if (entry.acErrors) {
       text = text + "Common student errors: \"" + entry.acErrors + "\"\n";
     }
-    // Second alternative conception (if present)
     if (entry.ac2Name) {
       text = text + "Alternative conception 2 (AC): \"" + entry.ac2Name + "\"\n";
     }
@@ -92,7 +89,13 @@ Socratic questions: "¿Qué ocurre con la corriente cuando un componente está c
   return text;
 }
 
-// Analyze each resistance the student mentioned: which are correct, which are wrong
+/*
+   IN -> ____|___________________________
+        | analyzeStudentResistances() | -> Txt
+         -----------------------------
+      Compares the student's resistances ([Txt]) against the correct
+      answer ([Txt]) and builds an internal per-resistance + tone hint.
+*/
 function analyzeStudentResistances(resistances, correctAnswer) {
   if (resistances.length === 0) {
     return "";
@@ -113,7 +116,6 @@ function analyzeStudentResistances(resistances, correctAnswer) {
     }
   }
 
-  // Also find correct resistances the student missed
   const mentionedSet = {};
   for (let i = 0; i < resistances.length; i++) {
     mentionedSet[resistances[i]] = true;
@@ -142,7 +144,6 @@ function analyzeStudentResistances(resistances, correctAnswer) {
   text = text + "If resistances are missing, ask a CONCEPTUAL question (about current paths, series/parallel, short circuits) that leads the student to discover them. ";
   text = text + "Example: '¿Hay otros caminos por los que pueda circular corriente?' instead of '¿Qué pasa con R4?'.\n";
 
-  // Add explicit tone guidance based on actual correctness
   if (wrongOnes.length > 0 && correctOnes.length > 0) {
     text = text + "TONO: La respuesta es PARCIALMENTE correcta. NO uses 'Perfecto', 'Muy bien', 'Genial'. Di algo como 'Vas por buen camino, pero no todo es correcto' y guía para reconsiderar las partes incorrectas.\n";
   } else if (wrongOnes.length > 0 && correctOnes.length === 0) {
@@ -154,7 +155,13 @@ function analyzeStudentResistances(resistances, correctAnswer) {
   return text;
 }
 
-// Format classification hint for the LLM
+/*
+   IN -> ____|__________________________
+        | formatClassificationHint() | -> Txt
+         ----------------------------
+      Turns the classification (Obj) into a response-mode hint, and
+      appends the per-resistance analysis when concrete Rs are present.
+*/
 function formatClassificationHint(classification, correctAnswer) {
   const hints = {
     dont_know: "El estudiante no sabe por dónde empezar. Hazle UNA pregunta sobre un concepto fundamental (ej: '¿Qué condiciones necesita una resistencia para que circule corriente por ella?'). NO menciones resistencias concretas.",
@@ -181,7 +188,6 @@ function formatClassificationHint(classification, correctAnswer) {
 
   text = text + "Follow the reference examples below to guide your response style.\n\n";
 
-  // Add per-resistance analysis when the student mentions specific resistances
   if (classification.resistances.length > 0 && correctAnswer != null) {
     text = text + analyzeStudentResistances(classification.resistances, correctAnswer);
   }
@@ -189,7 +195,13 @@ function formatClassificationHint(classification, correctAnswer) {
   return text;
 }
 
-// Load the student's past AC errors from the Resultado model
+/*
+   IN -> ____|_____________________
+        | loadStudentHistory() | -> Promise<Txt>
+         ----------------------
+      Reads the student's stored Resultado error tags (by userId Txt),
+      counts recurring misconceptions, and renders a history block.
+*/
 async function loadStudentHistory(userId) {
   if (userId == null) {
     return "";
@@ -198,7 +210,6 @@ async function loadStudentHistory(userId) {
   try {
     const resultados = await Resultado.find({ usuario_id: userId }).select("errores");
 
-    // Count error tags across all exercises
     const errorCounts = {};
     for (let i = 0; i < resultados.length; i++) {
       const errores = resultados[i].errores;
@@ -236,12 +247,17 @@ async function loadStudentHistory(userId) {
   }
 }
 
-// CRAG: extract key entities from the user message for query reformulation
+/*
+   IN -> ____|____________________
+        | extractKeyEntities() | -> Txt
+         ----------------------
+      CRAG helper: extracts resistances and concept keywords from the
+      message (Txt) to build a reformulated retrieval query.
+*/
 function extractKeyEntities(userMessage) {
   const resistances = extractResistances(userMessage);
   const lower = userMessage.toLowerCase();
 
-  // Collect important terms: resistances + concept keywords found
   const parts = [];
   for (let i = 0; i < resistances.length; i++) {
     parts.push(resistances[i]);
@@ -268,7 +284,13 @@ function extractKeyEntities(userMessage) {
   return parts.join(" ");
 }
 
-// Deduplicate KG results by concept key (Node1|Relation|Node2)
+/*
+   IN -> ____|________________
+        | deduplicateKG() | -> [Obj]
+         -----------------
+      Removes duplicate KG entries ([Obj]) keyed by node1|relation|node2,
+      preserving first-seen order.
+*/
 function deduplicateKG(entries) {
   var seen = {};
   var result = [];
@@ -282,10 +304,15 @@ function deduplicateKG(entries) {
   return result;
 }
 
-// Main pipeline: classifies, retrieves, evaluates quality, and builds augmentation
-// acRefs: exercise-level AC IDs (e.g. ["AC4", "AC9"]) used to find relevant KG entries
+/*
+   IN -> ____|______________
+        | runPipeline() | -> Promise<Obj>
+         ---------------
+      Core pipeline: classifies the message (Txt), routes to the matching
+      retrieval strategy (hybrid + KG, with CRAG retry), and assembles the
+      augmentation Obj. acRefs ([Txt]) are exercise-level AC IDs for KG.
+*/
 async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, acRefs) {
-  // Step A: Classify the query
   emitEvent("classify_start", "start", { userMessage: userMessage, correctAnswer: correctAnswer, messageLength: userMessage.length });
   const classification = classifyQuery(userMessage, correctAnswer);
   var isCorrectAnswer = classification.resistances.length > 0 && classification.resistances.slice().sort().join(",") === correctAnswer.slice().sort().join(",");
@@ -306,7 +333,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, acRe
     classification: classification.type,
   };
 
-  // Step B: Route to appropriate retrieval strategy
   if (classification.type === types.greeting) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "no_rag", path: "greeting → no_rag" });
     return result;
@@ -314,7 +340,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, acRe
 
   if (classification.type === types.dontKnow) {
     emitEvent("routing_decision", "end", { classification: classification.type, decision: "scaffold", path: "dont_know → scaffold" });
-    // Search KG by exercise AC refs (exercise-specific misconceptions) + student concepts if any
     var dkAcResults = searchKGByAC(acRefs);
     var dkConceptResults = classification.concepts.length > 0 ? searchKG(classification.concepts) : [];
     var dkAll = deduplicateKG(dkAcResults.concat(dkConceptResults));
@@ -340,7 +365,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, acRe
     let datasetResults = await hybridSearch(userMessage, exerciseNum);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
 
-    // CRAG: if top score is too low, reformulate and retry
     if (datasetResults.length === 0 || datasetResults[0].score < config.MED_THRESHOLD) {
       const reformulated = extractKeyEntities(userMessage);
       emitEvent("crag_reformulate", "end", { originalQuery: userMessage, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, threshold: config.MED_THRESHOLD, reformulatedQuery: reformulated, reason: "topScore < MED_THRESHOLD (" + config.MED_THRESHOLD + ")", extractedEntities: reformulated.split(" ") });
@@ -349,7 +373,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, acRe
       emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
     }
 
-    // Also search KG: by student concepts + exercise AC refs → provides conceptual questions
     var waConceptResults = classification.concepts.length > 0 ? searchKG(classification.concepts) : [];
     var waAcResults = searchKGByAC(acRefs);
     var waKG = deduplicateKG(waConceptResults.concat(waAcResults)).slice(0, 3);
@@ -366,7 +389,6 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, acRe
     emitEvent("hybrid_search_start", "start", { query: userMessage, exerciseNum: exerciseNum, topK: config.TOP_K_FINAL });
     const datasetResults = await hybridSearch(userMessage, exerciseNum);
     emitEvent("hybrid_search_end", "end", { resultCount: datasetResults.length, topScore: datasetResults.length > 0 ? Math.round(datasetResults[0].score * 10000) / 10000 : 0, results: datasetResults.map(function(r, i) { return { rank: i + 1, index: r.index, score: Math.round(r.score * 10000) / 10000, student: r.student || "", tutor: r.tutor || "" }; }) });
-    // KG by exercise ACs → helps tutor ask conceptual WHY questions
     var cnrKG = searchKGByAC(acRefs).slice(0, 3);
     emitEvent("kg_search_start", "start", { acRefs: acRefs });
     emitEvent("kg_search_end", "end", { resultCount: cnrKG.length, entries: cnrKG.map(function(e) { return { node1: e.node1, relation: e.relation, node2: e.node2, acName: e.acName || null, acDescription: e.acDescription || null, expertReasoning: e.expertReasoning || "", socraticQuestions: e.socraticQuestions || "" }; }) });
@@ -418,17 +440,21 @@ async function runPipeline(userMessage, exerciseNum, correctAnswer, userId, acRe
   return result;
 }
 
-// Full pipeline with student history appended
-// acRefs: exercise-level AC IDs for KG lookup (optional, defaults to [])
+/*
+   IN -> ____|__________________
+        | runFullPipeline() | -> Promise<Obj>
+         -------------------
+      Public entry point: runs runPipeline, then appends the student
+      history block and the guardrail reminder to the augmentation Obj.
+      acRefs ([Txt]) are optional exercise-level AC IDs (default []).
+*/
 async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, acRefs) {
   const result = await runPipeline(userMessage, exerciseNum, correctAnswer, userId, acRefs || []);
 
-  // If no RAG needed, skip 
   if (result.decision === "no_rag") {
     return result;
   }
 
-  // Load student's past errors and append
   emitEvent("student_history_start", "start", { userId: userId });
   const history = await loadStudentHistory(userId);
   emitEvent("student_history_end", "end", { hasHistory: history.length > 0, historyLength: history.length, historyPreview: history });
@@ -436,7 +462,6 @@ async function runFullPipeline(userMessage, exerciseNum, correctAnswer, userId, 
     result.augmentation += history;
   }
 
-  // Append guardrail reminder
   result.augmentation += "[GUARDRAIL]\n";
   result.augmentation += "REGLAS CRÍTICAS PARA TU RESPUESTA:\n";
   result.augmentation += "1. NO reveles la respuesta correcta ni listes resistencias correctas juntas.\n";

@@ -3,10 +3,26 @@
 const { Readable } = require("stream");
 const OllamaLlmAdapter = require("../../src/infrastructure/llm/OllamaLlmAdapter");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |        OLLAMALLMADAPTER.STREAM — UNIT TESTS           |
+            |  Verifies chatCompletionStreamWithCallback: per-token  |
+            |  onChunk callbacks, partial-line buffering across TCP  |
+            |  segments, callback-less use, error propagation,       |
+            |  callback-throw resilience and malformed-JSON skipping.|
+        ____|_______________                                        |
+        | ndjsonStream() | -> Readable                              |
+        ------------------                                          |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+     IN -> ____|_____________
+          | ndjsonStream() | -> Readable
+           ------------------
+    Builds a Readable that emits the given NDJSON lines as buffers.
+*/
 function ndjsonStream(lines) {
-  // Build a Readable that emits the given NDJSON lines as a stream of buffers,
-  // optionally splitting them across two segments to exercise the line-buffer
-  // logic of chatCompletionStreamWithCallback.
   return Readable.from(lines.map((l) => Buffer.from(l + "\n", "utf8")));
 }
 
@@ -36,7 +52,6 @@ describe("OllamaLlmAdapter.chatCompletionStreamWithCallback", () => {
     const lineA = JSON.stringify({ message: { content: "AAA" }, done: false }) + "\n";
     const lineB = JSON.stringify({ message: { content: "BBB" }, done: false }) + "\n";
     const lineDone = JSON.stringify({ message: { content: "" }, done: true }) + "\n";
-    // Split lineA across two buffers, glue lineB and lineDone together.
     const stream = Readable.from([
       Buffer.from(lineA.slice(0, 10), "utf8"),
       Buffer.from(lineA.slice(10) + lineB + lineDone, "utf8"),

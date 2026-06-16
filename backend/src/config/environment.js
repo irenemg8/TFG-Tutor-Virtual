@@ -2,27 +2,26 @@
 
 require("dotenv").config();
 
-/**
- * Centralized, validated environment configuration.
- * All environment variables are accessed through this module.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                       ENVIRONMENT                     |
+            |  Centralized, validated environment configuration.     |
+            |  Every environment variable is read through this       |
+            |  single module, with sane defaults and two computed    |
+            |  getters (OLLAMA_API_URL, isProduction). Exports the   |
+            |  frozen-by-convention `config` object.                 |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 const config = {
-  // --- Database ---
-  // Tras la migración Mongo→PG (abril 2026) el único valor soportado es
-  // "postgresql". Cambiar el default evita que un .env sin esta variable
-  // arranque en modo Mongo (que ya no existe) y lance un error confuso en
-  // container.initialize().
   DATABASE_TYPE: process.env.DATABASE_TYPE || "postgresql",
   PG_CONNECTION_STRING: process.env.PG_CONNECTION_STRING || null,
 
-  // --- Server ---
   PORT: parseInt(process.env.PORT, 10) || 3001,
   NODE_ENV: process.env.NODE_ENV || "development",
   SESSION_SECRET: process.env.SESSION_SECRET,
   SERVER_BASE_URL: process.env.SERVER_BASE_URL || "",
   FRONTEND_BASE_URL: process.env.FRONTEND_BASE_URL || "",
 
-  // --- Ollama / LLM ---
   LLM_MODE: process.env.LLM_MODE || "local",
   OLLAMA_API_URL_UPV: process.env.OLLAMA_API_URL_UPV || "",
   OLLAMA_API_URL_LOCAL:
@@ -45,7 +44,6 @@ const config = {
   DEBUG_DUMP_CONTEXT: process.env.DEBUG_DUMP_CONTEXT === "1",
   DEBUG_DUMP_PATH: process.env.DEBUG_DUMP_PATH || "",
 
-  // --- CAS OAuth2 ---
   CAS_BASE_URL: process.env.CAS_BASE_URL || "",
   OAUTH_CLIENT_ID: process.env.OAUTH_CLIENT_ID || "",
   OAUTH_CLIENT_SECRET: process.env.OAUTH_CLIENT_SECRET || "",
@@ -53,10 +51,8 @@ const config = {
   OAUTH_SCOPES: process.env.OAUTH_SCOPES || "profile email",
   DEV_BYPASS_AUTH: process.env.DEV_BYPASS_AUTH === "true",
 
-  // --- ChromaDB ---
   CHROMA_URL: process.env.CHROMA_URL || "http://localhost:8000",
 
-  // --- Computed ---
   get OLLAMA_API_URL() {
     return this.LLM_MODE === "upv"
       ? this.OLLAMA_API_URL_UPV

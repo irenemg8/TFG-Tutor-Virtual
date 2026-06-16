@@ -2,37 +2,90 @@
 
 const AgentInterface = require("./base/AgentInterface");
 
-/**
- * ContextAgent: Loads all data needed for the tutoring interaction.
- * Populates: exercise, exerciseNum, correctAnswer, evaluableElements,
- * history, lang, loopState in the AgentContext.
- *
- * Extracted from ragMiddleware.js lines 170-336, 371-504
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                     CONTEXTAGENT                      |
+            |  First pipeline agent. Loads every piece of data the  |
+            |  tutoring turn needs: the exercise, the interaction,  |
+            |  the conversation history (summarising the older tail |
+            |  past HISTORY_MAX_MESSAGES), the language, the         |
+            |  cumulative answer state and the loop state, writing  |
+            |  them all onto the AgentContext.                      |
+        ____|________________                                       |
+   Obj -> | constructor() | -> ContextAgent          (writes attrs) |
+          -----------------                                         |
+            |                                                       |
+            |   name: Txt            ejercicioRepo: Obj             |
+            |   interaccionRepo: Obj messageRepo: Obj               |
+            |   config: Obj          historySummarizer: Obj         |
+        ____|_____________________________                          |
+ AgentContext -> | execute() | -> Promise<void>  (reads all attrs)  |
+                 ------------                                        |
+        ____|_____________________________                          |
+ [Obj] -> | _detectStuckOnElement() | -> Txt | null                 |
+          -------------------------                                 |
+        ____|_____________________________                          |
+   Txt -> | _lastClassificationStreak() | -> Promise<Obj>  (reads messageRepo (Obj))
+          -----------------------------                             |
+        ____|_____________________________                          |
+ [Obj] -> | _resolveLanguage() | -> Txt                             |
+          --------------------                                      |
+        ____|_____________________________                          |
+ Txt,[Txt] -> | _countClassifications() | -> Promise<Z>  (reads messageRepo (Obj))
+              -------------------------                             |
+        ____|_____________________________                          |
+ [Obj] -> | _extractEstablishedFacts() | -> [Txt]                   |
+          ----------------------------                              |
+        ____|_____________________________                          |
+ [Obj] -> | _extractLastQuestion() | -> Txt                         |
+          ------------------------                                  |
+        ____|_____________________________                          |
+ [Obj] -> | _detectRepetition() | -> T/F                            |
+          ---------------------                                     |
+        ____|_____________________________                          |
+ Txt,Txt -> | _questionSimilarity() | -> R                          |
+            -----------------------                                 |
+        ____|_____________________________                          |
+   Z -> | _canonicalExerciseNum() | -> Z | null   (reads config (Obj))
+        -------------------------                                   |
+        ____|_____________________________                          |
+   Txt -> | _detectFrustration() | -> T/F                           |
+          ----------------------                                    |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class ContextAgent extends AgentInterface {
-  /**
-   * @param {object} deps
-   * @param {import('../ports/repositories/IEjercicioRepository')} deps.ejercicioRepo
-   * @param {import('../ports/repositories/IInteraccionRepository')} deps.interaccionRepo
-   * @param {import('../ports/repositories/IMessageRepository')} deps.messageRepo
-   * @param {object} deps.config - RAG config
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> ContextAgent    (writes attributes name (Txt),
+          -----------------                    ejercicioRepo (Obj), interaccionRepo (Obj),
+                                               messageRepo (Obj), config (Obj),
+                                               historySummarizer (Obj))
+      Stores the three repositories, the RAG config and the required
+      historySummarizer (throws when missing; pass NullHistorySummarizer
+      to disable summarisation on purpose).
+  */
   constructor(deps) {
     super("contextAgent");
     this.ejercicioRepo = deps.ejercicioRepo;
     this.interaccionRepo = deps.interaccionRepo;
     this.messageRepo = deps.messageRepo;
     this.config = deps.config;
-    // Required. When the conversation exceeds HISTORY_MAX_MESSAGES, ContextAgent
-    // calls summarize() on the older tail and exposes context.historySummary for
-    // TutorAgent to inject as a second system message.
-    // Use NullHistorySummarizer when summarization is intentionally disabled.
     if (!deps.historySummarizer) throw new Error("ContextAgent requires deps.historySummarizer");
     this.historySummarizer = deps.historySummarizer;
   }
 
+  /*
+ AgentContext -> ____|___________
+                | execute() | -> Promise<void>    (reads attributes ejercicioRepo (Obj),
+                 -----------                        interaccionRepo (Obj), messageRepo (Obj),
+                                                    config (Obj), historySummarizer (Obj))
+      Loads the exercise (falling through if it has no valid tutor
+      context), resolves or creates the interaction, loads and windows
+      the history, computes the cumulative answer and closure flags,
+      resolves the language, summarises the older tail, and finally
+      derives the full loop state, writing everything onto the context.
+  */
   async execute(context) {
-    // 1. Load exercise
     const ejercicio = await this.ejercicioRepo.findById(context.exerciseId);
     if (!ejercicio || !ejercicio.hasValidTutorContext()) {
       context.fallthrough = true;
@@ -43,15 +96,8 @@ class ContextAgent extends AgentInterface {
     context.correctAnswer = ejercicio.getCorrectAnswer();
     context.evaluableElements = ejercicio.getEvaluableElements();
 
-    // Canonical exercise number for retrieval. Two exercises that share the
-    // same dataset file (e.g. ex.1 and ex.2 both use dataset_exercise_1.json)
-    // also share the same ChromaDB collection — so retrieval must use the
-    // FIRST exercise number that maps to that dataset, otherwise the search
-    // hits an empty collection and degrades silently to BM25 only. The legacy
-    // ragMiddleware did this; the orchestrator path was missing it.
     context.canonicalExerciseNum = this._canonicalExerciseNum(context.exerciseNum);
 
-    // 2. Load or create interaccion
     if (context.interactionId) {
       const exists = await this.interaccionRepo.existsForUser(
         context.interactionId,
@@ -67,13 +113,6 @@ class ContextAgent extends AgentInterface {
       context.interactionId = interaccion.id;
     }
 
-    // 3. Load conversation history.
-    //    When the session is longer than HISTORY_MAX_MESSAGES we still want
-    //    the LLM to remember earlier confirmations ("te he dicho que R3 no
-    //    influye"), so we fetch ALL messages, keep the last N as the live
-    //    history, and (if a summariser is wired) condense the older tail
-    //    into context.historySummary. TutorAgent injects that summary as a
-    //    second system message before the live history.
     const maxMessages = this.config.HISTORY_MAX_MESSAGES || 20;
     const allMessages = await this.messageRepo.getAllMessages(context.interactionId);
     let recentMessages;
@@ -88,14 +127,6 @@ class ContextAgent extends AgentInterface {
     }
     context.history = recentMessages.map((m) => m.toOllamaFormat());
 
-    // 3b. Cumulative answer state (BUG-LOOP, 2026-06-11). The per-turn verdict
-    //     (AcDetectorAgent) only sees the CURRENT message, so once the student
-    //     names the full correct set it "forgets" it the next turn and the tutor
-    //     re-interrogates the same elements (the loop Irene flagged in the
-    //     2026-06-11 transcript). We reconstruct the session-level union of what
-    //     has been named / excluded by replaying the deterministic classifier
-    //     over ALL messages (full list, not the truncated live window) PLUS the
-    //     current user turn (not yet persisted). Pure + sub-ms per classify.
     {
       const { computeCumulativeAnswer } = require("../services/rag/cumulativeAnswer");
       const allForReplay = allMessages.map((m) => m.toOllamaFormat());
@@ -107,28 +138,16 @@ class ContextAgent extends AgentInterface {
       );
     }
 
-    // 3c. Was this exercise ALREADY closed in a previous turn? (de-sticky
-    //     closure, 2026-06-11). Once the cumulative criterion is met it stays
-    //     met, so without this flag EVERY subsequent turn would re-emit the
-    //     "¡Excelente trabajo! <END_EXERCISE>" message and ignore the student's
-    //     follow-up. If a prior assistant turn already carried the FIN token,
-    //     the orchestrator must NOT close again and the tutor must field the
-    //     follow-up normally instead of being told to close.
     context.exerciseAlreadyClosed = allMessages.some(function (m) {
       return m && m.isAssistant && m.isAssistant() &&
         typeof m.content === "string" && m.content.indexOf("<END_EXERCISE>") >= 0;
     });
 
-    // 4. Resolve language BEFORE summarising so the summary is generated in
-    //    the language of the conversation (not a default).
     const historyWithCurrent = context.userMessage
       ? context.history.concat([{ role: "user", content: context.userMessage }])
       : context.history;
     context.lang = this._resolveLanguage(historyWithCurrent);
 
-    // 4b. Summarise the older tail. Best-effort: if the summariser call fails
-    //     (network error, LLM timeout) the turn proceeds with just the recent
-    //     window so a flaky LLM can never block the chat.
     context.historySummary = null;
     if (olderMessages.length > 0) {
       try {
@@ -137,12 +156,10 @@ class ContextAgent extends AgentInterface {
           olderForLlm, context.lang, context.interactionId
         );
       } catch (err) {
-        // Swallow — the chat must keep working even if summarisation breaks.
         context.historySummary = null;
       }
     }
 
-    // 5. Compute loop state
     const correctTypes = [
       "correct_no_reasoning",
       "correct_wrong_reasoning",
@@ -159,11 +176,6 @@ class ContextAgent extends AgentInterface {
       lastAssistantMessages,
     ] = await Promise.all([
       this._countClassifications(context.interactionId, correctTypes),
-      // STRICT count: only correct_good_reasoning counts towards
-      // _shouldFinishDeterministically. partial_correct, correct_no_reasoning
-      // and correct_wrong_reasoning are NOT enough to close the exercise —
-      // the student must give the right elements WITH a justification (real
-      // reasoning) at least twice in a row before we end the session.
       this._countClassifications(context.interactionId, ["correct_good_reasoning"]),
       this.messageRepo.countConsecutiveFromEnd(
         context.interactionId,
@@ -178,23 +190,8 @@ class ContextAgent extends AgentInterface {
     const lastClassificationStreak = await this._lastClassificationStreak(
       context.interactionId
     );
-    // BUG-007 (2026-05-03): cuando el tutor menciona el MISMO Rn en sus
-    // últimas 2-3 preguntas se queda en bucle conceptual sobre ese
-    // elemento, ignorando que el alumno ya respondió a la topología y
-    // pidió pasar a otro tema. tutorStuckOnElement = el Rn dominante en
-    // las últimas 3 preguntas si aparece >= 2 veces; null si no hay
-    // dominante claro.
     const tutorStuckOnElement = this._detectStuckOnElement(lastAssistantMessages);
-    // BUG-010-C (2026-05-03): la pregunta socrática literal del último
-    // turno del tutor para que el banner de tutorAgent pueda decirle al
-    // LLM "NO repitas exactamente esta pregunta: «...»". Sin esto el LLM
-    // a veces produce respuestas idénticas turno-tras-turno.
     const lastAssistantQuestion = this._extractLastQuestion(lastAssistantMessages);
-    // BUG-011-D (2026-05-03): hechos ya establecidos por el tutor en turnos
-    // previos (afirmaciones tipo "Sí, R1 conecta N1 con N2"). El alumno
-    // se frustraba cuando el tutor confirmaba algo y al turno siguiente
-    // repreguntaba sobre lo mismo. Usamos esto para inyectar un banner
-    // ESTABLISHED FACTS que ordena al LLM avanzar en vez de repetir.
     const establishedFacts = this._extractEstablishedFacts(lastAssistantMessages);
 
     context.loopState = {
@@ -207,18 +204,19 @@ class ContextAgent extends AgentInterface {
       tutorStuckOnElement,
       lastAssistantQuestion,
       establishedFacts,
-      // { type, streak } — how many consecutive prior assistant turns shared
-      // the same classification. Used by TutorAgent to escalate strategy
-      // when the same situation repeats (e.g. correct_no_reasoning x3).
       lastClassification: lastClassificationStreak.type,
       sameClassificationStreak: lastClassificationStreak.streak,
     };
   }
 
-  // BUG-007: detecta cuando el tutor está obsesionado con el mismo Rn.
-  // Examina las preguntas (último '?' de cada mensaje del tutor) en los
-  // últimos N mensajes; si el mismo Rn aparece ≥2 veces → devuelve ese Rn.
-  // Si hay múltiples Rn empatados → devuelve el más reciente.
+  /*
+ [Obj] -> ____|__________________________
+         | _detectStuckOnElement() | -> Txt | null
+          -------------------------
+      Detects when the tutor is stuck on the same Rn: scans the question
+      fragments of the recent assistant messages and returns the element
+      that appears in >= 2 of them (the most recent on a tie), else null.
+  */
   _detectStuckOnElement(lastAssistantMessages) {
     if (!Array.isArray(lastAssistantMessages) || lastAssistantMessages.length < 2) {
       return null;
@@ -228,12 +226,6 @@ class ContextAgent extends AgentInterface {
     for (let i = 0; i < lastAssistantMessages.length; i++) {
       const m = lastAssistantMessages[i];
       const content = (m && m.content) || "";
-      // BUG-A3 (2026-06-10): antes sólo se miraba el ÚLTIMO fragmento
-      // interrogativo (qs[qs.length-1]). Si un mensaje preguntaba por R1 y luego
-      // por R2, R1 se infracontaba y no llegaba al umbral >=2, así que el banner
-      // [STUCK ON Rn] no saltaba aunque el tutor llevara 2 turnos sobre R1.
-      // Ahora consideramos TODOS los fragmentos interrogativos del mensaje
-      // (seenInThisQ sigue contando como máximo 1 por mensaje).
       const qs = content.match(/[^.!?]*\?/g);
       const allQ = qs && qs.length > 0 ? qs.join(" ") : "";
       const rns = allQ.match(/\bR\d+\b/gi);
@@ -255,15 +247,17 @@ class ContextAgent extends AgentInterface {
       if (counts[k] > bestCount) { best = k; bestCount = counts[k]; }
     }
     if (best == null) return null;
-    return best; // Rn que apareció >=2 veces en preguntas recientes.
+    return best;
   }
 
-  /**
-   * Count how many of the most recent assistant messages share the SAME
-   * metadata.classification value, walking backwards from the end of the
-   * conversation. Returns { type, streak }. If there are no assistant
-   * messages with classification metadata, returns { type: null, streak: 0 }.
-   */
+  /*
+   Txt -> ____|______________________________
+         | _lastClassificationStreak() | -> Promise<Obj>    (reads attribute messageRepo (Obj))
+          -----------------------------
+      Walks the messages backwards counting how many consecutive recent
+      assistant turns share the same metadata.classification. Returns
+      { type, streak }, or { type: null, streak: 0 } when none.
+  */
   async _lastClassificationStreak(interactionId) {
     const all = await this.messageRepo.getAllMessages(interactionId);
     let last = null;
@@ -286,17 +280,26 @@ class ContextAgent extends AgentInterface {
     return { type: last, streak };
   }
 
+  /*
+ [Obj] -> ____|___________________
+         | _resolveLanguage() | -> Txt
+          --------------------
+      Delegates to the conservative language resolver, which inspects
+      only USER messages and requires an explicit switch, so one stray
+      foreign word can never flip the conversation language.
+  */
   _resolveLanguage(history) {
-    // Delegate to the conservative resolver: only USER messages are inspected,
-    // and the switch must be EXPLICIT (e.g. "parla en valencià", "speak in
-    // english"). This prevents the previous bug where the tutor accidentally
-    // emitting one Catalan word ("però") permanently flipped the conversation
-    // to Valencian — which would also swap the system prompt to Valencian and
-    // make the LLM keep responding in Valencian.
     const { resolveLanguage } = require("../services/languageManager");
     return resolveLanguage(history);
   }
 
+  /*
+ Txt,[Txt] -> ____|________________________
+             | _countClassifications() | -> Promise<Z>    (reads attribute messageRepo (Obj))
+              -------------------------
+      Counts the assistant messages whose metadata.classification is one
+      of the given types.
+  */
   async _countClassifications(interactionId, types) {
     const messages = await this.messageRepo.getAllMessages(interactionId);
     let count = 0;
@@ -312,33 +315,23 @@ class ContextAgent extends AgentInterface {
     return count;
   }
 
-  // BUG-011-D: extrae afirmaciones que el tutor ya ha establecido en
-  // turnos previos. Heurística regex sobre frases assistant que:
-  //   - empiezan por "Sí, R\d+ ..." (confirmación explícita), o
-  //   - contienen "R\d+ (está|conecta|forma|es) ..." en cláusula afirmativa
-  // Devuelve hasta 5 hechos únicos en orden de aparición (más antiguo
-  // primero). No es un parser semántico — es una red de seguridad
-  // pragmática para que el banner ESTABLISHED FACTS recuerde al LLM lo
-  // que ya ha dicho él mismo.
+  /*
+ [Obj] -> ____|____________________________
+         | _extractEstablishedFacts() | -> [Txt]
+          ----------------------------
+      Heuristic regex extractor of facts the tutor already asserted in
+      prior turns (assertive R/N sentences), rejecting questions and
+      hypotheticals. Returns up to 5 unique facts, oldest first, to feed
+      the ESTABLISHED FACTS banner.
+  */
   _extractEstablishedFacts(lastAssistantMessages) {
     if (!Array.isArray(lastAssistantMessages) || lastAssistantMessages.length === 0) {
       return [];
     }
     const facts = [];
     const seen = new Set();
-    // Match assertive sentences in indicative present, terminated by .!? (no ?).
-    // Capturing '?' in the terminator was producing false positives: questions
-    // like "¿R1 está entre N1 y N2?" were extracted as established "facts",
-    // and the LLM saw its own prior questions echoed back as confirmed truths,
-    // which broke the Socratic flow. We now require '.' or '!' as terminator
-    // AND we reject any candidate containing '?' or '¿' anywhere.
     const FACT_RE = /(?:^|[.!\n]\s*|sí[,]\s*)((?:R\d+|N\d+)[^.!?¿\n]{0,120}?(?:está|conecta|forma|es parte|es la|es el|se conecta|se sitúa|sale|llega)[^.!?¿\n]{0,80}[.!\n])/gi;
-    // Question-opening words (Spanish + Valencian + English). If the fact
-    // candidate starts with one of these, it's almost certainly a question
-    // the tutor asked, not a confirmed fact.
     const QUESTION_OPENERS = /^(si\b|qu[eé]\b|c[oó]mo\b|cu[aá]l\b|cu[aá]ndo\b|d[oó]nde\b|por\s+qu[eé]\b|crees\b|puedes\b|sabes\b|què\b|com\b|quin\b|on\b|what\b|how\b|where\b|when\b|why\b|do\s+you\b|can\s+you\b)/i;
-    // Hypothetical / future / conditional markers: drop facts in subjunctive
-    // or conditional clauses, which are speculation, not established truth.
     const HYPOTHETICAL = /\b(podr[íi]a|ser[íi]a|si\s+conect|si\s+est|imagina|supongam|hipot[eé]ti|condicional|would|could|might)/i;
     for (let i = 0; i < lastAssistantMessages.length; i++) {
       const m = lastAssistantMessages[i];
@@ -360,14 +353,18 @@ class ContextAgent extends AgentInterface {
     return facts;
   }
 
-  // BUG-010-C: extrae la pregunta socrática literal más reciente del tutor
-  // (último "?" del mensaje assistant más reciente que tenga uno). Devuelve
-  // string trimmed o "" si no hay.
+  /*
+ [Obj] -> ____|_______________________
+         | _extractLastQuestion() | -> Txt
+          ------------------------
+      Returns the most recent literal Socratic question asked by the
+      tutor (last '?' fragment of the newest assistant message that has
+      one), trimmed, or "" when there is none.
+  */
   _extractLastQuestion(lastAssistantMessages) {
     if (!Array.isArray(lastAssistantMessages) || lastAssistantMessages.length === 0) {
       return "";
     }
-    // Recorrer del más reciente al más antiguo.
     for (let i = lastAssistantMessages.length - 1; i >= 0; i--) {
       const m = lastAssistantMessages[i];
       const content = (m && m.content) || "";
@@ -379,6 +376,13 @@ class ContextAgent extends AgentInterface {
     return "";
   }
 
+  /*
+ [Obj] -> ____|____________________
+         | _detectRepetition() | -> T/F
+          ---------------------
+      True when any two of the recent assistant questions are more than
+      50% similar, signalling the tutor is looping.
+  */
   _detectRepetition(lastAssistantMessages) {
     if (lastAssistantMessages.length < 2) return false;
 
@@ -402,19 +406,29 @@ class ContextAgent extends AgentInterface {
     return false;
   }
 
+  /*
+ Txt,Txt -> ____|______________________
+           | _questionSimilarity() | -> R
+            -----------------------
+      Symmetric lexical overlap ratio between two questions (shared words
+      longer than 3 chars over the longer word set). 0 when either is empty.
+  */
   _questionSimilarity(qa, qb) {
     const wordsA = qa.split(/\s+/).filter((w) => w.length > 3);
     const wordsB = qb.split(/\s+/).filter((w) => w.length > 3);
     if (wordsA.length === 0 || wordsB.length === 0) return 0;
     const overlap = wordsA.filter((w) => wordsB.includes(w)).length;
-    // BUG-A2 (2026-06-10): the denominator was wordsA.length (ASYMMETRIC), so a
-    // short question that is a lexical subset of a longer, unrelated one scored
-    // high and _detectRepetition raised a spurious [ANTI-LOOP] banner. This is
-    // the same asymmetry already fixed in RepeatedQuestionGuardrail (test G4);
-    // it just also lived here. max(len) is symmetric.
     return overlap / Math.max(wordsA.length, wordsB.length);
   }
 
+  /*
+   Z -> ____|________________________
+       | _canonicalExerciseNum() | -> Z | null    (reads attribute config (Obj))
+        -------------------------
+      Maps an exercise number to the canonical one sharing its dataset
+      collection via config.CANONICAL_EXERCISE_MAP, so retrieval never
+      hits an empty Chroma collection. Falls back to the input number.
+  */
   _canonicalExerciseNum(exerciseNum) {
     if (exerciseNum == null) return exerciseNum;
     const map = this.config && this.config.CANONICAL_EXERCISE_MAP;
@@ -422,10 +436,14 @@ class ContextAgent extends AgentInterface {
     return map[exerciseNum] ?? exerciseNum;
   }
 
+  /*
+   Txt -> ____|____________________
+         | _detectFrustration() | -> T/F
+          ----------------------
+      True when the message matches any phrase in the shared multilingual
+      frustration dictionary from languageManager.
+  */
   _detectFrustration(message) {
-    // Use the multilingual frustration dictionary from languageManager so any
-    // phrase added there propagates to the orchestrator path. Previously this
-    // method had a hardcoded list that drifted behind the legacy ragMiddleware.
     const { getAllPatterns, frustrationPatterns } = require("../services/languageManager");
     const lower = (message || "").toLowerCase();
     const patterns = getAllPatterns(frustrationPatterns);

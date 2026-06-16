@@ -2,6 +2,17 @@
 
 const AdherenceGuardrail = require("../../src/infrastructure/guardrails/AdherenceGuardrail");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |        ADHERENCEGUARDRAIL — UNIT TESTS (NS-33)        |
+            |  Verifies the three adherence rules: contradiction    |
+            |  about Rn (flagging false claims while sparing        |
+            |  Socratic questions), multi-question truncation, and  |
+            |  missed_affirmation log-only metadata, plus the       |
+            |  surgicalFix integration of rules 1+2.                |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 describe("AdherenceGuardrail (NS-33)", () => {
   const g = new AdherenceGuardrail();
   const correctAnswer = ["R1", "R2", "R4"];
@@ -30,10 +41,6 @@ describe("AdherenceGuardrail (NS-33)", () => {
     });
 
     test("does NOT flag a Socratic QUESTION even if Rn-no-influye appears inside", () => {
-      // Regression: caught the guardrail truncating the
-      // socratic question "¿por qué crees que R2 no influye?" because R2 is
-      // in correctAnswer. Questions are valid pedagogical strategy, not
-      // tutor contradictions.
       const r = g.check(
         "Bien, A R1. ¿Puedes explicar por qué R2 no influye en la diferencia de potencial?",
         { correctAnswer }
@@ -82,7 +89,6 @@ describe("AdherenceGuardrail (NS-33)", () => {
         correctAnswer,
         turnVerdict: { hits: ["R1"], errors: [], missing: ["R2", "R4"], proposed: ["R1"] },
       });
-      // Only missed_affirmation → not violated, but metadata.logOnly present.
       expect(r.violated).toBe(false);
       expect(r.metadata).toBeDefined();
       expect(r.metadata.logOnly[0].rule).toBe("missed_affirmation");
@@ -104,7 +110,6 @@ describe("AdherenceGuardrail (NS-33)", () => {
       const fix = g.surgicalFix(text, { correctAnswer });
       expect(fix.applied).toBe(true);
       expect(fix.text).not.toMatch(/R1 no es correcta/);
-      // After dropping the contradicted sentence we still have 2 '?', truncate at first.
       expect((fix.text.match(/\?/g) || []).length).toBe(1);
     });
   });

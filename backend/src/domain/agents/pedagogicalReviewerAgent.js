@@ -2,37 +2,66 @@
 
 const AgentInterface = require("./base/AgentInterface");
 
-/**
- * PedagogicalReviewerAgent: applies deterministic pedagogical fixes to the
- * raw LLM response BEFORE the GuardrailAgent runs its safety pipeline.
- *
- * It centralises the three responsibilities that used to live in separate
- * IGuardrail adapters (PrematureConfirmation, DidacticExplanation,
- * DatasetStyle) plus a new one — "do not ask the student to define a
- * concept" — that the legacy stack didn't enforce. The original guardrail
- * adapters are kept intact and reachable via `createLegacyGuardrails()`
- * (env GUARDRAIL_PROFILE=legacy) so we can A/B-test if the agent regresses
- * any case.
- *
- * Why an agent and not a guardrail:
- *   - These checks are pedagogical, not safety. They reshape tone and
- *     scaffolding intent rather than block leaks or confirmations.
- *   - Running them BEFORE the safety guardrails means the safety stack
- *     sees a response that already follows the dataset style, which makes
- *     its own checks (solution_leak, false_confirmation, ...) cleaner.
- *   - It's deterministic — no LLM call — so it adds essentially no
- *     latency to the pipeline.
- *
- * Reads:  context.llmResponse, context.classification, context.userMessage,
- *         context.lang
- * Writes: context.llmResponse (mutated in place)
- *         context.pedagogicalCorrectionsApplied (string[] for auditing)
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |               PEDAGOGICAL REVIEWER AGENT              |
+            |  Applies deterministic pedagogical fixes to the raw   |
+            |  LLM response BEFORE the safety guardrails run. No LLM |
+            |  call. Centralises premature-confirmation, definition-|
+            |  reframing, didactic-explanation, dataset-style and   |
+            |  intra-sentence code-switch repairs.                  |
+        ____|________________                                       |
+        | constructor() | -> PedagogicalReviewerAgent  (no attrs)   |
+        -----------------                                           |
+        ____|____________                                           |
+   Obj -> | canSkip() | -> T/F                          (no attrs)  |
+          -----------                                               |
+        ____|___________                                            |
+   Obj -> | execute() | -> Promise<void>               (no attrs)   |
+          -----------                                               |
+        ____|________________________________                       |
+   Txt,Txt -> | _stripPrematureConfirmation() | -> Txt  (no attrs)  |
+              ---------------------------------                     |
+        ____|_______________________________                        |
+   Txt -> | _studentAskedForDefinition() | -> T/F        (no attrs) |
+          --------------------------------                          |
+        ____|______________________________                         |
+   Txt,Txt -> | _reframeDefinitionRequest() | -> Txt     (no attrs) |
+              -------------------------------                       |
+        ____|___________________________                            |
+   Txt -> | _reframePromptForLang() | -> Txt              (no attrs)|
+          ---------------------------                               |
+        ____|______________________________                         |
+   Txt,Txt -> | _fixDidacticExplanation() | -> Txt       (no attrs) |
+              -----------------------------                         |
+        ____|_________________________                              |
+   Txt -> | _enforceDatasetStyle() | -> Txt               (no attrs)|
+          --------------------------                                |
+        ____|__________________                                     |
+   Txt,Txt -> | _fixCodeSwitch() | -> Txt                 (no attrs)|
+              --------------------                                  |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class PedagogicalReviewerAgent extends AgentInterface {
+  /*
+       ____|________________
+      | constructor() | -> PedagogicalReviewerAgent    (no attributes)
+       -----------------
+      Sets the agent name. No injected dependencies; helpers lazy-require
+      the existing rule-based modules.
+  */
   constructor() {
     super("pedagogicalReviewerAgent");
   }
 
+  /*
+       ____|____________
+   Obj -> | canSkip() | -> T/F    (no attributes)
+          -----------
+      Skips on missing context, on a deterministic finish, or when there is
+      no non-empty LLM response to review.
+  */
   canSkip(context) {
     if (!context) return true;
     if (context.deterministicFinish) return true;
@@ -40,6 +69,15 @@ class PedagogicalReviewerAgent extends AgentInterface {
     return false;
   }
 
+  /*
+       ____|___________
+   Obj -> | execute() | -> Promise<void>    (no attributes)
+          -----------
+      Runs the five sequential repairs (premature confirmation, definition
+      reframing, didactic explanation, dataset style, code-switch) on the
+      response, mutating context.llmResponse and recording the list of
+      applied corrections.
+  */
   async execute(context) {
     if (this.canSkip(context)) return;
 
@@ -49,16 +87,6 @@ class PedagogicalReviewerAgent extends AgentInterface {
     const corrections = [];
     let text = context.llmResponse;
 
-    // --- 1. Premature confirmation -----------------------------------------
-    // If the tutor opens with "Perfecto/Correcto/Genial..." while the student
-    // hasn't justified yet (correct_no_reasoning, correct_wrong_reasoning,
-    // partial_correct), strip the confirmation and prepend a partial-feedback
-    // phrase so the response still reads naturally.
-    //
-    // Skip this when the student didn't mention any canonical element —
-    // they are answering a Socratic concept question, not giving a final
-    // list, so a "buena observación" / "correcto" from the tutor about a
-    // conceptual point ("hay un interruptor abierto") is appropriate.
     const mentioned = (context.classification && context.classification.resistances) || [];
     const noElements = mentioned.length === 0;
     const partialTypes = ["correct_no_reasoning", "correct_wrong_reasoning", "partial_correct"];
@@ -70,12 +98,6 @@ class PedagogicalReviewerAgent extends AgentInterface {
       }
     }
 
-    // --- 2. Tutor asking the student to DEFINE a concept -------------------
-    // The user's explicit complaint: the tutor was asking the student to
-    // define concepts ("define divisor de tensión", "qué entiendes por...")
-    // instead of testing the concept by applying it to THIS circuit.
-    // Skip the rule when the student themselves asked for a definition in
-    // their last message — answering a definition request is fine.
     if (!this._studentAskedForDefinition(userMessage)) {
       const reframed = this._reframeDefinitionRequest(text, lang);
       if (reframed && reframed !== text) {
@@ -84,32 +106,18 @@ class PedagogicalReviewerAgent extends AgentInterface {
       }
     }
 
-    // --- 3. Didactic explanation -------------------------------------------
-    // The tutor must scaffold, not lecture. If the response contains
-    // explanatory patterns ("esto significa que...", "cuando una resistencia
-    // es X..."), keep only the question(s); if there isn't one, fall back
-    // to a generic redirect + a rotating scaffolding question.
     const didactic = this._fixDidacticExplanation(text, lang);
     if (didactic && didactic !== text) {
       text = didactic;
       corrections.push("didactic_explanation");
     }
 
-    // --- 4. Dataset style: strip markdown and over-long prose --------------
     const styled = this._enforceDatasetStyle(text);
     if (styled && styled !== text) {
       text = styled;
       corrections.push("dataset_style");
     }
 
-    // --- 5. Intra-sentence English code-switch ------------------------------
-    // The LanguageDriftGuardrail only catches WHOLE English sentences; a
-    // Spanish/Valencian sentence with one or two English words embedded
-    // ("estás en el right track", "specifically, …") reads as es/val and slips
-    // through — yet it's a glaring "small/foreign-model" tell. Triggering a full
-    // regeneration for two words would just produce the "regenerando…" spam, so
-    // we repair it inline with a curated, high-precision phrase map. Only fires
-    // for es/val sessions.
     if (lang === "es" || lang === "val") {
       const deswitched = this._fixCodeSwitch(text, lang);
       if (deswitched && deswitched !== text) {
@@ -122,12 +130,13 @@ class PedagogicalReviewerAgent extends AgentInterface {
     context.pedagogicalCorrectionsApplied = corrections;
   }
 
-  // -------------------------------------------------------------------------
-  // Helpers — delegate to the existing rule-based helpers in
-  // domain/services/rag/guardrails.js + languageManager.js so we don't
-  // duplicate the multi-language patterns that already work.
-  // -------------------------------------------------------------------------
-
+  /*
+   Txt,Txt -> ____|________________________________
+              | _stripPrematureConfirmation() | -> Txt    (no attributes)
+              ---------------------------------
+      Removes an opening "Perfecto/Correcto/…" confirmation and prepends a
+      partial-feedback phrase so the reply still reads naturally.
+  */
   _stripPrematureConfirmation(text, lang) {
     const { removeOpeningConfirmation } = require("../services/rag/guardrails");
     const { getRandomIntermediatePhrase } = require("../services/languageManager");
@@ -138,23 +147,22 @@ class PedagogicalReviewerAgent extends AgentInterface {
     return prefix ? prefix + " " + second.trim() : second;
   }
 
+  /*
+   Txt -> ____|_______________________________
+         | _studentAskedForDefinition() | -> T/F    (no attributes)
+          --------------------------------
+      True when the student's own message is a definition/explanation
+      request, using anchored es/val/en patterns to avoid false positives.
+  */
   _studentAskedForDefinition(userMessage) {
     if (typeof userMessage !== "string" || !userMessage) return false;
     const lower = userMessage.toLowerCase().trim();
-    // Anchored / boundary-aware patterns: avoid false positives like "creo
-    // que es R1 y R2" matching the substring "que es" — only treat the
-    // student as having asked for a definition when the trigger is at the
-    // start of the message, just after a leading "¿"/"?" or after a clear
-    // phrase boundary.
     const patterns = [
-      // es — interrogative openers
       /^¿?\s*qu[eé]\s+(es|significa|quiere\s+decir|entiendes\s+por)\b/i,
       /^¿?\s*c[oó]mo\s+(es|funciona|defin)/i,
       /^¿?\s*(expl[ií]came|expl[ií]canos|defíneme|defineme|definelo|defínelo|puedes\s+definir|podr[ií]as\s+definir|puedes\s+explicar|podr[ií]as\s+explicar)/i,
-      // val
       /^¿?\s*qu[eè]\s+(és|significa|vols\s+dir)\b/i,
       /^¿?\s*(explica'?m|definix|pots\s+definir|pots\s+explicar)/i,
-      // en
       /^\??\s*(what\s+is|what\s+does|what\s+means|explain\s+me|define\b|can\s+you\s+define|can\s+you\s+explain|could\s+you\s+explain)/i,
     ];
     for (let i = 0; i < patterns.length; i++) {
@@ -163,33 +171,21 @@ class PedagogicalReviewerAgent extends AgentInterface {
     return false;
   }
 
+  /*
+   Txt,Txt -> ____|______________________________
+              | _reframeDefinitionRequest() | -> Txt    (no attributes)
+              -------------------------------
+      Works sentence by sentence: replaces any whole sentence that is a
+      direct definition question by the tutor with a "how does it apply to
+      THIS circuit?" reframe, preserving embedded "que es …" sub-clauses.
+  */
   _reframeDefinitionRequest(text, lang) {
     if (typeof text !== "string") return text;
-    // BUG-014 (2026-05-03): los patrones anteriores se aplicaban con un
-    // simple .replace() sobre el texto entero, lo que provocaba que
-    // "que es parte de un divisor de tensión?" dentro de la frase
-    // "¿Cómo afecta R1 ... si consideramos que es parte de un divisor de
-    // tensión?" fuera tragado como si fuera una pregunta del tutor
-    // pidiendo definición, dejando la apertura "¿Cómo afecta R1..."
-    // colgando seguida del canned "¿Cómo se aplica ese concepto a ESTE
-    // circuito?" — output corrupto con dos ¿ anidados.
-    //
-    // Solución: trabajar frase a frase. Una frase es candidata a
-    // reframe SOLO si:
-    //   - empieza con ¿ o "?"  (pregunta directa), Y
-    //   - todo el contenido de la frase encaja con un patrón de
-    //     definición (qué es X, define X, cómo definirías X, etc.).
-    // Si no es la frase completa la que es una pregunta-definición, no
-    // tocamos. Esto preserva sub-cláusulas como "...si consideramos que
-    // es parte de un divisor..." porque "que es" está embebido y no es
-    // la pregunta principal.
     const wholeSentencePatterns = [
       /^\s*¿?\s*\b(define|defíne(?:lo|la|me)?|defineix|definix)\b[^.?!]*[.?!]\s*$/i,
       /^\s*¿?\s*\b(qué|que|què)\s+(entiendes|entens|understand)\b[^.?!]*[.?!]\s*$/i,
       /^\s*¿?\s*\b(c[oó]mo\s+definir[íi]as|how\s+would\s+you\s+define)\b[^.?!]*[.?!]\s*$/i,
-      // ES/VAL: "¿Qué/Què/Que es/és X?" como pregunta directa.
       /^\s*¿\s*qu[eéè]\s+(es|és)\b[^.?!]*\?\s*$/i,
-      // EN: "What is X?" como pregunta directa.
       /^\s*\??\s*what\s+is\b[^.?!]*\?\s*$/i,
     ];
     const sentences = text.split(/(?<=[.!?])\s+/);
@@ -208,19 +204,32 @@ class PedagogicalReviewerAgent extends AgentInterface {
     return sentences.join(" ").replace(/\s{2,}/g, " ").trim();
   }
 
+  /*
+   Txt -> ____|___________________________
+         | _reframePromptForLang() | -> Txt    (no attributes)
+          ---------------------------
+      Returns the localized "how does that concept apply to THIS circuit?"
+      reframe prompt.
+  */
   _reframePromptForLang(lang) {
     if (lang === "en") return "How does that concept apply to THIS circuit?";
     if (lang === "val") return "Com s'aplica eixe concepte a AQUEST circuit?";
     return "¿Cómo se aplica ese concepto a ESTE circuito?";
   }
 
+  /*
+   Txt,Txt -> ____|____________________________
+              | _fixDidacticExplanation() | -> Txt    (no attributes)
+              -----------------------------
+      When the response lectures instead of scaffolds, keeps only its
+      question(s); if there are none, returns a localized redirect plus a
+      random fallback scaffolding question.
+  */
   _fixDidacticExplanation(text, lang) {
     const { checkDidacticExplanation } = require("../services/rag/guardrails");
     const { getDidacticFallbackQuestions, getDidacticFallbackPrefix } = require("../services/languageManager");
     const r = checkDidacticExplanation(text);
     if (!r || !r.explaining) return text;
-    // Same surgical strategy as DidacticExplanationGuardrail: keep questions
-    // if any, otherwise return a generic redirect + fallback scaffold.
     const qs = text.match(/[¿?][^.!?\n]*[.!?]?|[^.!?\n]*\?/g) || [];
     const cleanQs = qs.map(function (q) { return q.trim(); }).filter(function (q) {
       return q.length > 0 && q.indexOf("?") >= 0;
@@ -233,25 +242,30 @@ class PedagogicalReviewerAgent extends AgentInterface {
     return prefix + " " + pool[Math.floor(Math.random() * pool.length)];
   }
 
+  /*
+   Txt -> ____|_________________________
+         | _enforceDatasetStyle() | -> Txt    (no attributes)
+          --------------------------
+      Strips markdown and over-long prose to match the dataset style,
+      returning the cleaned text or the original when unchanged.
+  */
   _enforceDatasetStyle(text) {
     const { enforceDatasetStyle } = require("../services/rag/guardrails");
     const r = enforceDatasetStyle(text);
     return r && r.changed ? r.text : text;
   }
 
-  // Curated, HIGH-PRECISION English→es/val replacements for the intra-sentence
-  // code-switch that qwen drops into otherwise-Spanish replies (observed:
-  // "right track", "specifically", "indeed"). Every entry is an unambiguously
-  // English fragment that is NOT a Spanish/Valencian word or a common technical
-  // loanword (we deliberately exclude "ok", "online", "test", "feedback",
-  // "software"…). Multi-word phrases are listed before their single-word
-  // substrings so the longest match wins. Matching is case-insensitive with
-  // ASCII word boundaries (all keys are accent-free English), and the original
-  // capitalisation of the first letter is preserved.
+  /*
+   Txt,Txt -> ____|__________________
+              | _fixCodeSwitch() | -> Txt    (no attributes)
+              --------------------
+      Replaces a curated set of English fragments embedded in an es/val
+      reply with their localized equivalent, longest match first, preserving
+      the original leading capitalisation.
+  */
   _fixCodeSwitch(text, lang) {
     if (typeof text !== "string" || text.length === 0) return text;
     const val = lang === "val";
-    // [pattern, es, val] — order matters: longest/most-specific first.
     const MAP = [
       ["on the right track", "por buen camino", "pel bon camí"],
       ["the right track", "el buen camino", "el bon camí"],
@@ -280,10 +294,8 @@ class PedagogicalReviewerAgent extends AgentInterface {
     for (let i = 0; i < MAP.length; i++) {
       const en = MAP[i][0];
       const repl = val ? MAP[i][2] : MAP[i][1];
-      // ASCII boundaries: not preceded/followed by a letter or digit.
       const re = new RegExp("(^|[^A-Za-z0-9])(" + en.replace(/ /g, "\\s+") + ")(?![A-Za-z0-9])", "gi");
       out = out.replace(re, function (m, pre, hit) {
-        // Preserve a leading capital if the matched fragment was capitalised.
         const r = /^[A-Z]/.test(hit) ? repl.charAt(0).toUpperCase() + repl.slice(1) : repl;
         return pre + r;
       });

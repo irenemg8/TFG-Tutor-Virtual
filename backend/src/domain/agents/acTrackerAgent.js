@@ -2,42 +2,49 @@
 
 const AgentInterface = require("./base/AgentInterface");
 
-/**
- * AcTrackerAgent: aggregates the student's recurring Alternative Conceptions
- * from TWO sources, regardless of whether the conversation ever closed:
- *
- *   1. Resultado.errors — canonical AC IDs ("AC1", "AC6", ...) extracted by
- *      the LLM-based classifier when an interaction was finalised. Strong
- *      signal but only available for closed sessions.
- *
- *   2. messages.concepts + messages.classification — rule-based concepts
- *      (e.g. "divisor de tensión", "cortocircuito") and classification
- *      types (wrong_concept, correct_wrong_reasoning, ...) saved on every
- *      assistant turn, including interactions that were abandoned without
- *      a final Resultado. Weaker signal per-row but covers the gaps.
- *
- * Both sources are folded into one ranked list. The TutorAgent later
- * cross-references this with the concepts the student is using in the
- * CURRENT turn to surface a "[RECURRENT AC FOR THIS USER]" banner.
- *
- * Determinístic — no LLM call.
- *
- * Output (added to context):
- *   context.userACHistory = {
- *     hasHistory: boolean,
- *     topACs:    Array<{ ac: string, count: number, source: "resultado"|"concept"|"both" }>,
- *     allTags:   string[],                                  // ranked, debug
- *     classifications: Array<{ classification: string, count: number }>,
- *   }
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    ACTRACKERAGENT                     |
+            |  Pipeline agent that aggregates the student's         |
+            |  recurring Alternative Conceptions from two sources   |
+            |  (closed-session Resultado.errors AC IDs and per-turn |
+            |  message concepts/classifications) into one ranked    |
+            |  list, regardless of whether sessions ever closed.    |
+            |  Deterministic, no LLM call. TutorAgent later cross-  |
+            |  references it to raise a [RECURRENT AC] banner.      |
+        ____|________________                                       |
+   Obj -> | constructor() | -> AcTrackerAgent        (writes attrs) |
+          -----------------                                         |
+            |                                                       |
+            |   name: Txt            resultadoRepo: Obj             |
+            |   messageRepo: Obj     topN: N                        |
+            |   lookbackLimit: N                                    |
+        ____|_____________________________                          |
+ AgentContext -> | canSkip() | -> T/F   (reads resultadoRepo (Obj),
+                 ------------            messageRepo (Obj))         |
+        ____|_____________________________                          |
+ AgentContext -> | execute() | -> Promise<void>  (reads resultadoRepo (Obj),
+                 ------------                      messageRepo (Obj), topN (N),
+                                                   lookbackLimit (N))           |
+        ____|_____________________________                          |
+   Txt -> | _safeFindResultados() | -> Promise<[Obj]>  (reads resultadoRepo (Obj))
+          -----------------------                                   |
+        ____|_____________________________                          |
+   Txt -> | _safeGetEvidence() | -> Promise<Obj>    (reads messageRepo (Obj))
+          --------------------                                      |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class AcTrackerAgent extends AgentInterface {
-  /**
-   * @param {object} deps
-   * @param {import('../ports/repositories/IResultadoRepository')} [deps.resultadoRepo]
-   * @param {import('../ports/repositories/IMessageRepository')}   [deps.messageRepo]
-   * @param {number} [deps.topN] — how many top ACs to expose (default 3)
-   * @param {number} [deps.lookbackLimit] — how many recent results to scan (default 50)
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> AcTrackerAgent    (writes attributes name (Txt),
+          -----------------                      resultadoRepo (Obj), messageRepo (Obj),
+                                                 topN (N), lookbackLimit (N))
+      Stores the two source repositories and the tuning knobs topN
+      (how many top ACs to expose, default 3) and lookbackLimit (how
+      many recent results to scan, default 50).
+  */
   constructor(deps) {
     super("acTrackerAgent");
     this.resultadoRepo = deps && deps.resultadoRepo;
@@ -46,31 +53,41 @@ class AcTrackerAgent extends AgentInterface {
     this.lookbackLimit = (deps && deps.lookbackLimit) || 50;
   }
 
+  /*
+ AgentContext -> ____|___________
+                | canSkip() | -> T/F    (reads attributes resultadoRepo (Obj)
+                 -----------             and messageRepo (Obj))
+      Skips when neither source is wired or no userId is present;
+      downstream degrades gracefully to "no history".
+  */
   canSkip(context) {
-    // We need at least one of the two sources wired — otherwise there's
-    // nothing to read. Tests / partial configs degrade gracefully to
-    // "no history" downstream.
     if (!this.resultadoRepo && !this.messageRepo) return true;
     if (!context || !context.userId) return true;
     return false;
   }
 
+  /*
+ AgentContext -> ____|___________
+                | execute() | -> Promise<void>    (reads attributes resultadoRepo (Obj),
+                 -----------                        messageRepo (Obj), topN (N),
+                                                    lookbackLimit (N))
+      Reads both sources in parallel, folds them into a per-tag count
+      keyed by source, ranks the tags by frequency, and writes the
+      ranked userACHistory summary onto the context.
+  */
   async execute(context) {
     if (this.canSkip(context)) {
       context.userACHistory = { hasHistory: false, topACs: [], allTags: [], classifications: [] };
       return;
     }
 
-    // Run both reads in parallel; either may fail independently.
     const [resultadosOutcome, evidenceOutcome] = await Promise.all([
       this._safeFindResultados(context.userId),
       this._safeGetEvidence(context.userId),
     ]);
 
-    // counts: { tag → { count, source } }
     const counts = {};
 
-    // Source 1 — closed sessions, canonical AC IDs.
     const resultados = resultadosOutcome || [];
     const limit = Math.min(this.lookbackLimit, resultados.length);
     for (let i = 0; i < limit; i++) {
@@ -84,10 +101,6 @@ class AcTrackerAgent extends AgentInterface {
       }
     }
 
-    // Source 2 — concepts aggregated from every assistant turn, INCLUDING
-    // open / abandoned interactions. The agent doesn't try to map concepts
-    // to canonical AC IDs here; we trust that downstream cross-referencing
-    // in the TutorAgent does the matching when concepts overlap.
     const evidence = evidenceOutcome || { concepts: [], classifications: [] };
     for (let i = 0; i < evidence.concepts.length; i++) {
       const tag = evidence.concepts[i].concept;
@@ -115,6 +128,13 @@ class AcTrackerAgent extends AgentInterface {
     };
   }
 
+  /*
+   Txt -> ____|________________________
+         | _safeFindResultados() | -> Promise<[Obj]>    (reads attribute resultadoRepo (Obj))
+          -----------------------
+      Fetches the user's finalised Resultados, swallowing any repo error
+      and returning [] so a failed read never breaks the turn.
+  */
   async _safeFindResultados(userId) {
     if (!this.resultadoRepo) return [];
     try {
@@ -124,6 +144,14 @@ class AcTrackerAgent extends AgentInterface {
     }
   }
 
+  /*
+   Txt -> ____|_____________________
+         | _safeGetEvidence() | -> Promise<Obj>    (reads attribute messageRepo (Obj))
+          --------------------
+      Fetches the user's aggregated concept/classification evidence,
+      returning the empty { concepts, classifications } shape when the
+      repo lacks the method or the read fails.
+  */
   async _safeGetEvidence(userId) {
     if (!this.messageRepo || typeof this.messageRepo.getAcEvidenceByUserId !== "function") {
       return { concepts: [], classifications: [] };

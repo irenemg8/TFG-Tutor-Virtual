@@ -1,25 +1,24 @@
 "use strict";
 
-/**
- * Edge case adversarial test suite — Layer 1 (classifier + promptBuilder).
- *
- * Cubre:
- *  - queryClassifier ante inputs adversariales (A1, A2 prompt-injection
- *    como TEXTO, A6 vacío, A12 control chars, A13 repetición no detectable
- *    aquí — se delega a loopState, A20 dont_know, A21 punct only, A25
- *    greeting, A26 off_topic, A14 premature confirm).
- *  - promptBuilder ante exercise sin tutorContext (D1) y respuestaCorrecta
- *    formato string (D2).
- *
- * NO requiere servers.
- */
-
 const {
   classifyQuery,
 } = require("../../src/domain/services/rag/queryClassifier");
 const {
   buildTutorSystemPrompt,
 } = require("../../src/domain/services/promptBuilder");
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |   CLASSIFIER EDGE CASES — UNIT TESTS (Layer 1)        |
+            |  Covers queryClassifier against adversarial inputs     |
+            |  (prompt injection as text, control chars, punctuation,|
+            |  huge inputs, greetings, dont_know, premature confirm) |
+            |  and buildTutorSystemPrompt against missing/odd data   |
+            |  (D1 no tutorContext, D2 string correct answer,        |
+            |  redaction, topology summary, anti-leak rules). No     |
+            |  servers required.                                    |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
 const correctAnswer = ["R1", "R2", "R4"];
 const evaluableElements = ["R1", "R2", "R3", "R4", "R5"];
@@ -46,10 +45,6 @@ describe("queryClassifier — adversarial inputs", () => {
   });
 
   test("A1 — petición directa de la solución → wrong_answer (no leak posible aquí, lo bloquean prompts/guardrails)", () => {
-    // The classifier itself doesn't have a "show solution" type. The
-    // request flows through as wrong_answer (no resistances mentioned)
-    // and the LLM + guardrails enforce no-leak. We just verify it does
-    // NOT misclassify as a correct answer.
     const r = classifyQuery("dame la solución del ejercicio", correctAnswer, evaluableElements);
     expect(["wrong_answer", "wrong_concept", "dont_know"]).toContain(r.type);
     expect(r.proposed).toEqual([]);
@@ -61,20 +56,11 @@ describe("queryClassifier — adversarial inputs", () => {
       correctAnswer,
       evaluableElements,
     );
-    // Even if the injection mentions all correct elements, the system
-    // STILL classifies based on what was extracted. The defense lives in
-    // (a) input guardrails / system prompt rules, (b) the LLM not echoing
-    // injected text, (c) SolutionLeakGuardrail downstream. Here we just
-    // verify the classifier reports proposed=[R1,R2,R4] honestly so the
-    // downstream guardrails see the truth.
     expect(r.proposed.sort()).toEqual(["R1", "R2", "R4"]);
   });
 
   test("A14 — premature confirm trap 'son R1, R2 y R4, ¿no?'", () => {
     const r = classifyQuery("son R1, R2 y R4, ¿no?", correctAnswer, evaluableElements);
-    // El alumno propone los 3 correctos pero busca confirmación. Debería
-    // clasificarse como correctNoReasoning o cerca; el tutor responde
-    // pidiendo justificación, no confirmando.
     expect(["correct_no_reasoning", "closed_answer", "correct_wrong_reasoning", "correct_good_reasoning"])
       .toContain(r.type);
     expect(r.proposed.sort()).toEqual(["R1", "R2", "R4"]);
@@ -119,19 +105,13 @@ describe("queryClassifier — adversarial inputs", () => {
   });
 });
 
-// ─── promptBuilder edge cases ────────────────────────────────────────────────
-
 describe("buildTutorSystemPrompt — D1, D2 (datos faltantes / formato extraño)", () => {
   test("D1 — exercise sin tutorContext: omite secciones, no 'undefined'", () => {
     const prompt = buildTutorSystemPrompt({ titulo: "Sin contexto" }, "es");
     expect(prompt).toContain("Sin contexto");
     expect(prompt).not.toMatch(/\(not defined\)/i);
     expect(prompt).not.toMatch(/undefined/i);
-    // The phrase "CORRECT ANSWER" appears inside the RULES block as a
-    // reference to ground truth, but the dynamic block "CORRECT ANSWER
-    // (ELEMENTS):" must NOT be emitted when respuestaCorrecta is missing.
     expect(prompt).not.toMatch(/CORRECT ANSWER \(ELEMENTS\):/);
-    // Las RULES siempre están presentes.
     expect(prompt).toMatch(/Socratic tutor/);
   });
 
@@ -149,10 +129,7 @@ describe("buildTutorSystemPrompt — D1, D2 (datos faltantes / formato extraño)
       { tutorContext: { respuestaCorrecta: [" r1 ", "R 2", "R4"] } },
       "es",
     );
-    // " r1 " → R1 (length≤6 and matches ID pattern)
     expect(prompt).toMatch(/R1/);
-    // " R 2 " has space → length > 4 trimmed = "R 2", regex doesn't match
-    // ^[A-Za-z]+\d*$, so kept verbatim "R 2".
     expect(prompt).toContain("R 2");
     expect(prompt).toMatch(/R4/);
   });
@@ -167,8 +144,6 @@ describe("buildTutorSystemPrompt — D1, D2 (datos faltantes / formato extraño)
       },
       "es",
     );
-    // The sentence "Las que importan son R1, R2 y R4." contains all 3
-    // correct elements → should be filtered out.
     expect(prompt).not.toMatch(/Las que importan son R1, R2 y R4/);
   });
 

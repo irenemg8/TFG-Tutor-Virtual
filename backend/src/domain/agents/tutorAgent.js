@@ -2,23 +2,53 @@
 
 const AgentInterface = require("./base/AgentInterface");
 
-/**
- * TutorAgent: Builds the augmented prompt and calls the LLM.
- * Includes loop-breaking hints, frustration detection, and conversation progress.
- *
- * Hex compliance: pipeline trace/debug logger is injected via constructor
- * (deps.debugLogger). Falls back to require() if not injected so legacy
- * callers don't break — the container DOES inject it to keep the domain
- * layer free of `require("../../infrastructure/...")` calls.
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                       TUTOR AGENT                     |
+            |  Builds the augmented prompt (base system prompt +    |
+            |  many context-gated pedagogical banners + RAG         |
+            |  augmentation) and calls the LLM, with loop-breaking, |
+            |  frustration and progress hints, KV-cache-friendly    |
+            |  message splitting and optional token streaming.      |
+        ____|________________                                       |
+   Obj -> | constructor() | -> TutorAgent           (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   llmService: Obj         buildSystemPrompt: Fn       |
+            |   config: Obj             debugLogger: Obj            |
+        ____|___________                                            |
+   Obj -> | execute() | -> Promise<void>             (reads attrs)  |
+          -----------                                               |
+        ____|_______________________________                        |
+   Obj -> | _shouldRenderVerdictBanner() | -> T/F     (no attrs)    |
+          --------------------------------                          |
+        ____|____________________                                   |
+   Txt,Z,Txt -> | _buildStrategyHint() | -> Txt       (reads attrs) |
+                ----------------------                              |
+        ____|____________________                                   |
+   Txt,Txt -> | _buildSummaryBanner() | -> Txt | null  (no attrs)   |
+              -----------------------                               |
+        ____|_______________________                                |
+   Obj,Txt,T/F,T/F -> | _buildCumulativeBanner() | -> Txt (no attrs)|
+                      --------------------------                    |
+        ____|_______________________                                |
+   [Obj],Z -> | _recentTutorQuestions() | -> [Txt]     (no attrs)   |
+              ---------------------------                           |
+        ____|___________________                                    |
+   [Obj] -> | _buildProgressHint() | -> Txt            (no attrs)   |
+            ----------------------                                  |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class TutorAgent extends AgentInterface {
-  /**
-   * @param {object} deps
-   * @param {import('../ports/services/ILlmService')} deps.llmService
-   * @param {Function} deps.buildSystemPrompt - buildTutorSystemPrompt from promptBuilder.js
-   * @param {object} deps.config
-   * @param {object} [deps.debugLogger] - IPipelineLogger adapter (preferred)
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> TutorAgent    (writes attributes llmService (Obj),
+          -----------------                  buildSystemPrompt (Fn), config (Obj),
+                                             debugLogger (Obj))
+      Stores the injected LLM service, prompt builder, config and the
+      required pipeline debug logger (kept on the domain side via DI).
+  */
   constructor(deps) {
     super("tutorAgent");
     this.llmService = deps.llmService;
@@ -28,16 +58,19 @@ class TutorAgent extends AgentInterface {
     this.debugLogger = deps.debugLogger;
   }
 
+  /*
+       ____|___________
+   Obj -> | execute() | -> Promise<void>    (reads attributes buildSystemPrompt (Fn),
+          -----------                        config (Obj), llmService (Obj),
+                                             debugLogger (Obj))
+      Assembles the base system prompt plus all context-gated banners and
+      hints, splits stable/volatile content for KV-cache reuse, calls the
+      LLM (streaming when a token handler is present) and records the
+      response and timing onto the context.
+  */
   async execute(context) {
-    // 1. Build base system prompt
     const basePrompt = this.buildSystemPrompt(context.exercise, context.lang);
 
-    // 1b. Pedagogical priority banner — surface concepts the student
-    //    EXPLICITLY used at the TOP of the augmented prompt instead of
-    //    burying them inside [DOMAIN KNOWLEDGE]. These concepts (e.g.
-    //    "divisor de tensión", "cortocircuito", "serie") are the most
-    //    likely vector for an Alternative Conception (AC), so the LLM
-    //    weights them more when they appear early in the system prompt.
     const detectedConcepts = (context.classification && context.classification.concepts) || [];
     const acRefs = (context.exercise && context.exercise.tutorContext && context.exercise.tutorContext.acRefs) || [];
     let conceptsBanner = "";
@@ -60,12 +93,6 @@ class TutorAgent extends AgentInterface {
       conceptsBanner += "\n";
     }
 
-    // 1b-bis. Recurrent AC banner: when the student is showing a concept
-    //         this turn that matches one of their TOP recurring ACs from
-    //         past sessions, surface it loudly. AcTrackerAgent populates
-    //         context.userACHistory; we cross-reference it with concepts
-    //         the classifier just detected and with the exercise's ac_refs
-    //         so we don't shout about ACs unrelated to this exercise.
     const userHistory = (context.userACHistory && context.userACHistory.topACs) || [];
     if (userHistory.length > 0 && (detectedConcepts.length > 0 || acRefs.length > 0)) {
       const acRefsLower = acRefs.map(function (a) { return String(a).toLowerCase(); });
@@ -89,18 +116,11 @@ class TutorAgent extends AgentInterface {
       }
     }
 
-    // 1c. Pedagogical safety banners that the legacy ragMiddleware injected
-    //    but that were lost in the hexagonal refactor. Each one is a hard
-    //    instruction tied to a specific classification/state combination.
     const cls = context.classification && context.classification.type;
     const prevCorrect = (context.loopState && context.loopState.prevCorrectTurns) || 0;
 
     const sameClsStreak = (context.loopState && context.loopState.sameClassificationStreak) || 0;
 
-    // C (2026-06-10): the student is asking the TUTOR to explain a concept
-    // ("explícame el divisor de tensión"). Production req9 routed this to
-    // dont_know and the tutor RESTARTED the analysis from the source, ignoring
-    // the request. Detect it and answer the concept instead.
     const { isExplanationRequest } = require("../services/rag/queryClassifier");
     const turnConcepts = (context.classification && context.classification.concepts) || [];
     const asksExplanation =
@@ -120,14 +140,6 @@ class TutorAgent extends AgentInterface {
 
     let dontKnowHint = "";
     if (cls === "dont_know" && !asksExplanation) {
-      // Compact form (NS-22). The full pattern + 3 example sentences had
-      // ballooned this hint to ~1200 chars per request — paid every turn the
-      // student says "no sé". The system prompt already enforces "1-3 short
-      // sentences, ONE question, never name elements, never define concepts".
-      // C (2026-06-10): dropped the verbatim "la corriente sale del + de V1…"
-      // example — qwen2.5 7B parroted it literally every turn, restarting the
-      // dialogue from the source (production req9). Instruct to continue from
-      // the CURRENT step instead.
       dontKnowHint =
         "[STUDENT DOESN'T KNOW]\n" +
         "Take the initiative: pick the next concrete step along the global current path that the student has NOT covered yet — continue from where the conversation already is, do NOT restart from the voltage source if you already advanced past it. " +
@@ -142,9 +154,6 @@ class TutorAgent extends AgentInterface {
 
     let demandJustificationHint = "";
     if ((cls === "correct_no_reasoning" || cls === "correct_wrong_reasoning") && prevCorrect >= 1) {
-      // NS-31: describir intención, no proporcionar frases literales.
-      // Antes el banner contenía "'Explica por qué' / 'Explain why'"
-      // como ejemplo, lo cual qwen2.5 7B copia verbatim a la respuesta.
       demandJustificationHint =
         "[DEMAND JUSTIFICATION]\n" +
         "CRITICAL: the student has given the CORRECT elements " + prevCorrect +
@@ -159,27 +168,8 @@ class TutorAgent extends AgentInterface {
           "with their resistor name (e.g. R1) — not generic placeholders.\n\n";
     }
 
-    // 1c-bis. NS-30 — VEREDICTO DEL TURNO (verdad estructurada).
-    //    AcDetectorAgent computó context.turnVerdict con la descomposición
-    //    canónica per-elemento contra correctAnswer:
-    //      hits    = lo que el alumno propuso Y es correcto      → afirmar
-    //      errors  = lo que propuso pero NO es correcto          → cuestionar
-    //      missing = lo correcto que NO ha mencionado            → pista
-    //    Antes el LLM tenía que deducir esto del prompt en prosa y fallaba
-    //    sistemáticamente en partial_correct (decía "casi" + repetía R1
-    //    sin afirmar nada y sin atacar el error específico). El banner le
-    //    entrega la descomposición ya hecha + la estructura obligatoria de
-    //    respuesta para qwen2.5 7B. Cuando hay AC fuerte, kgRegistry añade
-    //    estrategia + razonamiento experto del catálogo y del KG.
     let verdictBanner = "";
     const verdict = context.turnVerdict;
-    // BUG-A1 (2026-06-10): el gate exigía proposed.length>0, así que el veredicto
-    // "only_negation" (el alumno SOLO rechazó un elemento que SÍ es correcto,
-    // p.ej. "R1 no influye" con R1 correcto) suprimía todo el banner — incluida
-    // la instrucción "Wrongly rejected … RETA su rechazo, no cedas". El LLM
-    // nunca sabía del rechazo erróneo y podía ceder en silencio (el camino
-    // legacy ragPipeline.analyzeStudentElements sí emitía [WRONG REJECTION]).
-    // Ahora el banner también se renderiza cuando hay rechazos erróneos.
     if (this._shouldRenderVerdictBanner(verdict)) {
       const { getStrategyForAC, getExpertReasoningForAC } = require("../services/kgRegistry");
       const detectedForBanner = (context.detectedACs || []).filter((a) => a.confidence >= 0.6);
@@ -198,11 +188,6 @@ class TutorAgent extends AgentInterface {
           "Errors (lo que propuso y NO contribuye — CUESTIÓNALO con UNA pregunta socrática del tipo " +
           "\"¿por qué pensaste que también ___?\", usando su nombre): " + verdict.errors.join(", ") + "\n";
       }
-      // BUG-LOOP (2026-06-11): the per-turn verdict marks as "missing" anything
-      // the student didn't name THIS turn — even elements they already named in
-      // EARLIER turns. Feeding that stale "missing" to the LLM is what made it
-      // re-interrogate R1/R2/R4 again and again. Subtract the cumulative
-      // namedCorrect so only genuinely-unmentioned elements remain "missing".
       const cumNamed = (context.cumulativeAnswer && context.cumulativeAnswer.namedCorrect) || [];
       const effectiveMissing = verdict.missing.filter(function (m) {
         return cumNamed.indexOf(String(m).toUpperCase()) < 0;
@@ -225,7 +210,6 @@ class TutorAgent extends AgentInterface {
         const expert = getExpertReasoningForAC(topAC.id);
         if (strat) verdictBanner += "Estrategia (" + topAC.id + " catálogo): " + strat + "\n";
         if (expert) {
-          // Trim to ~280 chars: enough conceptual signal without inflating prompt.
           const trimmed = expert.length > 280 ? expert.slice(0, 280).trim() + "…" : expert;
           verdictBanner += "Razonamiento experto (KG, uso INTERNO, NO copies literal): " + trimmed + "\n";
         }
@@ -240,21 +224,7 @@ class TutorAgent extends AgentInterface {
         "Total: 1-3 frases cortas, exactamente UN signo de interrogación.\n\n";
     }
 
-    // 1c-ter. PROGRESO ACUMULADO (BUG-LOOP, 2026-06-11). The session-level
-    //    truth that the per-turn verdict forgets. ContextAgent reconstructs
-    //    which correct elements the student has ALREADY named and which
-    //    non-answer elements they have ALREADY excluded across the whole
-    //    conversation. When the set is complete this banner STOPS the tutor
-    //    from re-interrogating element topology and pivots it to consolidating
-    //    the reasoning — directly addressing "no para de preguntar por cosas
-    //    que ya hemos tratado".
     const cum = context.cumulativeAnswer;
-    // Review C10 (2026-06-11): when THIS turn introduces a fresh error (e.g.
-    // the student adds "y también R3" after having completed the set), the
-    // verdict banner orders "question the Error" while the complete-set line
-    // of the cumulative banner orders "stop interrogating, consolidate" — two
-    // opposing 'single task' directives. The verdict wins this turn: suppress
-    // the consolidation/closure line (the established-facts lines stay).
     const turnHasNewErrors = !!(verdict &&
       ((verdict.errors && verdict.errors.length > 0) ||
        (verdict.wronglyNegated && verdict.wronglyNegated.length > 0)));
@@ -262,18 +232,10 @@ class TutorAgent extends AgentInterface {
       cum, context.lang, context.exerciseAlreadyClosed, turnHasNewErrors
     );
 
-    // 1d. AC DETECTADA banner — el AcDetectorAgent cruzó la propuesta del
-    //    alumno con los acPatterns del ejercicio y devolvió matches por
-    //    confianza. Cuando hay un match fuerte (>= 0.6) inyectamos el
-    //    misconception y la estrategia específica para que el LLM no se
-    //    quede en preguntas genéricas y aborde el error real del alumno.
     let acDetectedBanner = "";
     const detectedACs = (context.detectedACs || []).filter((a) => a.confidence >= 0.6);
     if (detectedACs.length > 0) {
       const ac = detectedACs[0];
-      // Extract the SPECIFIC element this AC flags (R3, R5, R1...) so the
-      // tutor can name it under the system-prompt EXCEPTION clause. Falls
-      // back to "ese elemento" if the misconception text doesn't mention one.
       const elementMatch = (ac.misconception || "").match(/R\d+|V\d+|I\d+/i);
       const targetElement = elementMatch ? elementMatch[0].toUpperCase() : null;
       const proposed = (context.classification && context.classification.proposed) || [];
@@ -307,12 +269,6 @@ class TutorAgent extends AgentInterface {
       }
     }
 
-    // 1e. STATE CONFUSION banner (2026-06-15). The student attributed the WRONG
-    //    physical state to an element ("R3 en cortocircuito" — R3 is open; "R5
-    //    en abierto" — R5 is shorted). AcDetectorAgent derived the true states
-    //    from the netlist + expert reasoning. This must OVERRIDE any "correct
-    //    rejection" praise: the element may be correctly excluded, but the
-    //    REASON is wrong, so we challenge the state — never confirm it.
     let stateMismatchBanner = "";
     const stateMismatches = context.stateMismatches || [];
     if (stateMismatches.length > 0) {
@@ -327,10 +283,8 @@ class TutorAgent extends AgentInterface {
         "NUNCA reveles tú el estado correcto. UNA sola pregunta, corta.\n\n";
     }
 
-    // 2. Build conversation progress hint
     const progressHint = this._buildProgressHint(context.history);
 
-    // 3. Build loop-breaking hints
     let repetitionHint = "";
     if (context.loopState.tutorRepeating) {
       repetitionHint =
@@ -342,11 +296,6 @@ class TutorAgent extends AgentInterface {
         "3. Ask a NEW, DIFFERENT question that the student has NOT been asked before.\n\n";
     }
 
-    // BUG-010-C (2026-05-03): prevenir que el LLM repita LITERALMENTE su
-    // última pregunta socrática. La traza real mostraba al tutor pidiendo
-    // dos turnos seguidos "¿Podrías decirme a qué nodo está conectada la
-    // otra terminal de R1?" — palabras idénticas. Con la pregunta previa
-    // entre comillas el LLM tiene una referencia explícita de qué evitar.
     let doNotRepeatHint = "";
     const lastQ = (context.loopState && context.loopState.lastAssistantQuestion) || "";
     const recentQs = this._recentTutorQuestions(context.history, 3);
@@ -354,10 +303,6 @@ class TutorAgent extends AgentInterface {
       ? recentQs
       : (lastQ && lastQ.length > 10 ? [lastQ.replace(/\s+/g, " ").trim()] : []);
     if (askedList.length > 0) {
-      // BUG-REPEAT-PARAPHRASE (2026-06-15): the old hint quoted ONLY the last
-      // question, so qwen dodged the similarity guard by rewording it or by
-      // re-applying the SAME shape to another element. Show the last few and ban
-      // the SHAPE, not just the words; force a real change of tack when stuck.
       doNotRepeatHint =
         "[NO REPITAS TUS PREGUNTAS ANTERIORES]\n" +
         "Ya has hecho estas preguntas:\n" +
@@ -370,11 +315,6 @@ class TutorAgent extends AgentInterface {
         "o pídele que justifique UN elemento concreto que él ya nombró. Nunca devuelvas la misma pregunta abierta.\n\n";
     }
 
-    // BUG-011-D (2026-05-03): hechos ya establecidos por el tutor en
-    // turnos previos. Antes el LLM confirmaba "Sí, R1 conecta N1 con N2"
-    // y al turno siguiente repreguntaba "¿a qué nodo está conectada la
-    // otra terminal de R1?" — frustrante para el alumno. Este banner le
-    // recuerda al LLM lo que él mismo ya ha dicho y le ordena avanzar.
     let establishedFactsHint = "";
     const establishedFacts =
       (context.loopState && context.loopState.establishedFacts) || [];
@@ -387,10 +327,6 @@ class TutorAgent extends AgentInterface {
         "different property, or the next step in the reasoning chain.\n\n";
     }
 
-    // BUG-007 (2026-05-03): cuando el tutor menciona el MISMO Rn en sus
-    // últimas 2-3 preguntas se queda atascado. El banner de abajo le
-    // PROHÍBE volver a preguntar sobre ese Rn y le obliga a saltar a otro
-    // elemento del netlist.
     let stuckOnElementHint = "";
     const stuckRn = context.loopState && context.loopState.tutorStuckOnElement;
     if (stuckRn) {
@@ -445,44 +381,12 @@ class TutorAgent extends AgentInterface {
         "Do NOT repeat the same question.\n\n";
     }
 
-    // 4. Strategy-change hint: when the SAME classification fires for several
-    //    turns in a row, the tutor is in a soft loop (the previous Socratic
-    //    nudge isn't moving the student). Force a change of approach instead
-    //    of repeating the same kind of question.
     let strategyHint = this._buildStrategyHint(
       context.classification && context.classification.type,
       context.loopState.sameClassificationStreak || 0,
       context.loopState.lastClassification
     );
 
-    // 5. Split content into STABLE (system) and VOLATILE (per-turn) parts so
-    //    Ollama can reuse its KV-cache across turns. Production telemetry
-    //    showed every turn paid ~15s of "prefill" because the entire system
-    //    prompt changed each request (different banners, different RAG hits)
-    //    — Ollama could never reuse the cached prefix and recomputed all
-    //    ~1700 tokens from scratch.
-    //
-    //    The base prompt (rules + circuit topology) is identical for every
-    //    turn of the same exercise. Putting only that in `system` lets
-    //    Ollama cache it once. Banners + RAG augmentation move into the
-    //    last user message, prefixed with a clear delimiter so the LLM
-    //    still treats them as instructions.
-    // Language directive lives in the system prompt (promptBuilder.js)
-    // since the quality regression: burying it in TURN CONTEXT made qwen2.5
-    // ignore it under conflicting banners. KV-cache invalidates on language
-    // switches now, but switches are rare and reliability matters more.
-    //
-    // Banner gating: when a Tier-1 banner (structured VERDICT or AC detected
-    // with high confidence) is active, it already tells the LLM EXACTLY what
-    // to do this turn — generic hints (progress / repetition / strategy /
-    // concepts) on top dilute the signal and produce contradictory
-    // instructions. qwen2.5 7B kept the first directive it saw and ignored
-    // the structured verdict, reverting to repetitive generic questions.
-    // Suppressing the generic banners when Tier-1 is on restores focus.
-    // A COMPLETE cumulative set is a Tier-1 signal: it tells the LLM exactly
-    // what to do (stop interrogating, consolidate), so the generic re-ask hints
-    // must be suppressed or they'd push it back into the loop. A partial
-    // cumulative banner is additive context and does NOT suppress the hints.
     const cumulativeIsTier1 = !!(cum && cum.complete && cum.stillMissing.length === 0);
     const hasTier1Banner =
       verdictBanner.length > 0 || acDetectedBanner.length > 0 || cumulativeIsTier1 ||
@@ -518,21 +422,8 @@ class TutorAgent extends AgentInterface {
         context.userMessage
       : context.userMessage;
 
-    // For logging / debugging keep the legacy combined view.
     const augmentedPrompt = basePrompt + "\n\n" + dynamicContext;
 
-    // 5. Build messages: stable system + (optional rolling summary) +
-    //    recent history + (context-prefixed) user.
-    //    The current message is NOT yet persisted (PersistenceAgent writes it
-    //    at the end of the pipeline), so we must append it explicitly here or
-    //    the LLM would respond without knowing what the student just said.
-    //
-    //    historySummary (B2) is set by ContextAgent when the session exceeds
-    //    HISTORY_MAX_MESSAGES — it's a 200-300-char condensation of the
-    //    turns that no longer fit in the live window, fed as a second system
-    //    message so the LLM still remembers confirmations from earlier turns
-    //    ("te he dicho que R3 no influye"). When the session is short
-    //    historySummary is null and this collapses to the pre-B2 shape.
     const summaryBanner = context.historySummary
       ? this._buildSummaryBanner(context.historySummary, context.lang)
       : null;
@@ -555,9 +446,6 @@ class TutorAgent extends AgentInterface {
       reason: "primary",
     });
 
-    // 6. Call LLM — propagate the TUTOR slice of the budget when the
-    //    orchestrator (P1c) splits it per stage. Falls back to "remaining
-    //    total" for backwards compatibility when no per-stage budget is set.
     const ollamaStart = Date.now();
     const elapsed = Date.now() - context.timing.pipelineStartMs;
     const stageBudget = context.tutorBudgetMs;
@@ -573,12 +461,6 @@ class TutorAgent extends AgentInterface {
       numCtx: this.config.OLLAMA_NUM_CTX,
       budgetMs: remainingBudget,
     };
-    // When the HTTP adapter installed a tokenStreamHandler we use the
-    // native Ollama stream and emit one SSE envelope per token, so the
-    // user sees text appearing live instead of waiting 10-25s. The
-    // accumulated full text is still returned for the downstream
-    // pedagogicalReviewer + guardrail stages, which need the complete
-    // message before they can validate or rewrite it.
     if (
       typeof context.tokenStreamHandler === "function" &&
       typeof this.llmService.chatCompletionStreamWithCallback === "function"
@@ -587,7 +469,7 @@ class TutorAgent extends AgentInterface {
       const onToken = (token) => {
         if (firstTokenAt == null) firstTokenAt = Date.now();
         context.streamedText += token;
-        try { context.tokenStreamHandler(token); } catch (_) { /* never let SSE errors crash the pipeline */ }
+        try { context.tokenStreamHandler(token); } catch (_) { }
       };
       context.llmResponse = await this.llmService.chatCompletionStreamWithCallback(
         messages,
@@ -609,27 +491,14 @@ class TutorAgent extends AgentInterface {
     this.debugLogger.logLlmOut(context.llmResponse);
   }
 
-  /**
-   * Build a strategy-change instruction when the same classification has
-   * fired ≥2 turns in a row. The current classification AND the prior one
-   * must match for this to fire — that means the student is responding the
-   * same way and the tutor's previous question didn't move them.
-   *
-   * Hints are written in English (same convention as the other hints) but
-   * instruct the LLM to respond in the student's language. The body of the
-   * hint differs per classification type so the escalation is appropriate
-   * to the situation:
-   *   - correct_no_reasoning: stop asking conceptual questions; ask the
-   *     student to justify ONE specific element they already named.
-   *   - wrong_answer / wrong_concept: stop asking the same Socratic
-   *     question; offer a concrete CONCEPT-level partial hint.
-   *   - dont_know: stop asking generic questions; introduce a concrete
-   *     definitional anchor and ask the student to react.
-   */
-  // BUG-A1 (2026-06-10): extracted so the gate is unit-testable. The verdict
-  // banner must render when the student proposed something OR when they wrongly
-  // rejected a correct element (verdict "only_negation") — otherwise the
-  // "challenge the wrong rejection" instruction never reaches the LLM.
+  /*
+       ____|_______________________________
+   Obj -> | _shouldRenderVerdictBanner() | -> T/F    (no attributes)
+          --------------------------------
+      True when the verdict banner should render: the student proposed an
+      element OR wrongly rejected a correct one (only_negation), so the
+      challenge instruction always reaches the LLM.
+  */
   _shouldRenderVerdictBanner(verdict) {
     if (!verdict) return false;
     const hasProposed = !!(verdict.proposed && verdict.proposed.length > 0);
@@ -637,6 +506,14 @@ class TutorAgent extends AgentInterface {
     return hasProposed || hasWrongRejection;
   }
 
+  /*
+   Txt,Z,Txt -> ____|____________________
+                | _buildStrategyHint() | -> Txt    (reads no attributes)
+                ----------------------
+      Returns a per-classification escalation hint when the same
+      classification has fired >=2 turns in a row (and matches the prior
+      turn), forcing a change of Socratic approach. Returns "" otherwise.
+  */
   _buildStrategyHint(currentType, streak, lastType) {
     if (!currentType || streak < 2) return "";
     if (lastType && lastType !== currentType) return "";
@@ -676,6 +553,14 @@ class TutorAgent extends AgentInterface {
     return "";
   }
 
+  /*
+   Txt,Txt -> ____|____________________
+              | _buildSummaryBanner() | -> Txt | null    (no attributes)
+              -----------------------
+      Wraps the rolling history summary (set by ContextAgent on long
+      sessions) in a localized banner so the LLM still remembers earlier
+      confirmations. Returns null when there is no summary.
+  */
   _buildSummaryBanner(summary, lang) {
     const text = (summary || "").trim();
     if (!text) return null;
@@ -694,13 +579,14 @@ class TutorAgent extends AgentInterface {
       + "y no volver a preguntarle lo mismo. No lo repitas literalmente en tu respuesta.";
   }
 
-  /**
-   * PROGRESO ACUMULADO banner (BUG-LOOP, 2026-06-11), localised es/val/en.
-   * Pure + side-effect-free so it is unit-testable. Returns "" when there is no
-   * cumulative signal worth surfacing. Extracted from execute() so the wording
-   * follows the conversation language like the rest of the student-facing
-   * scaffolding, instead of injecting Spanish into a Valencian/English session.
-   */
+  /*
+   Obj,Txt,T/F,T/F -> ____|_______________________
+                      | _buildCumulativeBanner() | -> Txt    (no attributes)
+                      --------------------------
+      Pure, localized (es/val/en) banner summarising the session-level
+      progress: which correct elements are named, which are excluded, and
+      whether to consolidate/close, answer a follow-up, or keep advancing.
+  */
   _buildCumulativeBanner(cum, lang, alreadyClosed, turnHasNewErrors) {
     if (!cum || (cum.namedCorrect.length === 0 && cum.excluded.length === 0)) return "";
     const L = (lang === "val" || lang === "en") ? lang : "es";
@@ -731,7 +617,6 @@ class TutorAgent extends AgentInterface {
         closed: "The exercise was ALREADY closed in a previous turn — do NOT congratulate or close again. Simply answer the student's current follow-up briefly and clearly, without re-interrogating the settled elements.\n",
       },
     }[L];
-    // Valencian/Spanish "already closed" follow-up lines (en lives in T above).
     const CLOSED = {
       es: "El ejercicio YA se cerró en un turno anterior — NO felicites ni cierres otra vez. Responde brevemente a la consulta actual del alumno, sin re-interrogar los elementos ya resueltos.\n",
       val: "L'exercici JA es va tancar en un torn anterior — NO felicites ni tanques una altra vegada. Respon breument a la consulta actual de l'alumne, sense tornar a interrogar els elements ja resolts.\n",
@@ -742,15 +627,8 @@ class TutorAgent extends AgentInterface {
     if (cum.namedCorrect.length > 0) banner += T.named(cum.namedCorrect.join(", "));
     if (cum.excluded.length > 0) banner += T.excl(cum.excluded.join(", "));
     if (alreadyClosed) {
-      // Follow-up after a close: keep the established-facts context (so the tutor
-      // doesn't re-interrogate) but replace the "cierra" instruction with an
-      // answer-the-follow-up directive.
       banner += CLOSED[L];
     } else if (cum.complete && cum.stillMissing.length === 0) {
-      // C10: a fresh error THIS turn takes priority — the verdict banner
-      // already orders the Socratic challenge; emitting "consolidate/close"
-      // here at the same time gives qwen2.5 two opposing 'only task'
-      // directives. Keep only the established-facts lines above.
       if (!turnHasNewErrors) {
         banner += cum.closureReady ? T.closure : T.complete;
       }
@@ -760,12 +638,14 @@ class TutorAgent extends AgentInterface {
     return banner + "\n";
   }
 
-  // Last up-to-N DISTINCT Socratic questions the tutor has asked (most recent
-  // first), extracted from the live history. Shared by the anti-repetition hint
-  // so the LLM sees more than just its immediately-previous question — that is
-  // what lets it dodge the similarity guard by rewording or by re-applying the
-  // same question shape to a different element ("¿por qué no influye R5?" →
-  // "¿por qué no influye R3?").
+  /*
+   [Obj],Z -> ____|_______________________
+              | _recentTutorQuestions() | -> [Txt]    (no attributes)
+              ---------------------------
+      Returns up to N distinct Socratic questions the tutor has asked, most
+      recent first, so the anti-repetition hint can show more than just the
+      immediately-previous question.
+  */
   _recentTutorQuestions(history, n) {
     if (!Array.isArray(history)) return [];
     const out = [];
@@ -781,13 +661,17 @@ class TutorAgent extends AgentInterface {
     return out;
   }
 
+  /*
+   [Obj] -> ____|___________________
+            | _buildProgressHint() | -> Txt    (no attributes)
+            ----------------------
+      Surfaces the tutor's last up-to-2 questions in a banner instructing
+      the LLM to evaluate the student's reply against them and to vary
+      wording and angle on the next question. Returns "" when none.
+  */
   _buildProgressHint(history) {
     if (!Array.isArray(history) || history.length < 2) return "";
 
-    // Recoge las ÚLTIMAS hasta 2 preguntas del tutor (en turnos distintos)
-    // para que el LLM pueda contrastar y NO repetir literalmente. La regla
-    // "NEVER repeat a question" del system prompt no se cumple a menos que
-    // la pregunta concreta esté visible en el turn-context.
     const recentQuestions = [];
     for (let i = history.length - 1; i >= 0 && recentQuestions.length < 2; i--) {
       if (history[i].role !== "assistant") continue;

@@ -3,6 +3,13 @@
 const IEjercicioRepository = require("../../../domain/ports/repositories/IEjercicioRepository");
 const Ejercicio = require("../../../domain/entities/Ejercicio");
 
+/*
+   Obj, Obj -> ____|________________
+              | rowToDomain() | -> Ejercicio | null
+               --------------
+      Maps an ejercicios row plus its optional tutor-context row into an
+      Ejercicio entity, translating the Spanish columns. Null when no row.
+*/
 function rowToDomain(row, tutorCtx) {
   if (!row) return null;
   return new Ejercicio({
@@ -30,12 +37,60 @@ function rowToDomain(row, tutorCtx) {
   });
 }
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                  PGEJERCICIOREPOSITORY                |
+            |  Repository adapter implementing IEjercicioRepository  |
+            |  on top of PostgreSQL. Persists exercises and their    |
+            |  one-to-one tutor_contexts row, mapping the Spanish    |
+            |  columns to the domain shape.                          |
+            |                                                       |
+        ____|________________                                       |
+   Pool -> | constructor() | -> PgEjercicioRepository (writes attrs)|
+           -----------------                                        |
+            |   pool: Pool (injected pg pool)                       |
+        ____|__________                                             |
+   Txt -> | findById() | -> Promise<Ejercicio|null>   (reads attrs) |
+          ------------                                              |
+        ____|_________                                             |
+        | findAll() | -> Promise<[Ejercicio]>         (reads attrs) |
+        -----------                                                 |
+        ____|________                                              |
+   Obj -> | create() | -> Promise<Ejercicio>          (reads attrs) |
+          ----------                                                |
+        ____|____________                                          |
+   Txt,Obj -> | updateById() | -> Promise<Ejercicio>  (reads attrs) |
+              ------------                                          |
+        ____|______________                                        |
+   Txt -> | deleteById() | -> Promise<void>           (reads attrs) |
+          --------------                                            |
+        ____|___________________                                   |
+   Txt -> | findOneByConcept() | -> Promise<Ejercicio|null> (reads attrs)|
+          ------------------                                        |
+        ____|__________                                            |
+   [Txt] -> | findByIds() | -> Promise<[Ejercicio]>   (reads attrs) |
+            ------------                                            |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class PgEjercicioRepository extends IEjercicioRepository {
+  /*
+   Pool -> ____|________________
+          | constructor() | -> PgEjercicioRepository    (writes attribute pool (Pool))
+           -----------------
+      Stores the injected pg connection pool.
+  */
   constructor(pool) {
     super();
     this.pool = pool;
   }
 
+  /*
+   Txt -> ____|__________
+         | findById() | -> Promise<Ejercicio|null>    (reads attribute pool (Pool))
+          ------------
+      Fetches an exercise by id, left-joining its tutor context.
+  */
   async findById(id) {
     const { rows } = await this.pool.query(
       `SELECT e.*, tc.objetivo, tc.netlist, tc.modo_experto, tc.ac_refs,
@@ -61,6 +116,12 @@ class PgEjercicioRepository extends IEjercicioRepository {
     return rowToDomain(row, tutorCtx);
   }
 
+  /*
+       ____|_________
+      | findAll() | -> Promise<[Ejercicio]>    (reads attribute pool (Pool))
+       -----------
+      Returns every exercise with its tutor context, ordered by creation date.
+  */
   async findAll() {
     const { rows } = await this.pool.query(
       `SELECT e.*, tc.objetivo, tc.netlist, tc.modo_experto, tc.ac_refs,
@@ -85,6 +146,13 @@ class PgEjercicioRepository extends IEjercicioRepository {
     });
   }
 
+  /*
+   Obj -> ____|________
+         | create() | -> Promise<Ejercicio>    (reads attribute pool (Pool))
+          ----------
+      Inserts an exercise and, when present, its tutor context within a
+      single transaction, returning the created entity.
+  */
   async create(data) {
     const client = await this.pool.connect();
     try {
@@ -116,6 +184,13 @@ class PgEjercicioRepository extends IEjercicioRepository {
     }
   }
 
+  /*
+   Txt, Obj -> ____|____________
+              | updateById() | -> Promise<Ejercicio>    (reads attribute pool (Pool))
+               ------------
+      Updates the mapped scalar columns (tutorContext is ignored here),
+      bumps updated_at, and returns the refreshed entity.
+  */
   async updateById(id, fields) {
     const sets = [];
     const vals = [];
@@ -147,10 +222,23 @@ class PgEjercicioRepository extends IEjercicioRepository {
     return this.findById(id);
   }
 
+  /*
+   Txt -> ____|______________
+         | deleteById() | -> Promise<void>    (reads attribute pool (Pool))
+          --------------
+      Deletes the exercise with the given id.
+  */
   async deleteById(id) {
     await this.pool.query("DELETE FROM ejercicios WHERE id = $1", [id]);
   }
 
+  /*
+   Txt -> ____|___________________
+         | findOneByConcept() | -> Promise<Ejercicio|null>    (reads attribute pool (Pool))
+          ------------------
+      Returns the first exercise matching the given concept, with its
+      tutor context.
+  */
   async findOneByConcept(concept) {
     const { rows } = await this.pool.query(
       `SELECT e.*, tc.objetivo, tc.netlist, tc.modo_experto, tc.ac_refs,
@@ -166,6 +254,13 @@ class PgEjercicioRepository extends IEjercicioRepository {
     return rowToDomain(row, tutorCtx);
   }
 
+  /*
+   [Txt] -> ____|____________
+           | findByIds() | -> Promise<[Ejercicio]>    (reads attribute pool (Pool))
+            ------------
+      Returns the exercises whose ids are in the given list ([] when empty),
+      each with its tutor context.
+  */
   async findByIds(ids) {
     if (!ids.length) return [];
     const { rows } = await this.pool.query(

@@ -1,18 +1,37 @@
 "use strict";
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                      INTERACCION                      |
+            |  Represents a tutoring session (conversation) between  |
+            |  a student and the tutor for a specific exercise.      |
+            |  Messages are stored separately via IMessageRepository.|
+        ____|________________                                       |
+   Obj -> | constructor() | -> Interaccion          (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   id: Txt            userId: Txt                      |
+            |   exerciseId: Txt    createdAt: Date | null           |
+            |   startTime: Date    endTime: Date                    |
+        ____|________________                                       |
+   Txt -> | belongsToUser() | -> T/F                (reads attrs)   |
+          -----------------                                         |
+        ____|___________                                            |
+        | toJSON() | -> Obj                          (reads attrs)  |
+        ------------                                                |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class Interaccion {
-  /**
-   * Represents a tutoring session (conversation) between a student and the tutor
-   * for a specific exercise. Messages are stored separately via IMessageRepository.
-   *
-   * @param {object} props
-   * @param {string}  props.id
-   * @param {string}  props.userId
-   * @param {string}  props.exerciseId
-   * @param {Date}   [props.startTime]
-   * @param {Date}   [props.endTime]
-   * @param {Date}   [props.createdAt]
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> Interaccion    (writes attributes id (Txt),
+          -----------------                   userId (Txt), exerciseId (Txt),
+                                              startTime (Date), endTime (Date),
+                                              createdAt (Date|null))
+      Builds the session entity from a plain props object, defaulting the
+      timestamps when absent.
+  */
   constructor(props) {
     this.id = props.id;
     this.userId = props.userId;
@@ -22,15 +41,24 @@ class Interaccion {
     this.createdAt = props.createdAt || null;
   }
 
+  /*
+   Txt -> ____|________________
+         | belongsToUser() | -> T/F    (reads attribute userId (Txt))
+          -----------------
+      True when the given userId owns this session (string-compared).
+  */
   belongsToUser(userId) {
     return String(this.userId) === String(userId);
   }
 
-  /**
-   * JSON shape compatible with the legacy Mongo API consumed by the frontend
-   * (`_id`, snake_case foreign keys). Domain code uses the class fields
-   * directly; only serialization via res.json() uses this form.
-   */
+  /*
+       ____|___________
+      | toJSON() | -> Obj    (reads attributes id (Txt), userId (Txt),
+       ------------          exerciseId (Txt), startTime (Date),
+                             endTime (Date), createdAt (Date|null))
+      Serializes to the legacy Mongo shape (`_id`, snake_case foreign keys)
+      consumed by the frontend.
+  */
   toJSON() {
     return {
       _id: this.id,

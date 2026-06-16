@@ -6,18 +6,55 @@ const ILlmService = require("../../domain/ports/services/ILlmService");
 const { BudgetExhaustedError } = require("../../domain/ports/services/ILlmService");
 const config = require("./config");
 
-/**
- * OllamaLlmAdapter: concrete ILlmService backed by an Ollama server.
- *
- * Key features:
- *   - Budget awareness: if options.budgetMs is set, axios timeout = min(cfg, budget)
- *   - Mode override: options.baseUrl (optional) overrides config default
- *   - Abort signal: options.abort is wired to axios signal
- *   - TLS: honors OLLAMA_INSECURE_TLS in dev
- *
- * Does NOT do retries — retry is a higher-level concern (GuardrailPipeline).
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   OLLAMA LLM ADAPTER                  |
+            |  Concrete ILlmService backed by an Ollama server.     |
+            |  Budget-aware (timeout = min(cfg, budget)), abort and |
+            |  baseUrl overridable, TLS honors OLLAMA_INSECURE_TLS. |
+            |  Does NOT retry — retry is a GuardrailPipeline job.   |
+        ____|________________                                       |
+   Obj -> | constructor() | -> OllamaLlmAdapter      (writes attrs) |
+          -----------------                                         |
+            |                                                       |
+            |   baseUrl: Txt           model: Txt                   |
+            |   defaultTemperature: R  defaultNumPredict: Z         |
+            |   defaultNumCtx: Z       keepAlive: Txt               |
+            |   defaultTimeoutMs: Z    insecureTls: T/F             |
+            |   httpsAgent: Obj | null                              |
+        ____|________________________________________              |
+        | _axiosOpts() | -> Obj                  (reads attrs)      |
+        ---------------                                             |
+        ____|____________________                                   |
+        | _resolveTimeout() | -> Z               (reads attrs)      |
+        --------------------                                        |
+        ____|___________________                                    |
+        | chatCompletion() | -> Promise<Txt>     (reads attrs)      |
+        -------------------                                         |
+        ____|_________________________                              |
+        | chatCompletionStream() | -> Promise<Obj>  (reads attrs)   |
+        -------------------------                                   |
+        ____|_____________________________________                  |
+        | chatCompletionStreamWithCallback() | -> Promise<Txt>      |
+        -------------------------------------                       |
+        ____|______________                                         |
+        | isHealthy() | -> Promise<T/F>          (reads attrs)      |
+        --------------                                              |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class OllamaLlmAdapter extends ILlmService {
+  /*
+   Obj -> ____|________________
+         | constructor() | -> OllamaLlmAdapter    (writes attributes baseUrl (Txt),
+          -----------------                        model (Txt), defaultTemperature (R),
+                                                   defaultNumPredict (Z), defaultNumCtx (Z),
+                                                   keepAlive (Txt), defaultTimeoutMs (Z),
+                                                   insecureTls (T/F), httpsAgent (Obj|null))
+      Builds the adapter from an options object, defaulting to config.
+      Constructs one reusable keep-alive HTTPS agent so each turn skips
+      a fresh TLS handshake to the Ollama server.
+  */
   constructor(opts) {
     super();
     opts = opts || {};
@@ -32,10 +69,6 @@ class OllamaLlmAdapter extends ILlmService {
       : Number(process.env.OLLAMA_TIMEOUT_MS || 60000);
     this.insecureTls = process.env.OLLAMA_INSECURE_TLS === "1";
 
-    // Reusable HTTPS agent with TCP/TLS keep-alive. Without this, every
-    // chatCompletion opened a fresh TLS handshake to ollama.gti-ia.upv.es,
-    // adding 2-4s of overhead per turn in production. The agent is
-    // constructed once and shared across calls.
     this.httpsAgent = String(this.baseUrl).startsWith("https://")
       ? new https.Agent({
           rejectUnauthorized: !this.insecureTls,
@@ -46,12 +79,18 @@ class OllamaLlmAdapter extends ILlmService {
       : null;
   }
 
+  /*
+   Txt, Z, Obj -> ____|____________
+                 | _axiosOpts() | -> Obj    (reads attributes baseUrl (Txt),
+                  ---------------            httpsAgent (Obj|null), insecureTls (T/F))
+      Builds the axios request options. Reuses the cached HTTPS agent
+      when the call targets the URL it was built for, attaches the
+      abort signal when present.
+  */
   _axiosOpts(baseUrl, timeoutMs, abortSignal) {
     const base = { timeout: timeoutMs };
     const targetUrl = String(baseUrl || this.baseUrl);
     if (targetUrl.startsWith("https://")) {
-      // Reuse the cached agent when the call goes to the URL it was built
-      // for; otherwise fall back to a one-off agent (dev / test override).
       base.httpsAgent =
         targetUrl === this.baseUrl && this.httpsAgent
           ? this.httpsAgent
@@ -61,11 +100,28 @@ class OllamaLlmAdapter extends ILlmService {
     return base;
   }
 
+  /*
+   Z -> ____|____________________
+       | _resolveTimeout() | -> Z    (reads attribute defaultTimeoutMs (Z))
+        --------------------
+      Returns the default timeout, or the smaller of it and the budget
+      when a positive budget is given.
+  */
   _resolveTimeout(budgetMs) {
     if (budgetMs == null || budgetMs <= 0) return this.defaultTimeoutMs;
     return Math.min(this.defaultTimeoutMs, budgetMs);
   }
 
+  /*
+   [Obj], Obj -> ____|___________________
+                | chatCompletion() | -> Promise<Txt>    (reads attributes baseUrl (Txt),
+                 -------------------                      model (Txt), keepAlive (Txt),
+                                                          defaultNumPredict (Z), defaultNumCtx (Z),
+                                                          defaultTemperature (R))
+      Posts a non-streaming chat request and resolves the assistant
+      content. Normalizes timeout/abort into BudgetExhaustedError when
+      a budget was set.
+  */
   async chatCompletion(messages, options) {
     options = options || {};
     const baseUrl = options.baseUrl || this.baseUrl;
@@ -94,7 +150,6 @@ class OllamaLlmAdapter extends ILlmService {
       const content = (resp.data && resp.data.message && resp.data.message.content) || "";
       return content;
     } catch (err) {
-      // Normalize timeout errors as BudgetExhaustedError when budget was set
       if (options.budgetMs != null && (err.code === "ECONNABORTED" || err.message === "canceled" || err.name === "CanceledError")) {
         throw new BudgetExhaustedError(
           "Ollama call exceeded budget (" + options.budgetMs + "ms, elapsed " + (Date.now() - startMs) + "ms)",
@@ -105,11 +160,20 @@ class OllamaLlmAdapter extends ILlmService {
     }
   }
 
+  /*
+   [Obj], Obj -> ____|_________________________
+                | chatCompletionStream() | -> Promise<Obj>    (reads attributes baseUrl (Txt),
+                 -------------------------                      model (Txt), keepAlive (Txt),
+                                                                defaultNumPredict (Z), defaultNumCtx (Z),
+                                                                defaultTemperature (R))
+      Posts a streaming chat request and resolves the raw NDJSON
+      response stream. No timeout unless a budget is given.
+  */
   async chatCompletionStream(messages, options) {
     options = options || {};
     const baseUrl = options.baseUrl || this.baseUrl;
     const model = options.model || this.model;
-    const timeoutMs = options.budgetMs != null ? this._resolveTimeout(options.budgetMs) : 0; // 0 = no timeout for stream
+    const timeoutMs = options.budgetMs != null ? this._resolveTimeout(options.budgetMs) : 0;
 
     const payload = {
       model: model,
@@ -128,28 +192,18 @@ class OllamaLlmAdapter extends ILlmService {
       { responseType: "stream" }
     );
     const resp = await axios.post(baseUrl + "/api/chat", payload, opts);
-    return resp.data; // stream
+    return resp.data;
   }
 
-  /**
-   * Streaming completion with a per-token callback.
-   *
-   * Wraps `chatCompletionStream` to parse Ollama's NDJSON stream and call
-   * `onChunk(token)` for each piece of content as it arrives. Returns the
-   * accumulated full text, so the caller can keep the existing semantics
-   * of `chatCompletion` (await one string) AND simultaneously push tokens
-   * to the user.
-   *
-   * Notes:
-   *   - Each NDJSON line has shape:
-   *       { "model": "...", "message": { "role": "assistant", "content": "tok" }, "done": false }
-   *     The terminal line has done:true and possibly empty content.
-   *   - Chunks may arrive split across TCP segments — we buffer until the
-   *     newline separator before parsing.
-   *   - Errors and budget exhaustion mirror chatCompletion: BudgetExhaustedError
-   *     when options.budgetMs is set and the call gets aborted.
-   *   - If onChunk is omitted, behaves like chatCompletion (full text only).
-   */
+  /*
+   [Obj], Obj, Fn -> ____|_____________________________________
+                    | chatCompletionStreamWithCallback() | -> Promise<Txt>    (reads attributes
+                     -------------------------------------                      baseUrl (Txt), model (Txt))
+      Wraps chatCompletionStream, parses Ollama's NDJSON stream, calls
+      onChunk(token) per content piece and resolves the accumulated full
+      text. Buffers across TCP segments and maps abort to
+      BudgetExhaustedError when a budget was set.
+  */
   async chatCompletionStreamWithCallback(messages, options, onChunk) {
     options = options || {};
     const callback = typeof onChunk === "function" ? onChunk : null;
@@ -200,7 +254,7 @@ class OllamaLlmAdapter extends ILlmService {
           if (piece) {
             fullText += piece;
             if (callback) {
-              try { callback(piece); } catch (_) { /* never let user code crash the stream */ }
+              try { callback(piece); } catch (_) {}
             }
           }
           if (parsed && parsed.done === true) {
@@ -210,7 +264,6 @@ class OllamaLlmAdapter extends ILlmService {
       });
 
       stream.on("end", () => {
-        // Flush any trailing buffered line in case the provider didn't end with \n.
         if (buffer.trim()) {
           try {
             const parsed = JSON.parse(buffer.trim());
@@ -222,7 +275,7 @@ class OllamaLlmAdapter extends ILlmService {
               fullText += piece;
               if (callback) { try { callback(piece); } catch (_) {} }
             }
-          } catch (_) { /* ignore malformed tail */ }
+          } catch (_) {}
         }
         finish(null);
       });
@@ -244,6 +297,12 @@ class OllamaLlmAdapter extends ILlmService {
     });
   }
 
+  /*
+       ____|______________
+      | isHealthy() | -> Promise<T/F>    (reads attribute baseUrl (Txt))
+       --------------
+      True when GET /api/version returns HTTP 200, false on any error.
+  */
   async isHealthy() {
     try {
       const r = await axios.get(this.baseUrl + "/api/version", this._axiosOpts(this.baseUrl, 3000));

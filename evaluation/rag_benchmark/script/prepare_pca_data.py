@@ -1,19 +1,33 @@
 #!/usr/bin/env python3
 """
-prepare_pca_data.py
-===================
-Combina los datos del profesor (qwen2.5 base/finetuned/tfidf) con los
-resultados del benchmark RAG (qwen2.5/rag) y genera:
-
-  - Datos_spider_qwen25_combined.xlsx   →  formato Datos_spider para el PCA
-  - data2_qwen25.xlsx                   →  latencia y tokens para el bubble plot
-
-Uso:
-    python prepare_pca_data.py
-    python prepare_pca_data.py --rag-json results/rag_benchmark_1234567890.json
-
-Los archivos de salida se guardan en:
-    C:/Users/irene/Downloads/data/
+------------------------------------------------------------------------------
+            _________________________________________________________
+            |                     PREPARE PCA DATA                  |
+            |  Merges the professor's qwen2.5 results (base /        |
+            |  finetuned / tfidf) with the RAG benchmark results and |
+            |  emits the spider-format and bubble-plot spreadsheets  |
+            |  consumed by the PCA notebook.                         |
+        ____|________________                                        |
+   void -> | latest_rag_json() | -> Path                             |
+           ---------------------                                     |
+        ____|___________________________                             |
+        | load_professor_arch() | -> DataFrame                       |
+        -------------------------                                    |
+        ____|_____________________                                   |
+        | load_rag_xlsx() | -> (DataFrame, DataFrame)                |
+        -------------------                                          |
+        ____|_____________________                                   |
+        | load_rag_json() | -> (DataFrame, DataFrame)                |
+        -------------------                                          |
+        ____|__________________                                      |
+        | build_data2() | -> DataFrame                               |
+        ----------------                                             |
+        ____|___________                                             |
+        | main() | -> void                                           |
+        ----------                                                   |
+            |                                                        |
+            |________________________________________________________|
+------------------------------------------------------------------------------
 """
 
 import json
@@ -24,7 +38,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# ── Rutas ─────────────────────────────────────────────────────────────────────
 _SCRIPT_DIR   = Path(__file__).parent
 RESULTS_DIR   = (_SCRIPT_DIR / "../results").resolve()
 OUTPUT_DIR    = Path(r"C:/Users/irene/Downloads/data")
@@ -36,10 +49,15 @@ PROF_FILES = {
     "tfidf":     PROFESSOR_DIR / "eval_fewshot_20251205_081200.xlsx",
 }
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def latest_rag_json() -> Path:
-    """Devuelve el JSON de benchmark más reciente en results/."""
+    """
+       IN -> ____|________________
+            | latest_rag_json() | -> Path
+             -------------------
+       Returns the most recent rag_benchmark_*.json file in the results
+       directory. Raises FileNotFoundError when none exist.
+    """
     jsons = sorted(RESULTS_DIR.glob("rag_benchmark_*.json"))
     if not jsons:
         raise FileNotFoundError(f"No hay JSONs en {RESULTS_DIR}")
@@ -48,25 +66,18 @@ def latest_rag_json() -> Path:
 
 def load_professor_arch(arch: str, path: Path) -> pd.DataFrame:
     """
-    Lee un Excel del profesor y devuelve un DataFrame con columnas normalizadas:
-      Unnamed: 0 (model), Modelo (arch), Temp,
-      Socraticity (1-5), Conceptual (1-5), Hallutination (1-5)
-
-    Mapeo:
-      formato_socratico     → Socraticity (1-5)
-      correccion_conceptual → Conceptual (1-5)
-      generacion_reflexion  → se invierte (5 - val) para usarla como Hallutination
-                              (el notebook la volverá a invertir, recuperando el valor original)
+       IN -> Txt, Path ____|________________________
+                       | load_professor_arch() | -> DataFrame
+                        -------------------------
+       Reads one professor Excel file and returns a normalized DataFrame
+       with the spider columns; the reflection score is inverted (5 - val)
+       so it follows the same hallucination scale as Datos_spider.xlsx.
     """
     df = pd.read_excel(path)
     out = pd.DataFrame()
     out["Socraticity (1-5)"]    = df["formato_socratico"].astype(float)
     out["Conceptual (1-5)"]     = df["correccion_conceptual"].astype(float)
-    # generacion_reflexion es 1-5 donde mayor=mejor; invertimos para que la
-    # columna Hallutination siga la misma escala que en Datos_spider.xlsx
-    # (menor = peor, y el notebook la invierte con 5-x)
     out["Hallutination (1-5)"]  = (5 - df["generacion_reflexion"]).astype(float)
-    # escalares después de las Series para que pandas tenga índice
     out["Unnamed: 0"]           = "qwen2.5:latest"
     out["Modelo"]               = arch
     out["Temp"]                 = 0.7
@@ -76,16 +87,14 @@ def load_professor_arch(arch: str, path: Path) -> pd.DataFrame:
 
 def load_rag_xlsx(xlsx_path: Path):
     """
-    Lee el XLSX del benchmark RAG (hoja Results_qwen2.5_latest) y devuelve
-    un DataFrame normalizado para PCA + df_raw compatible con build_data2.
-
-    Mapeo:
-      Socratic Quality   → Socraticity (1-5)
-      Conceptual Precision → Conceptual (1-5)
-      Hallucination Rate → se invierte (5 - val) para Hallutination
+       IN -> Path ____|__________________
+                  | load_rag_xlsx() | -> (DataFrame, DataFrame)
+                   -------------------
+       Reads the RAG benchmark XLSX (Results_qwen2.5_latest sheet) and
+       returns a PCA-normalized DataFrame plus the raw DataFrame used by
+       build_data2; the hallucination rate is inverted (5 - val).
     """
     df_raw = pd.read_excel(xlsx_path, sheet_name="Results_qwen2.5_latest")
-    # Renombrar para compatibilidad con build_data2
     df_raw = df_raw.rename(columns={
         "Latency (s)":  "latencia",
         "Tokens":       "tokens_generados",
@@ -94,7 +103,6 @@ def load_rag_xlsx(xlsx_path: Path):
     out = pd.DataFrame()
     out["Socraticity (1-5)"]   = df_raw["Socratic Quality"].astype(float)
     out["Conceptual (1-5)"]    = df_raw["Conceptual Precision"].astype(float)
-    # Hallucination Rate: 5=sin alucinaciones=mejor → invertimos igual que en JSON
     out["Hallutination (1-5)"] = (5 - df_raw["Hallucination Rate"]).astype(float)
     out["Unnamed: 0"]          = "qwen2.5:latest"
     out["Modelo"]              = "rag"
@@ -105,13 +113,12 @@ def load_rag_xlsx(xlsx_path: Path):
 
 def load_rag_json(json_path: Path) -> pd.DataFrame:
     """
-    Lee el JSON del benchmark RAG y devuelve un DataFrame normalizado.
-
-    Mapeo:
-      socraticidad       → Socraticity (1-5)
-      precision_conceptual → Conceptual (1-5)
-      tasa_alucinacion   → se invierte (5 - val) para Hallutination
-                           (tasa_alucinacion: 5=sin alucinaciones=mejor)
+       IN -> Path ____|__________________
+                  | load_rag_json() | -> (DataFrame, DataFrame)
+                   -------------------
+       Reads the RAG benchmark JSON, keeps only qwen2.5 rows and returns a
+       PCA-normalized DataFrame plus the raw DataFrame; the hallucination
+       rate is inverted (5 - val) so higher means worse.
     """
     with open(json_path, encoding="utf-8") as f:
         payload = json.load(f)
@@ -120,7 +127,6 @@ def load_rag_json(json_path: Path) -> pd.DataFrame:
     if not results:
         raise ValueError(f"El JSON {json_path} no contiene resultados")
 
-    # Filtrar solo qwen2.5
     rows = [r for r in results if "qwen2.5" in r.get("model", "").lower()]
     if not rows:
         raise ValueError("No hay filas de qwen2.5 en el JSON")
@@ -129,9 +135,7 @@ def load_rag_json(json_path: Path) -> pd.DataFrame:
     out = pd.DataFrame()
     out["Socraticity (1-5)"]    = df_raw["socraticidad"].astype(float)
     out["Conceptual (1-5)"]     = df_raw["precision_conceptual"].astype(float)
-    # tasa_alucinacion: 5=sin alucinaciones=mejor → invertimos para Hallutination
     out["Hallutination (1-5)"]  = (5 - df_raw["tasa_alucinacion"]).astype(float)
-    # escalares después de las Series para que pandas tenga índice
     out["Unnamed: 0"]           = "qwen2.5:latest"
     out["Modelo"]               = "rag"
     out["Temp"]                 = 0.7
@@ -141,11 +145,14 @@ def load_rag_json(json_path: Path) -> pd.DataFrame:
 
 def build_data2(prof_dfs: dict, rag_raw: pd.DataFrame) -> pd.DataFrame:
     """
-    Construye data2_qwen25.xlsx con latencia media y tokens medios por arquitectura.
+       IN -> dict, DataFrame ____|_______________
+                             | build_data2() | -> DataFrame
+                              ----------------
+       Builds data2_qwen25.xlsx with mean latency and mean tokens per
+       architecture (professor archs + RAG) for the bubble plot.
     """
     rows = []
 
-    # Arquitecturas del profesor
     arch_labels = {"base": "Base", "finetuned": "FT", "tfidf": "TF-IDF"}
     for arch, path in PROF_FILES.items():
         df = pd.read_excel(path)
@@ -156,7 +163,6 @@ def build_data2(prof_dfs: dict, rag_raw: pd.DataFrame) -> pd.DataFrame:
             "Tokens (mean)":  round(df["tokens_generados"].mean(), 1),
         })
 
-    # RAG
     rows.append({
         "Model":          "Qwen2.5",
         "Arch":           "RAG",
@@ -167,9 +173,14 @@ def build_data2(prof_dfs: dict, rag_raw: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
-
 def main():
+    """
+       IN -> ____|_______
+            | main() | -> void
+             --------
+       Entry point: reads professor and RAG data, merges them and writes
+       the spider-format and bubble-plot spreadsheets to the output dir.
+    """
     parser = argparse.ArgumentParser(description="Prepara datos PCA para qwen2.5")
     parser.add_argument(
         "--rag-json", default=None,
@@ -183,7 +194,6 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── Datos del profesor ───────────────────────────────────────────────────
     print("Leyendo datos del profesor (qwen2.5 base/finetuned/tfidf)...")
     prof_parts = []
     for arch, path in PROF_FILES.items():
@@ -196,7 +206,6 @@ def main():
               f"Conc={part['Conceptual (1-5)'].mean():.2f}")
         prof_parts.append(part)
 
-    # ── Datos RAG ────────────────────────────────────────────────────────────
     if args.rag_xlsx:
         rag_path = Path(args.rag_xlsx)
         print(f"\nLeyendo resultados RAG desde XLSX: {rag_path.name}")
@@ -209,7 +218,6 @@ def main():
           f"Soc={rag_df['Socraticity (1-5)'].mean():.2f}  "
           f"Conc={rag_df['Conceptual (1-5)'].mean():.2f}")
 
-    # ── Combinar ─────────────────────────────────────────────────────────────
     combined = pd.concat(prof_parts + [rag_df], ignore_index=True)
     combined["Temp"] = combined["Temp"].astype(str)
 
@@ -218,7 +226,6 @@ def main():
     print(f"\nGuardado: {spider_path}  ({len(combined)} filas)")
     print(combined.groupby("Modelo")[["Socraticity (1-5)", "Conceptual (1-5)", "Hallutination (1-5)"]].mean().round(2))
 
-    # ── data2 ────────────────────────────────────────────────────────────────
     data2 = build_data2(PROF_FILES, rag_raw)
     data2_path = OUTPUT_DIR / "data2_qwen25.xlsx"
     data2.to_excel(data2_path, index=False)

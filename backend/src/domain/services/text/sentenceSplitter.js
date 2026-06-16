@@ -1,18 +1,26 @@
 "use strict";
 
-// Shared sentence splitter. Previously duplicated as ad-hoc `split(/[.!?\n]/)`
-// calls across guardrails.js (5+ places).
-//
-// Two variants:
-//   splitSentences        — pure content, trimmed, no punctuation
-//   splitSentencesKeepEnd — preserves trailing punctuation (needed when a check
-//                           cares whether a sentence ends in "?" — e.g. to
-//                           distinguish questions from affirmations)
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   SENTENCE SPLITTER                   |
+            |  Module of shared sentence splitters, replacing the    |
+            |  ad-hoc split(/[.!?\n]/) calls scattered across the    |
+            |  guardrails.                                           |
+        ____|________________                                       |
+   Txt -> | splitSentences()        | -> [Txt]                      |
+          ----------------------------                              |
+   Txt -> | splitSentencesKeepEnd() | -> [Txt]                      |
+          ----------------------------                              |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-/**
- * Split on . ! ? or newlines, trim each, drop empties.
- * Returns plain content (no trailing punctuation).
- */
+/*
+   Txt -> ____|__________________
+         | splitSentences() | -> [Txt]
+          --------------------
+      Splits on . ! ? or newlines, trims each piece and drops empties.
+      Returns plain content with no trailing punctuation.
+*/
 function splitSentences(text) {
   if (typeof text !== "string") return [];
   return text
@@ -21,10 +29,13 @@ function splitSentences(text) {
     .filter(Boolean);
 }
 
-/**
- * Split keeping trailing punctuation on each sentence.
- * Useful when downstream logic checks for "?" to identify questions.
- */
+/*
+   Txt -> ____|_________________________
+         | splitSentencesKeepEnd() | -> [Txt]
+          ---------------------------
+      Like splitSentences but keeps trailing punctuation, so downstream logic
+      can check for "?" to tell questions from affirmations.
+*/
 function splitSentencesKeepEnd(text) {
   if (typeof text !== "string") return [];
   const out = [];

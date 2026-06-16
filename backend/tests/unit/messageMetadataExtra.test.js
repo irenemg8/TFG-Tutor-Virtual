@@ -2,6 +2,18 @@
 
 const MessageMetadata = require("../../src/domain/entities/MessageMetadata");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                 MESSAGE METADATA EXTRA                |
+            |  Test suite for the extra fields persisted in the     |
+            |  extra_metadata JSONB column. Verifies safe defaults, |
+            |  capture of the detectedACs verdict, firstTokenMs     |
+            |  timing, the new feat/ac-detection guardrails, the    |
+            |  pipeline diagnostics, and that non-array fields are  |
+            |  coerced to [].                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 describe("MessageMetadata — extra fields persisted in extra_metadata JSONB", () => {
   test("default-constructs all extra fields with safe defaults", () => {
     const m = new MessageMetadata({});
@@ -12,7 +24,6 @@ describe("MessageMetadata — extra fields persisted in extra_metadata JSONB", (
     expect(m.fallbackUsed).toBe(false);
     expect(m.deterministicFinish).toBe(false);
     expect(m.timing.firstTokenMs).toBeNull();
-    // New guardrails default to false:
     expect(m.guardrails.languageDrift).toBe(false);
     expect(m.guardrails.completeSolution).toBe(false);
     expect(m.guardrails.adherence).toBe(false);
@@ -49,7 +60,6 @@ describe("MessageMetadata — extra fields persisted in extra_metadata JSONB", (
     expect(m.guardrails.completeSolution).toBe(true);
     expect(m.guardrails.adherence).toBe(true);
     expect(m.guardrails.repeatedQuestion).toBe(true);
-    // Legacy four still default to false:
     expect(m.guardrails.solutionLeak).toBe(false);
     expect(m.guardrails.falseConfirmation).toBe(false);
   });

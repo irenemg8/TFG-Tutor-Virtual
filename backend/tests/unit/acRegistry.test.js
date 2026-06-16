@@ -2,6 +2,22 @@
 
 const { matchACs } = require("../../src/domain/services/acRegistry");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |             ACREGISTRY — UNIT TESTS                   |
+            |  Verifies matchACs() pattern matching (includes /     |
+            |  excludes / missesAny / missesAll / proposedSetEquals |
+            |  + confidence ordering + normalisation), the          |
+            |  acDetectorAgent integration with AgentContext, the   |
+            |  queryClassifier mixed-proposal path, and BUG-AC-      |
+            |  NUMERIC (2026-06-14): element ACs must not fire when  |
+            |  the correct answer is numeric/text.                  |
+        ____|________________                                       |
+        | buildContext() | -> Obj                                   |
+        ------------------                                          |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 const ej1Patterns = [
   {
     id: "AC1",
@@ -91,6 +107,13 @@ describe("acRegistry.matchACs", () => {
 describe("acDetectorAgent (integration with AgentContext)", () => {
   const AcDetectorAgent = require("../../src/domain/agents/acDetectorAgent");
 
+  /*
+       IN -> ____|_____________
+            | buildContext() | -> Obj
+             ------------------
+      Builds an AgentContext from an options bag with defaults for type,
+      proposed, negated, exerciseNum and correctAnswer.
+  */
   function buildContext(opts) {
     return {
       classification: {
@@ -155,10 +178,6 @@ describe("queryClassifier mixed proposal → partial_correct", () => {
   });
 });
 
-// BUG-AC-NUMERIC (2026-06-14): exercises with a numeric/text correct answer
-// (Ej6/7: "por todas circula la misma corriente") must NOT fire element-based
-// ACs — the `wronglyIncluded` filter has no element set to compare against, so
-// every named element looked "wrong" and AC2/AC14 fired spuriously.
 describe("acRegistry.matchACs — numeric/text correct answer guard", () => {
   const ej6Patterns = [
     { id: "AC2", name: "Atenuación", misconception: "x", strategy: "y",

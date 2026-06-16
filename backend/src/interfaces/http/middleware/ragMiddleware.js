@@ -1,12 +1,37 @@
-// Express middleware that intercepts POST /chat/stream to add RAG augmentation
-// If RAG handles the request, it responds directly. If not, it calls next() and the original handler takes over.
-
 const express = require("express");
 const axios = require("axios");
 const https = require("https");
-// ID validation: accepts MongoDB ObjectId (24 hex chars) or UUID (36 chars with dashes).
-// Post-migration, IDs stored in Postgres preserve the original ObjectId format for
-// historical data and use UUIDs for new records.
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    RAG MIDDLEWARE                     |
+            |  Express middleware that intercepts POST /chat/stream  |
+            |  to add RAG augmentation. When RAG handles the turn it |
+            |  responds directly over SSE (input guardrail, pipeline,|
+            |  deterministic finish, LLM call + output guardrails,   |
+            |  persistence, logging); otherwise it calls next() so   |
+            |  the legacy handler takes over.                       |
+        ____|_____________                                           |
+   Txt -> | isValidId() | -> T/F                   (pure check)      |
+          -------------                                              |
+            |   Helpers: repos, initRAG, ensureRagReady,            |
+            |   getExerciseNum, getCorrectAnswer,                   |
+            |   getEvaluableElements, sseSend, axiosOpts,           |
+            |   buildSystemPrompt, callOllama,                      |
+            |   countPreviousCorrectTurns, countTotalAssistantTurns,|
+            |   countConsecutiveWrongTurns, loadHistory,            |
+            |   buildConversationProgressHint, detectTutorRepetition,|
+            |   detectFrustration, endSSE, logFallthrough            |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+ Txt -> ____|_____________
+       | isValidId() | -> T/F
+        -------------
+    True when v is a legacy MongoDB ObjectId (24 hex) or a UUID. Postgres
+    keeps the ObjectId format for historical data and uses UUIDs for new rows.
+*/
 function isValidId(v) {
   if (typeof v !== "string") return false;
   return /^[a-f0-9]{24}$/i.test(v) || /^[0-9a-f-]{36}$/i.test(v);
@@ -27,7 +52,13 @@ const Message = require("../../../domain/entities/Message");
 const HeuristicSecurityAdapter = require("../../../infrastructure/security/HeuristicSecurityAdapter");
 const trace = require("../../../infrastructure/events/pipelineDebugLogger");
 
-// Repos del container (para el path legacy; si container no está listo, fallthrough)
+/*
+       ____|________
+      | repos() | -> Obj | null    (reads container (Obj))
+       ----------
+    Resolves ejercicio/interaccion/message repositories from the container.
+    Returns null when the container is not initialized (caller falls through).
+*/
 function repos() {
   if (!container._initialized) return null;
   return {
@@ -49,23 +80,24 @@ const router = express.Router();
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const FIN_TOKEN = "<END_EXERCISE>";
 
-// Canonical exercise number mapping (exercise 2 → 1 because they share the same dataset in ChromaDB)
 const canonicalExercise = {};
 
-// RAG initialization: load KG + BM25 at the start
 let ragReady = false;
 let kgConceptPatterns = [];
 
+/*
+       ____|__________
+      | initRAG() | -> void
+       -----------
+    One-time RAG setup: fills the canonical exercise map and, when the
+    container has not already exposed them, derives KG concept patterns and
+    loads the BM25 indices. Sets ragReady on success.
+*/
 function initRAG() {
   try {
-    // Canonical mapping: exercise → lowest exercise that shares the same dataset.
-    // Pre-computed in config.CANONICAL_EXERCISE_MAP (single source of truth).
     Object.assign(canonicalExercise, config.CANONICAL_EXERCISE_MAP);
     const exerciseNums = Object.keys(config.EXERCISE_DATASET_MAP);
 
-    // KG + BM25 are now loaded by the container. Only recompute concept
-    // patterns from the in-memory KG if they're not already exposed by the
-    // container (initial boot ordering, tests that bypass the container).
     if (container._initialized && Array.isArray(container.kgConceptPatterns) && container.kgConceptPatterns.length > 0) {
       kgConceptPatterns = container.kgConceptPatterns;
     } else {
@@ -79,7 +111,6 @@ function initRAG() {
       } catch (e) {
         console.warn("[RAG] Could not derive concept patterns from KG:", e.message);
       }
-      // Fallback BM25 load — only when the container hasn't done it for us.
       for (let i = 0; i < exerciseNums.length; i++) {
         const num = Number(exerciseNums[i]);
         const fileName = config.EXERCISE_DATASET_MAP[num];
@@ -100,14 +131,23 @@ function initRAG() {
   }
 }
 
-// Lazy init: deferred until the first /chat/stream request, by which time the
-// container has finished initialize() and we can reuse what it already loaded
-// (KG + BM25 indices) instead of re-reading the files.
+/*
+       ____|________________
+      | ensureRagReady() | -> void
+       ------------------
+    Lazy init guard: runs initRAG once on the first request, by which time
+    the container has finished initialize() and its KG/BM25 can be reused.
+*/
 function ensureRagReady() {
   if (!ragReady) initRAG();
 }
 
-// Extract exercise number from title ("Ejercicio 1" → 1)
+/*
+ Ejercicio -> ____|__________________
+             | getExerciseNum() | -> Z | null
+              ------------------
+    Extracts the exercise number from the title ("Ejercicio 1" -> 1).
+*/
 function getExerciseNum(ejercicio) {
   const match = (ejercicio.title || "").match(/(\d+)/);
   if (match != null) {
@@ -116,7 +156,13 @@ function getExerciseNum(ejercicio) {
   return null;
 }
 
-// Get correct answer as normalized array ["R1", "R2", "R4"]
+/*
+ Ejercicio -> ____|___________________
+             | getCorrectAnswer() | -> [Txt]
+              -------------------
+    Returns the exercise's correct answer as a normalized uppercase array
+    (e.g. ["R1", "R2", "R4"]), or [] when none is configured.
+*/
 function getCorrectAnswer(ejercicio) {
   const answer = ejercicio.tutorContext && ejercicio.tutorContext.correctAnswer;
   if (!Array.isArray(answer)) {
@@ -129,22 +175,22 @@ function getCorrectAnswer(ejercicio) {
   return result;
 }
 
-// Get all evaluable elements for generic extraction (correct + incorrect)
-// 1. Explicit field in tutorContext (for non-electronics subjects)
-// 2. Extract from netlist (backwards compatibility for circuits)
-// 3. Fallback: only the correct answer
+/*
+ Ejercicio -> ____|________________________
+             | getEvaluableElements() | -> [Txt]
+              ------------------------
+    Returns all evaluable elements (correct + incorrect) for generic
+    extraction: the explicit tutorContext field, else the answer-eligible
+    components parsed from the netlist (R/C/L/D/I, excluding nodes and
+    sources), else just the correct answer.
+*/
 function getEvaluableElements(ejercicio) {
   var tc = ejercicio.tutorContext || {};
 
-  // 1. Explicit field
   if (Array.isArray(tc.evaluableElements) && tc.evaluableElements.length > 0) {
     return tc.evaluableElements.map(function (e) { return String(e).toUpperCase().trim(); });
   }
 
-  // 2. Extract from netlist (only passive/active components that can be answers: R, C, L, D, I)
-  //    Excludes node identifiers (N*) and voltage sources (V*) which are structural,
-  //    not answer elements. Students mentioning nodes in reasoning (e.g. "from N1 to N2")
-  //    should NOT be treated as proposing wrong answer elements.
   if (tc.netlist) {
     var matches = tc.netlist.match(/[RCLDI]\d+/gi);
     if (matches) {
@@ -161,17 +207,27 @@ function getEvaluableElements(ejercicio) {
     }
   }
 
-  // 3. Fallback: only the correct answer
   return (tc.correctAnswer || []).map(function (e) { return String(e).toUpperCase().trim(); });
 }
 
-// Send SSE event to client (same format as the existing handler)
+/*
+ Obj, Obj -> ____|___________
+            | sseSend() | -> void
+             -----------
+    Writes one SSE data frame with the JSON payload and flushes.
+*/
 function sseSend(res, payload) {
   res.write("data: " + JSON.stringify(payload) + "\n\n");
   if (typeof res.flush === "function") res.flush();
 }
 
-// Axios config for HTTPS connections
+/*
+       ____|____________
+      | axiosOpts() | -> Obj
+       -------------
+    Returns axios options (the shared https agent) when the Ollama URL is
+    https, otherwise {}.
+*/
 function axiosOpts() {
   if (config.OLLAMA_CHAT_URL.startsWith("https://")) {
     return { httpsAgent: httpsAgent };
@@ -179,7 +235,13 @@ function axiosOpts() {
   return {};
 }
 
-// Build system prompt with fallback (same as existing handler)
+/*
+ Ejercicio, Txt -> ____|____________________
+                  | buildSystemPrompt() | -> Txt
+                   --------------------
+    Builds the tutor system prompt for an exercise + language, with a
+    minimal Socratic fallback when the builder yields empty text.
+*/
 function buildSystemPrompt(ejercicio, lang) {
   var systemPrompt = buildTutorSystemPrompt(ejercicio, lang);
   if (typeof systemPrompt !== "string" || systemPrompt.trim() === "") {
@@ -188,7 +250,13 @@ function buildSystemPrompt(ejercicio, lang) {
   return systemPrompt;
 }
 
-// Call Ollama and get the full response (non-streaming, so we can check guardrails before sending to client)
+/*
+ [Obj] -> ____|_____________
+         | callOllama() | -> Promise<Txt>
+          --------------
+    Calls Ollama /api/chat non-streaming so guardrails can run before the
+    text reaches the client. Returns the full response content.
+*/
 async function callOllama(messages) {
   const response = await axios.post(
     config.OLLAMA_CHAT_URL + "/api/chat",
@@ -211,7 +279,13 @@ async function callOllama(messages) {
   return (response.data.message && response.data.message.content) || "";
 }
 
-// Count previous turns classified as "correct-ish" (for loop detection).
+/*
+ Txt -> ____|____________________________
+       | countPreviousCorrectTurns() | -> Promise<Z>
+        ----------------------------
+    Counts prior assistant turns classified as "correct-ish" (used for
+    loop detection / demanding justification).
+*/
 async function countPreviousCorrectTurns(interaccionId) {
   const r = repos(); if (!r) return 0;
   const all = await r.messageRepo.getAllMessages(interaccionId);
@@ -224,11 +298,23 @@ async function countPreviousCorrectTurns(interaccionId) {
   return count;
 }
 
+/*
+ Txt -> ____|___________________________
+       | countTotalAssistantTurns() | -> Promise<Z>
+        ---------------------------
+    Counts all assistant turns in the interaction.
+*/
 async function countTotalAssistantTurns(interaccionId) {
   const r = repos(); if (!r) return 0;
   return r.messageRepo.countAssistantMessages(interaccionId);
 }
 
+/*
+ Txt -> ____|____________________________
+       | countConsecutiveWrongTurns() | -> Promise<Z>
+        -----------------------------
+    Counts wrong_answer/wrong_concept assistant turns in a row from the end.
+*/
 async function countConsecutiveWrongTurns(interaccionId) {
   const r = repos(); if (!r) return 0;
   return r.messageRepo.countConsecutiveFromEnd(
@@ -237,14 +323,26 @@ async function countConsecutiveWrongTurns(interaccionId) {
   );
 }
 
+/*
+ Txt -> ____|______________
+       | loadHistory() | -> Promise<[Obj]>
+        --------------
+    Loads the last HISTORY_MAX_MESSAGES messages as {role, content} entries.
+*/
 async function loadHistory(interaccionId) {
   const r = repos(); if (!r) return [];
   const msgs = await r.messageRepo.getLastMessages(interaccionId, config.HISTORY_MAX_MESSAGES);
   return msgs.map((m) => ({ role: m.role, content: m.content }));
 }
 
-// Build a short hint reminding the LLM what its last question was,
-// so it can evaluate the student's response in context and avoid re-asking.
+/*
+ [Obj] -> ____|________________________________
+         | buildConversationProgressHint() | -> Txt
+          --------------------------------
+    Builds a short hint reminding the LLM of its last question so it can
+    evaluate the student's reply in context and avoid re-asking. Returns ""
+    when there is no prior question.
+*/
 function buildConversationProgressHint(history) {
   if (!Array.isArray(history) || history.length < 2) return "";
 
@@ -269,22 +367,25 @@ function buildConversationProgressHint(history) {
     + "If they answered it correctly, acknowledge and advance. Do NOT re-ask.\n\n";
 }
 
-// Detect if the tutor has been asking the same question repeatedly.
-// Uses a sliding window: compares ALL pairs among the last 4 assistant questions.
-// This catches alternating patterns (A-B-A-B) that a 2-message comparison would miss.
+/*
+ Txt -> ____|________________________
+       | detectTutorRepetition() | -> Promise<Obj>
+        ------------------------
+    Detects whether the tutor keeps asking the same question, comparing all
+    pairs among the last 4 assistant questions (catches A-B-A-B patterns).
+    Returns { repeating, lastQuestion? }.
+*/
 async function detectTutorRepetition(interaccionId) {
   const r = repos(); if (!r) return { repeating: false };
   const lastAssistant = await r.messageRepo.getLastAssistantMessages(interaccionId, 4);
   if (lastAssistant.length < 2) return { repeating: false };
   const assistantMessages = lastAssistant.map((m) => m.content || "");
 
-  // Extract the last question from each assistant message
   function extractLastQuestion(text) {
     var qs = text.match(/[^.!?]*\?/g);
     return qs && qs.length > 0 ? qs[qs.length - 1].toLowerCase().trim() : "";
   }
 
-  // Compute word overlap between two questions (words > 3 chars)
   function questionSimilarity(qa, qb) {
     var wordsA = qa.split(/\s+/).filter(function(w) { return w.length > 3; });
     var wordsB = qb.split(/\s+/).filter(function(w) { return w.length > 3; });
@@ -296,7 +397,6 @@ async function detectTutorRepetition(interaccionId) {
     return overlap / wordsA.length;
   }
 
-  // Extract questions from all collected messages
   var questions = [];
   for (var m = 0; m < assistantMessages.length; m++) {
     var q = extractLastQuestion(assistantMessages[m]);
@@ -304,7 +404,6 @@ async function detectTutorRepetition(interaccionId) {
   }
   if (questions.length < 2) return { repeating: false };
 
-  // Compare all pairs: if ANY pair has > 50% overlap, repetition detected
   for (var a = 0; a < questions.length; a++) {
     for (var b = a + 1; b < questions.length; b++) {
       var sim = questionSimilarity(questions[a], questions[b]);
@@ -316,8 +415,15 @@ async function detectTutorRepetition(interaccionId) {
   return { repeating: false };
 }
 
-// Detect if the student is expressing frustration (repeating themselves, "I already told you", etc.)
 var frustrationPatternsAll = getAllPatterns(frustrationDict);
+
+/*
+ Txt -> ____|___________________
+       | detectFrustration() | -> T/F
+        -------------------
+    True when the message contains a known frustration pattern ("I already
+    told you", etc.).
+*/
 function detectFrustration(message) {
   var lower = message.toLowerCase();
   for (var i = 0; i < frustrationPatternsAll.length; i++) {
@@ -328,7 +434,12 @@ function detectFrustration(message) {
   return false;
 }
 
-// End SSE connection cleanly
+/*
+ Obj, Obj -> ____|__________
+            | endSSE() | -> void
+             ----------
+    Clears the heartbeat, writes the [DONE] terminator and ends the response.
+*/
 function endSSE(res, hb) {
   clearInterval(hb);
   res.write("data: [DONE]\n\n");
@@ -336,18 +447,19 @@ function endSSE(res, hb) {
   res.end();
 }
 
-// Helper: ALWAYS-ON log for when RAG middleware falls through. This is critical for debugging
-// and should never be gated behind DEBUG_PIPELINE.
+/*
+ Txt, Obj -> ____|________________
+            | logFallthrough() | -> void
+             ----------------
+    Always-on log marking when the RAG middleware falls through to the
+    legacy handler (critical for debugging; never gated behind DEBUG_PIPELINE).
+*/
 function logFallthrough(reason, details) {
   console.log("[RAG_SKIP] ⛔ reason=" + reason + (details ? " " + JSON.stringify(details) : ""));
 }
 
-// Middleware: intercepts POST /chat/stream
 router.post("/chat/stream", async function (req, res, next) {
-  // Lazy init on first request — by now the container has finished
-  // initialize() so we reuse its KG/BM25 instead of double-loading.
   ensureRagReady();
-  // Skip if RAG is disabled or not initialized
   if (!config.RAG_ENABLED || !ragReady) {
     logFallthrough("rag_disabled_or_not_ready", { RAG_ENABLED: config.RAG_ENABLED, ragReady: ragReady });
     trace.traceRagGate("", "rag_disabled_or_not_ready", { RAG_ENABLED: config.RAG_ENABLED, ragReady: ragReady });
@@ -366,8 +478,7 @@ router.post("/chat/stream", async function (req, res, next) {
   });
 
   try {
-    // 1. Extract and validate inputs
-    var userId = req.userId; // From session via globalAuth (NEVER from client)
+    var userId = req.userId;
     var exerciseId = req.body.exerciseId;
     var userMessage = req.body.userMessage;
     var interaccionId = req.body.interaccionId;
@@ -390,7 +501,6 @@ router.post("/chat/stream", async function (req, res, next) {
 
     emitEvent("request_start", "start", { userId: userId, exerciseId: exerciseId, userMessage: userMessage, interaccionId: interaccionId });
 
-    // 2. Load exercise from MongoDB
     var _r = repos();
     if (!_r) return next();
     var ejercicio = await _r.ejercicioRepo.findById(exerciseId);
@@ -416,13 +526,10 @@ router.post("/chat/stream", async function (req, res, next) {
 
     emitEvent("exercise_loaded", "end", { exerciseNum: exerciseNum, titulo: ejercicio.title, correctAnswer: correctAnswer, canonicalExercise: canonicalExercise[exerciseNum] || exerciseNum, datasetFile: config.EXERCISE_DATASET_MAP[exerciseNum] || "unknown" });
 
-    // Use canonical exercise number for retrieval (exercise 2 → 1 in ChromaDB)
     var searchNum = canonicalExercise[exerciseNum] || exerciseNum;
 
-    // Get all evaluable elements for generic extraction (correct + incorrect)
     var evaluableElements = getEvaluableElements(ejercicio);
 
-    // Resolve language early (needed for intermediate feedback phrases in pipeline)
     var earlyLang = "es";
     if (interaccionId && isValidId(interaccionId)) {
       var earlyHistory = await loadHistory(interaccionId);
@@ -435,11 +542,8 @@ router.post("/chat/stream", async function (req, res, next) {
       evaluableElements: evaluableElements,
       lang: earlyLang,
     });
-    // Phase-0 baseline: declare a theoretical budget (not enforced yet; Phase 3 will enforce).
-    // Captures what the refactored pipeline will target — lets us measure overshoot today.
     trace.traceBudgetSet(reqId, 45000);
 
-    // 2b. Input guardrail: block prompt injection / off-topic BEFORE the LLM
     var securityResult = securityService.analyzeInput(userMessage.trim(), {
       lang: earlyLang,
       ejercicio: ejercicio,
@@ -453,7 +557,6 @@ router.post("/chat/stream", async function (req, res, next) {
         userMessage: userMessage.trim(),
       });
 
-      // Open SSE and answer with the redirect, persisting both user + assistant msgs
       res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
@@ -513,7 +616,6 @@ router.post("/chat/stream", async function (req, res, next) {
       return;
     }
 
-    // 3. Run RAG pipeline (with generic evaluable elements and language)
     emitEvent("pipeline_start", "start", { userMessage: userMessage.trim(), exerciseNum: searchNum, correctAnswer: correctAnswer, userId: userId, evaluableElements: evaluableElements });
     var pipelineStart = Date.now();
     var ragResult = await runFullPipeline(userMessage.trim(), searchNum, correctAnswer, userId, evaluableElements, earlyLang);
@@ -529,7 +631,6 @@ router.post("/chat/stream", async function (req, res, next) {
       hasReasoning: ragResult.classification === "correct_good_reasoning" || ragResult.classification === "correct_wrong_reasoning",
     });
 
-    // If no RAG needed (greeting, etc.), fall through to original handler
     if (ragResult.decision === "no_rag") {
       logFallthrough("no_rag_decision", { classification: ragResult.classification, pipelineMs: pipelineTime });
       trace.traceRagGate(reqId, "no_rag_decision", { classification: ragResult.classification, pipelineMs: pipelineTime });
@@ -538,9 +639,6 @@ router.post("/chat/stream", async function (req, res, next) {
       return next();
     }
 
-    // --- From here, RAG handles the full request ---
-
-    // 4. Set up SSE (same headers as existing handler)
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -549,14 +647,12 @@ router.post("/chat/stream", async function (req, res, next) {
     res.write(": ok\n\n");
     if (typeof res.flush === "function") res.flush();
 
-    // Heartbeat every 15 seconds
     var hb = setInterval(function () {
       res.write(": ping\n\n");
       if (typeof res.flush === "function") res.flush();
     }, 15000);
 
     try {
-      // 5. Load or create Interaccion
       var iid = interaccionId || null;
       if (iid) {
         var exists = await _r.interaccionRepo.existsForUser(iid, userId);
@@ -570,7 +666,6 @@ router.post("/chat/stream", async function (req, res, next) {
         sseSend(res, { interaccionId: iid });
       }
 
-      // 6. Save user message (with student response time if there is a previous assistant message)
       var text = userMessage.trim();
       var studentResponseMs = null;
       var lastMsg = await _r.messageRepo.getLastMessage(iid);
@@ -583,17 +678,10 @@ router.post("/chat/stream", async function (req, res, next) {
       }));
       await _r.interaccionRepo.updateEndTime(iid, new Date());
 
-      // 7. Deterministic finish: correct answer → check if we can finish directly
       var isCorrect = ragResult.classification === "correct_good_reasoning"
         || ragResult.classification === "correct_no_reasoning"
         || ragResult.classification === "correct_wrong_reasoning";
 
-      // 7a. Pedagogical rule: we NEVER close an exercise without real justification.
-      // If the student keeps giving the right elements but no reasoning, we do NOT
-      // override the classification. Instead, we raise a flag that will inject a
-      // strong instruction into the tutor prompt (see section 8 below) demanding
-      // that the student explicitly justify WHY, using concepts from the KG
-      // (cortocircuito, circuito abierto, divisor de tension, etc.).
       var repetitionInfo = await detectTutorRepetition(iid);
       var demandJustification = false;
       var prevCorrectCount = 0;
@@ -605,8 +693,6 @@ router.post("/chat/stream", async function (req, res, next) {
         }
       }
 
-      // 7b. Global loop-breaking: independent of classification
-      // Counts consecutive wrong turns and total turns to prevent infinite loops
       var wrongStreak = await countConsecutiveWrongTurns(iid);
       var totalTurns = await countTotalAssistantTurns(iid);
       var stuckHint = "";
@@ -634,13 +720,11 @@ router.post("/chat/stream", async function (req, res, next) {
       }
 
       if (isCorrect) {
-        // Load history to check if the student has already been reasoning
         var prevHistory = await loadHistory(iid);
-        var hasConversation = prevHistory.length >= 2; // At least 1 exchange before this
+        var hasConversation = prevHistory.length >= 2;
         var lang = resolveLanguage(prevHistory);
 
         if (ragResult.classification === "correct_good_reasoning") {
-          // Student gave correct answer and has been reasoning (or gave reasoning now) → finish
           trace.traceDeterministicFinish(reqId, {
             classification: ragResult.classification,
             prevCorrectTurns: prevCorrectCount || 0,
@@ -677,17 +761,13 @@ router.post("/chat/stream", async function (req, res, next) {
           emitEvent("request_end", "end", { totalTimeMs: Date.now() - startTime });
           return;
         }
-        // correct_no_reasoning without history → fall through to LLM to ask for reasoning
-        // correct_wrong_reasoning → fall through to LLM to correct the concept
         emitEvent("deterministic_finish", "skip", { classification: ragResult.classification, historyLength: prevHistory.length, finished: false });
       }
 
-      // 8. Build augmented system prompt (base prompt + RAG context)
       var history = await loadHistory(iid);
       var lang = resolveLanguage(history);
       var basePrompt = buildSystemPrompt(ejercicio, lang);
       var progressHint = buildConversationProgressHint(history);
-      // If tutor repetition detected, inject a strong instruction to move forward
       var repetitionHint = "";
       if (repetitionInfo.repeating) {
         console.log("[RAG] Tutor repetition detected, injecting move-forward instruction");
@@ -698,7 +778,6 @@ router.post("/chat/stream", async function (req, res, next) {
           + "2. Give a CONCRETE HINT about the circuit (without revealing the answer).\n"
           + "3. Ask a NEW, DIFFERENT question that the student has NOT been asked before.\n\n";
       }
-      // If the student is frustrated, inject an empathetic instruction
       var frustrationHint = "";
       if (detectFrustration(text)) {
         console.log("[RAG] Student frustration detected");
@@ -710,10 +789,6 @@ router.post("/chat/stream", async function (req, res, next) {
           + "3. If something is still missing, give a more concrete hint before asking.\n"
           + "Be empathetic and brief.\n\n";
       }
-      // Scaffold hint: when the student says "I don't know" / "no lo sé",
-      // the tutor MUST NOT explain the concept. It must lower the scaffold
-      // and ask a SIMPLER, more CONCRETE question about a visible feature of
-      // the circuit so the student can reason themselves.
       var scaffoldHint = "";
       if (ragResult.classification === "dont_know") {
         scaffoldHint = "[STUDENT DOESN'T KNOW]\n"
@@ -724,8 +799,6 @@ router.post("/chat/stream", async function (req, res, next) {
           + "- Keep the response to a SINGLE question, no preamble, no explanation.\n\n";
       }
 
-      // Demand justification hint: when the student has given correct elements
-      // multiple times but never justified, force the tutor to ask explicitly.
       var justificationHint = "";
       if (demandJustification) {
         justificationHint = "[DEMAND JUSTIFICATION]\n"
@@ -741,7 +814,6 @@ router.post("/chat/stream", async function (req, res, next) {
       var augmentedPrompt = basePrompt + "\n\n" + progressHint + repetitionHint + frustrationHint + stuckHint + scaffoldHint + justificationHint + ragResult.augmentation;
       emitEvent("prompt_built", "end", { systemPromptLength: basePrompt.length, ragAugmentationLength: ragResult.augmentation.length, totalPromptLength: augmentedPrompt.length, augmentationPreview: ragResult.augmentation });
 
-      // 9. Load conversation history (last N messages)
       emitEvent("history_loaded", "end", { interaccionId: iid, messageCount: history.length, maxMessages: config.HISTORY_MAX_MESSAGES, messages: history.map(function (m) { return { role: m.role, content: m.content || "" }; }) });
 
       var messages = [{ role: "system", content: augmentedPrompt }];
@@ -749,7 +821,6 @@ router.post("/chat/stream", async function (req, res, next) {
         messages.push(history[i]);
       }
 
-      // 10. Call Ollama (non-streaming so we can check guardrails before sending to client)
       trace.traceLlmCall(reqId, "start", { model: config.OLLAMA_MODEL, messagesCount: messages.length, promptLen: augmentedPrompt.length, reason: "primary" });
       emitEvent("ollama_call_start", "start", { model: config.OLLAMA_MODEL, temperature: config.OLLAMA_TEMPERATURE, num_ctx: config.OLLAMA_NUM_CTX, num_predict: config.OLLAMA_NUM_PREDICT, keep_alive: config.OLLAMA_KEEP_ALIVE, messageCount: messages.length, ollamaUrl: config.OLLAMA_CHAT_URL });
       var ollamaStart = Date.now();
@@ -757,10 +828,8 @@ router.post("/chat/stream", async function (req, res, next) {
       trace.traceLlmCall(reqId, "end", { durationMs: Date.now() - ollamaStart, responseLen: fullResponse.length, reason: "primary", response: fullResponse });
       emitEvent("ollama_call_end", "end", { responseLength: fullResponse.length, responsePreview: fullResponse, durationMs: Date.now() - ollamaStart, reason: "non-streaming (guardrail check)" });
 
-      // 11. Guardrail checks: solution leak + false confirmation
       var guardrailTriggered = false;
 
-      // 11a. Check if the LLM revealed the solution (iterative: up to 2 retries)
       var _tLeak0 = Date.now();
       var leakCheck = checkSolutionLeak(fullResponse, correctAnswer);
       trace.traceGuardrailCheck(reqId, "solution_leak", { violated: leakCheck.leaked, checkMs: Date.now() - _tLeak0, evidence: leakCheck.details });
@@ -783,7 +852,6 @@ router.post("/chat/stream", async function (req, res, next) {
         leakCheck = checkSolutionLeak(fullResponse, correctAnswer);
       }
 
-      // 11b. Check if the LLM confirmed a wrong answer as correct
       var _tConfirm0 = Date.now();
       var confirmCheck = checkFalseConfirmation(fullResponse, ragResult.classification);
       trace.traceGuardrailCheck(reqId, "false_confirmation", { violated: confirmCheck.confirmed, checkMs: Date.now() - _tConfirm0, evidence: confirmCheck.details });
@@ -805,7 +873,6 @@ router.post("/chat/stream", async function (req, res, next) {
         emitEvent("ollama_retry", "end", { reason: "false_confirmation", responseLength: fullResponse.length });
       }
 
-      // 11b2. Check if the LLM prematurely confirms a partially correct answer
       var _tPrem0 = Date.now();
       var prematureCheck = checkPrematureConfirmation(fullResponse, ragResult.classification);
       trace.traceGuardrailCheck(reqId, "premature_confirmation", { violated: prematureCheck.premature, checkMs: Date.now() - _tPrem0, evidence: prematureCheck.details });
@@ -827,11 +894,6 @@ router.post("/chat/stream", async function (req, res, next) {
         emitEvent("ollama_retry", "end", { reason: "premature_confirmation", responseLength: fullResponse.length });
       }
 
-      // 11c. Check if the LLM reveals the state/topology/concept bound to a
-      // specific evaluable element. Generic: any element type + any concept
-      // name loaded from the knowledge graph. Iterative (up to 2 retries)
-      // plus deterministic redaction fallback — the student must discover
-      // states themselves, so we prefer a clunky placeholder to a leak.
       var _tState0 = Date.now();
       var stateCheck = checkStateReveal(fullResponse, evaluableElements, kgConceptPatterns);
       trace.traceGuardrailCheck(reqId, "state_reveal", { violated: stateCheck.revealed, checkMs: Date.now() - _tState0, evidence: stateCheck.details });
@@ -854,12 +916,8 @@ router.post("/chat/stream", async function (req, res, next) {
         stateCheck = checkStateReveal(fullResponse, evaluableElements, kgConceptPatterns);
       }
 
-      // 11c-bis. Surgical redaction: if the LLM still reveals state, rewrite
-      // the offending sentence only, keeping the rest of the response intact.
       if (stateCheck.revealed) {
         var _tSurg0 = Date.now();
-        // BUG-009-B: rotar wording según disparos previos en la
-        // conversación. Contamos en `history` (assistant turns).
         var _placeholderRe = require("../../../domain/services/rag/guardrails").STATE_REVEAL_PLACEHOLDER_REGEX;
         var _priorHits = 0;
         for (var _hi = 0; _hi < history.length; _hi++) {
@@ -878,15 +936,6 @@ router.post("/chat/stream", async function (req, res, next) {
         }
       }
 
-      // 11d. element_naming check + retry RETIRED 2026-05-03 (NS-32). Permitir
-      //      "Resistencia R1" textual queda mejor que sustitutos vagos como
-      //      "ese conjunto de elementos". El SolutionLeakGuardrail (11d-ter)
-      //      sigue capturando el caso real peligroso (todos los elementos
-      //      correctos juntos en una afirmación).
-
-      // 11d-ter. Extra safety: if the response still literally contains ALL
-      // correct elements together (e.g. "R1, R2, R4") redact them even when
-      // they appear outside a question — this catches leaks in statements.
       var finalLeak = checkSolutionLeak(fullResponse, correctAnswer);
       if (finalLeak.leaked) {
         var _tSurgL = Date.now();
@@ -900,11 +949,6 @@ router.post("/chat/stream", async function (req, res, next) {
         }
       }
 
-      // 11e. Deterministic prefix fallback: if after all retries the response STILL
-      // starts with a confirmation phrase for a wrong/partial answer, force a prefix.
-      // ONLY apply when the student mentioned specific elements (they're answering the question).
-      // When no elements are mentioned, the student is responding to a Socratic question about concepts —
-      // the LLM confirming a correct concept is fine and forcing a negative prefix creates contradictions.
       var studentMentionedElements = ragResult.mentionedElements && ragResult.mentionedElements.length > 0;
       if (studentMentionedElements) {
         var finalConfirmCheck = checkFalseConfirmation(fullResponse, ragResult.classification);
@@ -913,7 +957,6 @@ router.post("/chat/stream", async function (req, res, next) {
           if (prefix) {
             console.log("[RAG] Deterministic prefix forced: " + prefix);
             var cleaned = removeOpeningConfirmation(fullResponse, lang);
-            // Double pass: strip confirmations that survived after the first cleanup
             var secondPass = removeOpeningConfirmation(cleaned, lang);
             fullResponse = prefix + " " + secondPass;
             guardrailTriggered = true;
@@ -932,10 +975,6 @@ router.post("/chat/stream", async function (req, res, next) {
         }
       }
 
-      // 11d-quater. Didactic explanation check: the tutor must scaffold, not
-      // explain. If the response contains definitional/explanatory patterns
-      // ("this means that...", "when a resistor is X, then..."), retry up to
-      // 2 times asking for a pure scaffolding question instead.
       var _tDidactic0 = Date.now();
       var didacticCheck = checkDidacticExplanation(fullResponse);
       trace.traceGuardrailCheck(reqId, "didactic_explanation", { violated: didacticCheck.explaining, checkMs: Date.now() - _tDidactic0, evidence: didacticCheck.details });
@@ -957,9 +996,6 @@ router.post("/chat/stream", async function (req, res, next) {
         didacticCheck = checkDidacticExplanation(fullResponse);
       }
 
-      // 11e-bis. Enforce dataset style: strip markdown (bullets, bold,
-      // numbered lists, headings) so the tutor output matches the concise
-      // prose + one final question style of the training dataset.
       var styleResult = enforceDatasetStyle(fullResponse);
       if (styleResult && styleResult.changed) {
         console.log("[RAG] Dataset-style filter removed markdown formatting");
@@ -968,9 +1004,6 @@ router.post("/chat/stream", async function (req, res, next) {
         guardrailTriggered = true;
       }
 
-      // 11f. Pedagogical safeguard: never allow <END_EXERCISE> unless the
-      // classification is correct_good_reasoning. Strips the token (and any
-      // partial prefix) if the LLM tried to close without real justification.
       if (ragResult.classification !== "correct_good_reasoning" && fullResponse.includes(FIN_TOKEN)) {
         console.log("[RAG] Stripping END_EXERCISE token: classification=" + ragResult.classification + " (closure requires correct_good_reasoning)");
         fullResponse = fullResponse.replaceAll(FIN_TOKEN, "").trimEnd();
@@ -978,7 +1011,6 @@ router.post("/chat/stream", async function (req, res, next) {
         emitEvent("guardrail_fin_stripped", "end", { classification: ragResult.classification });
       }
 
-      // 11g. Trace all guardrail results
       trace.traceGuardrails(reqId, {
         solutionLeak: leakCheck.leaked,
         falseConfirmation: confirmCheck.confirmed,
@@ -993,12 +1025,10 @@ router.post("/chat/stream", async function (req, res, next) {
         finalResponse: fullResponse,
       });
 
-      // 12. Send response to client as SSE
       sseSend(res, { chunk: fullResponse });
       trace.traceResponse(reqId, { len: fullResponse.length, containsFIN: fullResponse.includes(FIN_TOKEN), response: fullResponse });
       emitEvent("response_sent", "end", { responseLength: fullResponse.length, responsePreview: fullResponse, containsFIN: fullResponse.includes(FIN_TOKEN), guardrailTriggered: guardrailTriggered });
 
-      // 13. Save assistant response to MongoDB with detailed metadata
       var ollamaMs = Date.now() - ollamaStart;
       var totalMs = Date.now() - startTime;
       var assistantMetadata = {
@@ -1025,10 +1055,8 @@ router.post("/chat/stream", async function (req, res, next) {
       await _r.interaccionRepo.updateEndTime(iid, new Date());
       emitEvent("mongodb_save", "end", { interaccionId: iid, messagesAdded: 2 });
 
-      // 14. Close SSE connection
       endSSE(res, hb);
 
-      // 15. Log for evaluation
       logInteraction({
         exerciseNum: exerciseNum, userId: userId,
         correctAnswer: correctAnswer,
@@ -1050,7 +1078,6 @@ router.post("/chat/stream", async function (req, res, next) {
         guardrailTriggered: guardrailTriggered,
       });
     } catch (innerErr) {
-      // Error after SSE headers were sent → send error event and close
       clearInterval(hb);
       trace.traceError(reqId, "rag_inner", innerErr);
       console.error("[RAG] Error:", innerErr.message);
@@ -1061,7 +1088,6 @@ router.post("/chat/stream", async function (req, res, next) {
       res.end();
     }
   } catch (err) {
-    // Error before SSE headers → fall through to original handler
     logFallthrough("EXCEPTION", { error: err.message, stack: err.stack ? err.stack.split("\n").slice(0, 3).join(" | ") : "-" });
     trace.traceRagGate(reqId, "exception_before_sse", { error: err.message, stack: err.stack ? err.stack.split("\n").slice(0, 3).join(" | ") : "-" });
     console.error("[RAG] Fallback to original handler:", err.message);

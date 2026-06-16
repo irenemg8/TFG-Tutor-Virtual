@@ -1,25 +1,34 @@
-// Hybrid search: BM25 (keyword) + semantic (ChromaDB) combined with Reciprocal Rank Fusion (RRF)
-
 const config = require("../llm/config");
 const { generateEmbedding } = require("../vectordb/embeddings");
 const { searchSemantic } = require("../vectordb/chromaClient");
 const { searchBM25, tokenize } = require("./bm25");
 const { emitEvent } = require("../events/ragEventBus");
 
-/*----------------------------------------------------------------------------------------------
-  Reciprocal Rank Fusion (RRF):
-    score(doc) = 1/(K + rank_bm25) + 1/(K + rank_semantic)
-  Combines two ranked lists into one, giving weight to documents that appear high in both lists
------------------------------------------------------------------------------------------------*/
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                      HYBRID SEARCH                    |
+            |  BM25 (keyword) + semantic (ChromaDB) retrieval fused |
+            |  with Reciprocal Rank Fusion (RRF):                   |
+            |    score(doc) = 1/(K+rank_bm25) + 1/(K+rank_semantic) |
+            |  Favors documents ranked high in both lists.          |
+            |                                                       |
+            |   Txt, Z, Z, Obj -> | hybridSearch() | -> Promise<[Obj]> |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-// Hybrid search for an exercise -> Returns top results sorted by combined score (highest first)
-// `options.signal` propagates an AbortSignal to embedding + Chroma so the
-// retrieval pipeline can be cut short when the per-stage budget elapses.
+/*
+   Txt, Z, Z, Obj -> ____|________________
+                    | hybridSearch() | -> Promise<[Obj]>
+                     -----------------
+      Embeds the query, runs BM25 and semantic search, fuses both
+      rankings with RRF and resolves the topK results sorted by combined
+      score (highest first). options.signal propagates an AbortSignal so
+      the pipeline can be cut short when the per-stage budget elapses.
+*/
 async function hybridSearch(query, exerciseNum, topK = config.TOP_K_FINAL, options) {
   options = options || {};
   const signal = options.signal || null;
 
-  // 1. Generate query embedding for semantic search
   emitEvent("embedding_start", "start", { query: query, model: config.EMBEDDING_MODEL, ollamaUrl: config.OLLAMA_EMBED_URL });
   var embedStart = Date.now();
   const queryEmbedding = await generateEmbedding(query, signal ? { signal: signal } : undefined);
@@ -30,7 +39,6 @@ async function hybridSearch(query, exerciseNum, topK = config.TOP_K_FINAL, optio
     norm: Math.round(Math.sqrt(queryEmbedding.reduce(function (s, v) { return s + v * v; }, 0)) * 10000) / 10000,
   });
 
-  // 2. Run both searches
   const collectionName = "exercise_" + exerciseNum;
   var queryTokens = tokenize(query);
   emitEvent("bm25_search_start", "start", { query: query, exerciseNum: exerciseNum, topK: config.TOP_K_RETRIEVAL, k1: config.BM25_K1, b: config.BM25_B, formula: "IDF(t) × (tf×(k1+1)) / (tf + k1×(1-b+b×dl/avgDl))", queryTokens: queryTokens, tokenCount: queryTokens.length });
@@ -71,12 +79,10 @@ async function hybridSearch(query, exerciseNum, topK = config.TOP_K_FINAL, optio
     }),
   });
 
-  // 3. Build RRF score map using document index as key
   emitEvent("rrf_fusion_start", "start", { bm25Count: bm25Results.length, semanticCount: semanticResults.length, RRF_K: config.RRF_K, TOP_K_FINAL: topK, formula: "score(doc) = 1/(K+rank_bm25) + 1/(K+rank_semantic)" });
   const rrfScores = {};
-  const rrfBreakdown = {}; // Track per-document RRF components
+  const rrfBreakdown = {};
 
-  // Add BM25 ranks
   for (let i = 0; i < bm25Results.length; i++) {
     const key = bm25Results[i].index;
     if (rrfScores[key] == null) {
@@ -95,9 +101,7 @@ async function hybridSearch(query, exerciseNum, topK = config.TOP_K_FINAL, optio
     rrfBreakdown[key].bm25Score = Math.round(bm25Results[i].score * 10000) / 10000;
   }
 
-  // Add semantic ranks
   for (let i = 0; i < semanticResults.length; i++) {
-    // The semantic result id format is "ex{num}_{index}"
     const parts = semanticResults[i].id.split("_");
     const key = Number(parts[1]);
     if (rrfScores[key] == null) {
@@ -116,7 +120,6 @@ async function hybridSearch(query, exerciseNum, topK = config.TOP_K_FINAL, optio
     rrfBreakdown[key].semanticScore = Math.round(semanticResults[i].score * 10000) / 10000;
   }
 
-  // 4. Sort by the combined score and return top results
   const keys = Object.keys(rrfScores);
   const results = [];
   for (let i = 0; i < keys.length; i++) {

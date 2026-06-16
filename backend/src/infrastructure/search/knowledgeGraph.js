@@ -1,27 +1,51 @@
 const fs = require("fs");
 const config = require("../llm/config");
 
-let kgEntries = []; // In-memory knowledge graph (loaded once at startup)
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    KNOWLEDGE GRAPH                    |
+            |  In-memory knowledge graph (loaded once at startup).  |
+            |  Loads, normalizes and searches KG entries by concept |
+            |  keywords or alternative-conception (AC) ids.         |
+            |                                                       |
+            |          -> | loadKG()        | -> void               |
+            |        Obj -> | mapEntry()     | -> Obj                |
+            |      [Txt] -> | searchKG()     | -> [Obj]              |
+            |      [Txt] -> | searchKGByAC() | -> [Obj]              |
+            |          -> | getAllEntries() | -> [Obj]               |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-// Load the knowledge graph JSON file into memory
+let kgEntries = [];
+
+/*
+       ____|___________
+      | loadKG() | -> void
+       -----------
+      Reads the KG JSON file into memory, tolerating files without an
+      enclosing array and a trailing comma before the closing bracket.
+*/
 function loadKG() {
   var raw = fs.readFileSync(config.KG_PATH, "utf-8").trim();
 
-  // Handle files that contain comma-separated objects without enclosing []
   if (raw.charAt(0) !== "[") {
     raw = "[" + raw + "]";
   }
 
-  // Remove trailing comma before closing bracket if present
   raw = raw.replace(/,\s*\]$/, "]");
 
   kgEntries = JSON.parse(raw);
   console.log("Knowledge graph loaded: " + kgEntries.length + " entries");
 }
 
-// Map a raw KG entry to a normalized object with ALL useful fields.
-// AC ids are trimmed because the source JSON has trailing whitespace on at least
-// one entry ("AC13 ") which would otherwise break exact-id lookups.
+/*
+   Obj -> ____|____________
+         | mapEntry() | -> Obj
+          -------------
+      Normalizes a raw KG entry into an object with all useful fields.
+      Trims AC ids because the source JSON has trailing whitespace that
+      would otherwise break exact-id lookups.
+*/
 function mapEntry(entry) {
   const primary = (entry.AC || "").trim();
   const secondary = (entry["AC.1"] || "").trim();
@@ -47,7 +71,13 @@ function mapEntry(entry) {
   };
 }
 
-// Search KG entries by concept keywords -> Returns entries where Node1, Node2 or Relation match
+/*
+   [Txt] -> ____|____________
+           | searchKG() | -> [Obj]
+            -------------
+      Returns the mapped entries whose Node1, Relation or Node2 contains
+      any of the given concept keywords (one match per entry).
+*/
 function searchKG(concepts) {
   if (concepts.length === 0) {
     return [];
@@ -60,15 +90,20 @@ function searchKG(concepts) {
     for (var j = 0; j < concepts.length; j++) {
       if (text.includes(concepts[j].toLowerCase())) {
         results.push(mapEntry(kgEntries[i]));
-        break; // avoids duplicates if entry matches multiple concepts
+        break;
       }
     }
   }
   return results;
 }
 
-// Search KG entries by AC (alternative conception) IDs
-// Returns entries where AC or AC.1 fields match any of the given IDs
+/*
+   [Txt] -> ____|________________
+           | searchKGByAC() | -> [Obj]
+            -----------------
+      Returns the mapped entries whose AC or AC.1 field matches any of
+      the given AC ids, de-duplicated by Node1|Relation|Node2.
+*/
 function searchKGByAC(acIds) {
   if (!Array.isArray(acIds) || acIds.length === 0) {
     return [];
@@ -96,7 +131,13 @@ function searchKGByAC(acIds) {
   return results;
 }
 
-// Get all KG entries (for ingestion into ChromaDB)
+/*
+       ____|_________________
+      | getAllEntries() | -> [Obj]
+       ------------------
+      Returns the raw in-memory KG entries (used for ingestion into
+      ChromaDB).
+*/
 function getAllEntries() {
   return kgEntries;
 }

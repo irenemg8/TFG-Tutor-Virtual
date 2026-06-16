@@ -3,6 +3,18 @@
 const { Readable } = require("stream");
 const RetrievalAgent = require("../../src/domain/agents/retrievalAgent");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   RETRIEVAL BUDGET                    |
+            |  Test suite for the retrieval time-budget mechanism.  |
+            |  Verifies RetrievalAgent forwards retrievalBudgetMs   |
+            |  as the 7th argument, propagates the retrievalTimedOut|
+            |  flag, and that ragPipeline arms an AbortController at |
+            |  budgetMs*0.95, aborts a slow Chroma call, swallows   |
+            |  the AbortError and returns retrievalTimedOut:true.   |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 describe("RetrievalAgent forwards budgetMs to runFullPipeline", () => {
   test("passes context.retrievalBudgetMs as the 7th argument", async () => {
     const calls = [];
@@ -77,15 +89,6 @@ describe("RetrievalAgent forwards budgetMs to runFullPipeline", () => {
 });
 
 describe("ragPipeline budget enforcement", () => {
-  // Real ragPipeline pulls from ChromaDB / Ollama embeddings — way too heavy
-  // for a unit test. Instead we exercise the AbortController glue by mocking
-  // the inner hybridSearch to simulate a slow Chroma call. The pipeline must:
-  //   1. arm a timer at budgetMs * 0.95
-  //   2. abort the in-flight request when the timer fires
-  //   3. swallow the AbortError and return retrievalTimedOut:true
-  //
-  // We monkey-patch require so ragPipeline picks up our fake hybridSearch
-  // without touching its source.
   beforeEach(() => {
     jest.resetModules();
   });
@@ -93,7 +96,6 @@ describe("ragPipeline budget enforcement", () => {
   test("arms an AbortController and returns retrievalTimedOut on slow retrieval", async () => {
     jest.doMock("../../src/infrastructure/search/hybridSearch", () => ({
       hybridSearch: async function (q, exerciseNum, topK, options) {
-        // Simulate a slow Chroma call that respects the abort signal.
         return await new Promise((resolve, reject) => {
           const t = setTimeout(() => resolve([]), 5000);
           if (options && options.signal) {
@@ -119,8 +121,6 @@ describe("ragPipeline budget enforcement", () => {
     const { runFullPipeline } = createRagPipeline({ hybridSearch, searchKG, emitEvent: () => {}, config: ragCfg });
 
     const start = Date.now();
-    // R3 y R5 are NOT in the correct answer (R1, R2, R4) — classifier returns
-    // wrong_answer, which is one of the branches that hits hybridSearch.
     const result = await runFullPipeline(
       "R3 y R5 porque están conectadas en paralelo",
       1,
@@ -133,7 +133,7 @@ describe("ragPipeline budget enforcement", () => {
     const elapsed = Date.now() - start;
     expect(result.retrievalTimedOut).toBe(true);
     expect(result.decision).toBe("no_rag");
-    expect(elapsed).toBeLessThan(1500); // never wait the full 5s
+    expect(elapsed).toBeLessThan(1500);
   });
 
   test("returns normally when retrieval finishes within budget", async () => {

@@ -1,20 +1,40 @@
 "use strict";
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    MESSAGEMETADATA                    |
+            |  Value object for assistant-message metadata. Splits   |
+            |  into core fields (dedicated DB columns on `messages`)  |
+            |  and extra fields (JSONB messages.extra_metadata).     |
+        ____|________________                                       |
+   Obj -> | constructor() | -> MessageMetadata       (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   classification: Txt | null   decision: Txt | null   |
+            |   isCorrectAnswer: T/F | null   sourcesCount: Z        |
+            |   studentResponseMs: Z | null   concepts: [Txt]        |
+            |   guardrails: Obj               timing: Obj            |
+            |   detectedACs: [Txt]            guardrailPath: Txt|null|
+            |   guardrailLlmRetries: Z                              |
+            |   guardrailSurgicalFixes: [Txt]                       |
+            |   llmResponseOriginal: Txt | null                     |
+            |   guardrailSurgicalFixDetails: [Obj]                  |
+            |   fallbackUsed: T/F             deterministicFinish:T/F|
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class MessageMetadata {
-  /**
-   * Value object for assistant message metadata.
-   *
-   * Two tiers of fields:
-   *   - Core (dedicated DB columns on `messages`): classification,
-   *     decision, isCorrectAnswer, sourcesCount, studentResponseMs,
-   *     concepts, the four legacy guardrails, timing.{pipeline,ollama,total}.
-   *   - Extra (JSONB messages.extra_metadata, migration 008):
-   *     firstTokenMs, detectedACs, the new guardrails added on
-   *     feat/ac-detection (languageDrift, completeSolution, adherence,
-   *     repeatedQuestion, didacticExplanation, datasetStyle),
-   *     guardrailPath, guardrailLlmRetries, guardrailSurgicalFixes,
-   *     fallbackUsed, deterministicFinish.
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> MessageMetadata    (writes all attributes above)
+          -----------------
+      Builds the metadata from a plain props object. Core fields map to
+      dedicated `messages` columns; extra fields (firstTokenMs, detectedACs,
+      the post-NS guardrails, guardrailPath, surgical-fix tracking,
+      fallbackUsed, deterministicFinish) live in the JSONB extra_metadata
+      column added by migration 008. `elementNaming` is retired (NS-32) but
+      kept for schema compatibility.
+  */
   constructor(props) {
     this.classification = props.classification || null;
     this.decision = props.decision || null;
@@ -24,19 +44,16 @@ class MessageMetadata {
     this.concepts = Array.isArray(props.concepts) ? props.concepts : [];
 
     this.guardrails = {
-      // Legacy four (own DB columns):
       solutionLeak: props.guardrails?.solutionLeak || false,
       falseConfirmation: props.guardrails?.falseConfirmation || false,
       prematureConfirmation: props.guardrails?.prematureConfirmation || false,
       stateReveal: props.guardrails?.stateReveal || false,
-      // New on feat/ac-detection (extra_metadata):
       languageDrift: props.guardrails?.languageDrift || false,
       completeSolution: props.guardrails?.completeSolution || false,
       adherence: props.guardrails?.adherence || false,
       repeatedQuestion: props.guardrails?.repeatedQuestion || false,
       didacticExplanation: props.guardrails?.didacticExplanation || false,
       datasetStyle: props.guardrails?.datasetStyle || false,
-      // Retired NS-32 — kept for schema compat:
       elementNaming: props.guardrails?.elementNaming || false,
     };
 
@@ -53,9 +70,6 @@ class MessageMetadata {
     this.guardrailSurgicalFixes = Array.isArray(props.guardrailSurgicalFixes)
       ? props.guardrailSurgicalFixes
       : [];
-    // Raw LLM output before any guardrail/surgical-fix rewrite. Lets the
-    // export endpoint show analysts what the model was about to say,
-    // alongside the chronological list of rewrites below.
     this.llmResponseOriginal = props.llmResponseOriginal || null;
     this.guardrailSurgicalFixDetails = Array.isArray(props.guardrailSurgicalFixDetails)
       ? props.guardrailSurgicalFixDetails

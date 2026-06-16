@@ -4,6 +4,29 @@ const { requireRole } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                    USUARIOS ROUTES                    |
+            |  Express router exposing admin-only CRUD over users.   |
+            |  Every endpoint requires the admin role. Endpoints:   |
+            |     POST /usuarios       -> Usuario                   |
+            |     GET  /usuarios       -> [Usuario]                 |
+            |     GET  /usuarios/:id    -> Usuario                   |
+            |     PUT  /usuarios/:id    -> Usuario                   |
+        ____|__________                                              |
+   Obj -> | repo() | -> UsuarioRepo | null       (reads container)   |
+          ----------                                                 |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+ Obj -> ____|__________
+       | repo() | -> UsuarioRepo | null    (reads container (Obj))
+        ----------
+    Resolves the user repository from the container. Sends a 503 and
+    returns null when the persistence layer is not initialized yet.
+*/
 function repo(res) {
   if (!container._initialized || !container.usuarioRepo) {
     res.status(503).json({ error: "service_unavailable" });
@@ -12,7 +35,6 @@ function repo(res) {
   return container.usuarioRepo;
 }
 
-// Create user (admin only)
 router.post("/usuarios", requireRole("admin"), async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -23,7 +45,6 @@ router.post("/usuarios", requireRole("admin"), async (req, res) => {
   }
 });
 
-// Get all users (admin only)
 router.get("/usuarios", requireRole("admin"), async (_req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -34,7 +55,6 @@ router.get("/usuarios", requireRole("admin"), async (_req, res) => {
   }
 });
 
-// Get user by id (admin only)
 router.get("/usuarios/:id", requireRole("admin"), async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -46,7 +66,6 @@ router.get("/usuarios/:id", requireRole("admin"), async (req, res) => {
   }
 });
 
-// Update user by id (admin only)
 router.put("/usuarios/:id", requireRole("admin"), async (req, res) => {
   const r = repo(res); if (!r) return;
   try {

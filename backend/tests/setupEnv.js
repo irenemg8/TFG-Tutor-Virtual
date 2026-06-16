@@ -1,7 +1,13 @@
 "use strict";
 
-// Defaults seguros para los tests unitarios. NO leen el .env real; cualquier
-// variable que el código consulte debe tener un valor mínimo aquí.
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                        SETUP ENV                      |
+            |  Safe defaults for the unit tests. Does not read the   |
+            |  real .env; every variable the code consults gets a    |
+            |  minimal value here so tests run in isolation.         |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 process.env.NODE_ENV = "test";
 process.env.DATABASE_TYPE = process.env.DATABASE_TYPE || "postgresql";
 process.env.LLM_MODE = process.env.LLM_MODE || "local";

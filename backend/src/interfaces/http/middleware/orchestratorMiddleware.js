@@ -1,20 +1,51 @@
 "use strict";
 
-// Thin HTTP adapter that dispatches POST /chat/stream through the orchestrator.
-// Replaces ragMiddleware when USE_ORCHESTRATOR=1.
-//
-// Preserves the EXACT frontend SSE contract:
-//   data: { interaccionId: "..." }        (sent once when a new interaccion is created)
-//   data: { chunk: "tutor response..." }  (the full response as a single chunk)
-//   data: [DONE]                          (terminator)
-//
-// Preserves MongoDB metadata: Interaccion.conversacion entries keep classification,
-// guardrails.*, timing.*, sourcesCount, isCorrectAnswer, decision.
-
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-// ID validator accepting ObjectId (legacy) or UUID (new).
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                ORCHESTRATOR MIDDLEWARE                |
+            |  Thin HTTP adapter that dispatches POST /chat/stream  |
+            |  through the orchestrator when USE_ORCHESTRATOR=1,     |
+            |  replacing ragMiddleware. Preserves the exact frontend |
+            |  SSE contract (interaccionId, chunk, [DONE]) and the  |
+            |  per-message metadata (classification, guardrails,    |
+            |  timing, sourcesCount, isCorrectAnswer, decision).    |
+        ____|________________                                       |
+   Txt -> | _isValidId() | -> T/F                  (pure check)      |
+          --------------                                            |
+        ____|_____________________                                  |
+   Txt -> | detectGreetingLang() | -> Txt | null   (pure)           |
+          ----------------------                                    |
+        ____|_______________                                        |
+   Txt, Txt, Txt -> | dumpToFile() | -> void        (debug dump)     |
+                   --------------                                   |
+        ____|_____________________________                          |
+   Txt, Obj -> | dumpOrchestratorContext() | -> void  (debug dump)   |
+              ---------------------------                            |
+        ____|___________                                            |
+   Obj, Obj -> | sseSend() | -> void                (SSE write)      |
+              -----------                                           |
+        ____|__________                                             |
+   Obj, Obj -> | endSSE() | -> void                 (SSE close)      |
+              ----------                                            |
+        ____|__________________                                     |
+   ... -> | handleGreeting() | -> Promise<void>     (deterministic)  |
+          ------------------                                        |
+            |                                                       |
+            |   router.post("/chat/stream", ...) handles the turn,  |
+            |   gated by USE_ORCHESTRATOR=1 (ENABLED).              |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+ Txt -> ____|________________
+       | _isValidId() | -> T/F
+        --------------
+    True when v is a legacy ObjectId (24 hex) or a UUID.
+*/
 function _isValidId(v) {
   if (typeof v !== "string") return false;
   return /^[a-f0-9]{24}$/i.test(v) || /^[0-9a-f-]{36}$/i.test(v);
@@ -25,12 +56,14 @@ const ragBus = require("../../../infrastructure/events/ragEventBus");
 const Message = require("../../../domain/entities/Message");
 const { resolveLanguage, getGreetingResponse, greetingPatterns } = require("../../../domain/services/languageManager");
 
-// First-turn helper: when the student's only signal is a single greeting
-// ("hello", "hola", "bon dia"), `resolveLanguage` cannot tell — the explicit
-// switch dictionary doesn't list bare greetings and the heuristic needs ≥3
-// tokens. Look the greeting up in greetingPatterns directly so we don't
-// answer "hello" with a Spanish "¡Hola!". Returns null when no greeting
-// pattern matches (caller falls back to history-based resolveLanguage).
+/*
+ Txt -> ____|_____________________
+       | detectGreetingLang() | -> Txt | null
+        ----------------------
+    Detects the language of a bare greeting ("hello", "hola", "bon dia")
+    by matching greetingPatterns directly, since resolveLanguage needs more
+    tokens. Returns null when no greeting pattern matches.
+*/
 function detectGreetingLang(message) {
   if (typeof message !== "string") return null;
   const lower = message.toLowerCase().trim().replace(/[¿?¡!.,]/g, "");
@@ -45,12 +78,16 @@ function detectGreetingLang(message) {
   return null;
 }
 
-// DEBUG_DUMP_CONTEXT — replica de ollamaChatRoutes.dumpToFile() para que el
-// dump funcione también bajo USE_ORCHESTRATOR=1. Sin esto, /tmp/tv_dump
-// quedaba vacío en local porque la ruta legacy no se ejecutaba.
 const DEBUG_DUMP_CONTEXT = process.env.DEBUG_DUMP_CONTEXT === "1";
 const DEBUG_DUMP_PATH = process.env.DEBUG_DUMP_PATH || "./debug_ollama";
 
+/*
+ Txt, Txt, Txt -> ____|_______________
+                 | dumpToFile() | -> void
+                  --------------
+    Writes a labeled debug dump to disk when DEBUG_DUMP_CONTEXT is on, so
+    dumps work under USE_ORCHESTRATOR=1 too. Errors are swallowed with a warn.
+*/
 function dumpToFile(reqId, label, content) {
   if (!DEBUG_DUMP_CONTEXT) return;
   try {
@@ -65,17 +102,22 @@ function dumpToFile(reqId, label, content) {
   }
 }
 
+/*
+ Txt, Obj -> ____|___________________________
+            | dumpOrchestratorContext() | -> void
+             ---------------------------
+    When DEBUG_DUMP_CONTEXT is on, writes three debug files per request:
+    the LLM system prompt, the full messages array, and an essential
+    summary of the orchestrator context (classification, ragResult,
+    guardrails, timing) — without dumping the whole exercise.
+*/
 function dumpOrchestratorContext(reqId, ctx) {
   if (!DEBUG_DUMP_CONTEXT) return;
-  // 1) Prompt (system message del LLM): EXACTAMENTE lo que recibió Ollama.
   const systemMsg = (ctx.llmMessages && ctx.llmMessages[0] && ctx.llmMessages[0].content) || "";
   dumpToFile(reqId, "prompt", systemMsg);
 
-  // 2) Messages array completo (system + history + user actual).
   dumpToFile(reqId, "messages", JSON.stringify(ctx.llmMessages || [], null, 2));
 
-  // 3) Snapshot del context (clasificación, ragResult, guardrails, timing).
-  //    No volcamos el ejercicio entero (puede ser grande); solo lo esencial.
   const summary = {
     reqId: reqId,
     userId: ctx.userId,
@@ -120,11 +162,23 @@ function dumpOrchestratorContext(reqId, ctx) {
 const router = express.Router();
 const FIN_TOKEN = "<END_EXERCISE>";
 
+/*
+ Obj, Obj -> ____|___________
+            | sseSend() | -> void
+             -----------
+    Writes one SSE data frame with the JSON payload and flushes.
+*/
 function sseSend(res, payload) {
   res.write("data: " + JSON.stringify(payload) + "\n\n");
   if (typeof res.flush === "function") res.flush();
 }
 
+/*
+ Obj, Obj -> ____|__________
+            | endSSE() | -> void
+             ----------
+    Clears the heartbeat, writes the [DONE] terminator and ends the response.
+*/
 function endSSE(res, hb) {
   if (hb) clearInterval(hb);
   res.write("data: [DONE]\n\n");
@@ -132,13 +186,15 @@ function endSSE(res, hb) {
   res.end();
 }
 
-/**
- * Deterministic greeting handler. Skips both the orchestrator and the legacy
- * ollamaChatRoutes fallback (which would otherwise call the LLM with the full
- * 17 KB tutor prompt — including the correct answer — without any guardrails).
- * Returns a varied canned greeting in the conversation language and persists
- * both messages so the chat history is consistent.
- */
+/*
+ Obj, Obj, Obj, Txt, Txt, Txt -> ____|__________________
+                                | handleGreeting() | -> Promise<void>
+                                 ------------------
+    Deterministic greeting handler that skips both the orchestrator and the
+    legacy fallback (which would call the LLM with the full tutor prompt and
+    no guardrails). Sends a varied canned greeting in the conversation
+    language over SSE and persists both messages for a consistent history.
+*/
 async function handleGreeting(req, res, hb, userId, exerciseId, interaccionId) {
   const sseHeadersSent = res.headersSent;
   if (!sseHeadersSent) {
@@ -168,10 +224,6 @@ async function handleGreeting(req, res, hb, userId, exerciseId, interaccionId) {
     interactionId: iid, role: "user", content: userText,
   }));
 
-  // Resolve language: prefer the bare greeting itself ("hello" → en,
-  // "bon dia" → val) before falling back to history-based resolution.
-  // Without this, a first-turn "hello" still got the Spanish greeting
-  // because resolveLanguage's heuristic refuses to fire on a single token.
   const prior = await container.messageRepo.getLastMessages(iid, 6);
   if (!isFirstTurn) {
     isFirstTurn = prior.filter(m => m.isAssistant()).length === 0;
@@ -196,7 +248,6 @@ const ENABLED = process.env.USE_ORCHESTRATOR === "1";
 router.post("/chat/stream", async function (req, res, next) {
   if (!ENABLED) return next();
   if (!container._initialized) {
-    // Container not ready — fall through to legacy
     trace.traceRouteHandler && trace.traceRouteHandler("", "orchestrator_container_not_ready", {});
     return next();
   }
@@ -204,17 +255,11 @@ router.post("/chat/stream", async function (req, res, next) {
   const userId = req.userId;
   const { exerciseId, interaccionId, userMessage } = req.body || {};
 
-  // Quick validation (matches ragMiddleware pre-checks)
   if (!userId || !_isValidId(userId)) return next();
   if (!exerciseId || !_isValidId(exerciseId)) return next();
   if (typeof userMessage !== "string" || userMessage.trim() === "") return next();
   if (interaccionId && !_isValidId(interaccionId)) return next();
 
-  // Pre-check: greetings are handled INLINE with a deterministic response.
-  // We must NOT fall through to ollamaChatRoutes because that path runs the
-  // LLM with the full 17 KB tutor prompt (which contains the correct answer)
-  // and applies NO guardrails — a guaranteed leak vector. classifyQuery is
-  // pure/sync and <1ms.
   try {
     const { classifyQuery } = require("../../../domain/services/rag/queryClassifier");
     const pre = classifyQuery(userMessage.trim(), [], []);
@@ -231,29 +276,20 @@ router.post("/chat/stream", async function (req, res, next) {
           }
           sseSend(res, { chunk: "¡Hola! ¿Por dónde te gustaría empezar?" });
           endSSE(res);
-        } catch (_) { /* response may already be in bad state */ }
+        } catch (_) {}
       }
       return;
     }
   } catch (e) {
-    // If the pre-check itself fails, keep going — the orchestrator still runs.
   }
 
   const reqId = trace.traceRequestStart("orchestrator", {
     userId: userId, exerciseId: exerciseId, interaccionId: interaccionId, userMessage: userMessage,
   });
-  // Tag every ragBus event emitted during this request so the SSE listener
-  // below can filter by reqId. ragBus.setRequestId is a global singleton —
-  // safe under Node's single-threaded model because the orchestrator pipeline
-  // is fully awaited within this handler.
   ragBus.setRequestId(reqId);
-  // Default 30s. Lower than the previous 45s so we fail fast when Ollama is
-  // slow under load — better UX to show a fallback than to keep the user
-  // staring at a spinner that ultimately times out at the SSE layer too.
   const budgetMs = Number(process.env.ORCHESTRATOR_BUDGET_MS || 30000);
   trace.traceBudgetSet(reqId, budgetMs);
 
-  // Set SSE headers
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
@@ -266,11 +302,6 @@ router.post("/chat/stream", async function (req, res, next) {
     if (typeof res.flush === "function") res.flush();
   }, 15000);
 
-  // Forward intermediate pipeline events to the SSE client. Without this the
-  // user only sees the final chunk after 5-30s of silence. ragBus is a global
-  // singleton so we filter by reqId to avoid leaking events from concurrent
-  // requests. Frontends that don't recognise `phase` payloads simply ignore
-  // them — additive change, no breaking contract.
   const onRagEvent = (envelope) => {
     if (!envelope || envelope.requestId !== reqId) return;
     try {
@@ -280,23 +311,15 @@ router.post("/chat/stream", async function (req, res, next) {
         ts: envelope.timestamp,
         data: envelope.data,
       });
-      // When the guardrail pipeline is about to invoke its consolidated LLM
-      // rewrite, emit an explicit {rewriting:true} chunk so the frontend can
-      // overwrite the leaked draft with a neutral placeholder while we wait
-      // 2-5s for the rewrite. The {chunk, replace:true} that follows when the
-      // orchestrator finishes will then replace the placeholder with the
-      // sanitised text. Without this signal the student reads the leaked
-      // answer for the full duration of the rewrite.
       if (envelope.event === "guardrail_rewriting" && envelope.status === "start") {
         sseSend(res, { rewriting: true, reason: "guardrail" });
       }
-    } catch (_) { /* response may already be closed */ }
+    } catch (_) {}
   };
   ragBus.on("rag", onRagEvent);
   const detachRagListener = () => ragBus.off("rag", onRagEvent);
 
   try {
-    // Pre-create Interaccion if needed so we can emit interaccionId early
     let iid = interaccionId || null;
     if (iid) {
       const exists = await container.interaccionRepo.existsForUser(iid, userId);
@@ -308,11 +331,6 @@ router.post("/chat/stream", async function (req, res, next) {
       sseSend(res, { interaccionId: iid });
     }
 
-    // Token stream handler — emits SSE per-token as soon as Ollama produces
-    // them. Without this, the user stares at a spinner for 10-25s while the
-    // entire response is buffered server-side. The handler is opt-in: if
-    // the env var ORCHESTRATOR_STREAM_TOKENS=0 we keep the legacy single-chunk
-    // behaviour (useful for load tests / smoke tests that diff the body).
     const streamTokens = process.env.ORCHESTRATOR_STREAM_TOKENS !== "0";
     const tokenStreamHandler = streamTokens
       ? (token) => {
@@ -320,7 +338,6 @@ router.post("/chat/stream", async function (req, res, next) {
         }
       : null;
 
-    // Process through orchestrator
     const ctx = await container.orchestrator.process({
       userId: userId,
       exerciseId: exerciseId,
@@ -331,27 +348,15 @@ router.post("/chat/stream", async function (req, res, next) {
       tokenStreamHandler: tokenStreamHandler,
     });
 
-    // Attach the KG patterns and budget the orchestrator's agents need
-    // (we do this INSIDE container initialization; here we're just reading results)
-
-    // Handle fallthrough (greeting / off_topic / pipeline error without finalResponse)
     if (ctx.fallthrough && !ctx.finalResponse) {
-      // Let the legacy handler take over
       trace.traceRagGate(reqId, "orchestrator_fallthrough", { reason: "fallthrough flag set" });
       clearInterval(hb);
       detachRagListener();
-      // NOTE: headers already sent, so we can't call next(). Send a minimal "try again" chunk.
-      // In practice fallthrough should happen BEFORE SSE headers are sent.
-      // For greetings we still want to stream — defer to ragMiddleware by ending here.
       sseSend(res, { error: "Orchestrator deferred to fallback. Please retry." });
       endSSE(res);
       return;
     }
 
-    // Resolve the final response (post pedagogical reviewer + guardrails).
-    // Belt-and-suspenders: orchestrator's catch already fills finalResponse on
-    // error, but if anything still slips through with an empty payload, send a
-    // localized fallback so the chat never goes silent on the user.
     let responseText = ctx.finalResponse || ctx.llmResponse || "";
     if (!responseText) {
       const lang = ctx.lang || "es";
@@ -362,28 +367,13 @@ router.post("/chat/stream", async function (req, res, next) {
       };
       responseText = fallbacks[lang] || fallbacks.es;
     }
-    // Three paths:
-    // 1. Tokens WERE pushed to the client AND finalResponse matches what we
-    //    streamed: nothing else to send — the user already has the right text.
-    // 2. Tokens WERE pushed AND finalResponse differs (pedagogicalReviewer or
-    //    guardrails rewrote the answer): emit a replace:true chunk so the
-    //    frontend overwrites the partial text instead of appending.
-    // 3. Tokens were NOT pushed to the client (streamTokens=false, OR pipeline
-    //    early-exited before tutorAgent): the client has an empty buffer, so
-    //    send the canonical text as a normal chunk. NEVER use replace:true
-    //    here — it makes the frontend flicker between a stale text and the
-    //    rewrite (the "stream-then-replace" visual bug).
     const streamed = ctx.streamedText || "";
     const tokensSentToClient = streamTokens && streamed.length > 0;
     if (!tokensSentToClient) {
-      // No partials were emitted to the client; just send the final text.
       sseSend(res, { chunk: responseText });
     } else if (responseText !== streamed) {
       sseSend(res, { chunk: responseText, replace: true, correction: true });
     }
-    // Always emit a terminator envelope with the canonical full text and
-    // useful timing metadata. Frontends that don't recognise these fields
-    // simply ignore them; the {chunk:[DONE]} terminator below still fires.
     sseSend(res, {
       done: true,
       fullText: responseText,
@@ -400,9 +390,6 @@ router.post("/chat/stream", async function (req, res, next) {
       response: responseText,
     });
 
-    // Dump prompt + messages + summary al disco si DEBUG_DUMP_CONTEXT=1.
-    // Tres archivos por request: <ts>_<reqId>_prompt.txt, _messages.txt,
-    // _summary.txt en DEBUG_DUMP_PATH (default /tmp/tv_dump en linux).
     dumpOrchestratorContext(reqId, ctx);
 
     detachRagListener();
@@ -424,7 +411,7 @@ router.post("/chat/stream", async function (req, res, next) {
     try {
       sseSend(res, { error: "Error en el sistema RAG." });
       endSSE(res);
-    } catch (_) { /* headers may be in bad state */ }
+    } catch (_) {}
   }
 });
 

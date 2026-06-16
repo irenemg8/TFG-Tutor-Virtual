@@ -3,40 +3,43 @@
 const ISecurityService = require("../../domain/ports/services/ISecurityService");
 const debugLogger = require("../events/pipelineDebugLogger");
 
-/**
- * Deterministic first-line defense against prompt injection and off-topic
- * requests. Regex + keyword based. No LLM calls, runs in <1 ms.
- *
- * Tuned for the electric-circuits tutoring domain (es/en/val).
- */
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |               HEURISTIC SECURITY ADAPTER              |
+            |  Concrete ISecurityService: deterministic first-line  |
+            |  defense against prompt injection and off-topic       |
+            |  requests. Regex + keyword based, no LLM calls,       |
+            |  runs in <1 ms. Tuned for the electric-circuits       |
+            |  tutoring domain (es/en/val).                         |
+        ____|________________                                       |
+   Obj -> | constructor() | -> HeuristicSecurityAdapter (writes attrs)|
+          -----------------                                         |
+            |                                                       |
+            |   logger: Fn                                          |
+        ____|____________________                                   |
+   Txt, Obj -> | analyzeInput() | -> Obj          (reads attrs)     |
+               -----------------                                    |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-// --- Prompt injection patterns (role rewrite / instruction override) ---
 const INJECTION_PATTERNS = [
-  // "ignore previous instructions", "disregard", "override", "forget rules"
   { id: "ignore_rules",     re: /\b(ignor[ea]|disregard|forget|olvida|ignora|oblida)\b.{0,40}\b(previous|all|any|your|the|tus|tu|todas|totes|el|los|les)?.{0,15}\b(instruct|rules|rul|prompt|system|reglas|normas|instrucciones|instruccions|regles)/i },
 
-  // "change your prompt / role / system / context"
   { id: "change_role",      re: /\b(change|cambia|canvia|modifica|reset[ea]?)\b.{0,25}\b(prompt|rol|role|system|sistema|contexto|context|behavior|comportamiento|comportament|personality|personalidad|personalitat)/i },
 
-  // "now you are / act as / pretend to be / eres X / ets X"
   { id: "reassign_role",    re: /\b(now you are|pretend (to be|you are)|act as|you are now|a partir de ahora|desde ahora|now act|ara ets|ara actues)\b/i },
   { id: "reassign_role_es", re: /\b(ahora\s+(eres|actuas|actúas|vas a ser|ser[aá]s)|olvida tu rol|eres un [a-z])/i },
 
-  // Fake system / developer turns
   { id: "fake_system",      re: /(^|\n)\s*(system|sistema|usuario|user|assistant|asistente|developer)\s*[:>]/i },
 
-  // "reveal your prompt/instructions"
   { id: "reveal_prompt",    re: /\b(reveal|show|print|dime|muestrame|muéstrame|mostra|enseñame|enséñame)\b.{0,25}\b(system prompt|your prompt|the prompt|instructions|rules|tu prompt|tus instrucciones|les instruccions)/i },
 
-  // "jailbreak / DAN / developer mode"
   { id: "jailbreak",        re: /\b(jailbreak|dan mode|developer mode|modo desarrollador|modo dev|sin restricciones|without restrictions|sense restriccions)\b/i },
 
-  // Classic delimiter injection
   { id: "delimiter_inject", re: /(<\|[a-z_]+\|>|\[\[system\]\]|###\s*system|<system>|<\/?instructions>)/i },
 ];
 
-// --- Off-topic patterns (things that are clearly NOT circuits) ---
-// These trigger ONLY IF the message has no domain keyword.
 const OFF_TOPIC_PATTERNS = [
   { id: "sports",   re: /\b(f[uú]tbol|soccer|basket(ball)?|baloncesto|tenis|golf|liga|champions|levante|barça|madrid|valencia cf|real madrid|atletico|atl[eé]tico|jugador(es)?|entrenador|equipo de f[uú]tbol|fifa|uefa|mundial)\b/i },
   { id: "politics", re: /\b(presidente|pol[ií]tica|gobierno|elecciones|partido pol[ií]tico|pp|psoe|vox|sumar|podemos|socialista|conservador|rajoy|s[aá]nchez|feij[oó]o|abascal)\b/i },
@@ -46,11 +49,8 @@ const OFF_TOPIC_PATTERNS = [
   { id: "chitchat", re: /\b(qu[eé]\s+tal\s+tu\s+d[ií]a|cu[eé]ntame un chiste|dime un chiste|tell me a joke|fes.?me un acudit|chistes?)\b/i },
 ];
 
-// --- Domain keywords (circuits / electronics) ---
-// If a message contains any of these, off-topic heuristics are suppressed.
-const DOMAIN_KEYWORDS = /\b(circuit(o|os|s)?|resisten(te|cia|cies)|tensi[oó]n|voltaj(e|es)?|corriente|intensidad|amp?erio|amperaje|vol?tio|ohm(io|ios|s)?|nud(o|os|es)|nod(o|os|e|es)|rama(l|les)|mall[ae]s?|kirchhoff|ohm|cortocircuit(o|s)?|circuito abierto|circuit obert|paralel[oa]|serie|ley de ohm|ley de kirchhoff|r[1-9][0-9]?|n[1-9]|v[1-9]|i[1-9]|fuente|tierra|gnd|potencial|divisor|thevenin|norton|condensador|capacitor|inductor|impedancia|diodo|transistor|amplificador|operacional|filtr[oa]|pasa ?(bajos|altos|banda)|ca\b|cc\b|ac\b|dc\b|rms|pico|frecuencia|hercio|hertz|hz\b|watio|vatio|potencia|energ[ií]a|el[eé]ctric[oa]|electr[oó]nic[oa])/i;
+const DOMAIN_KEYWORDS =/\b(circuit(o|os|s)?|resisten(te|cia|cies)|tensi[oó]n|voltaj(e|es)?|corriente|intensidad|amp?erio|amperaje|vol?tio|ohm(io|ios|s)?|nud(o|os|es)|nod(o|os|e|es)|rama(l|les)|mall[ae]s?|kirchhoff|ohm|cortocircuit(o|s)?|circuito abierto|circuit obert|paralel[oa]|serie|ley de ohm|ley de kirchhoff|r[1-9][0-9]?|n[1-9]|v[1-9]|i[1-9]|fuente|tierra|gnd|potencial|divisor|thevenin|norton|condensador|capacitor|inductor|impedancia|diodo|transistor|amplificador|operacional|filtr[oa]|pasa ?(bajos|altos|banda)|ca\b|cc\b|ac\b|dc\b|rms|pico|frecuencia|hercio|hertz|hz\b|watio|vatio|potencia|energ[ií]a|el[eé]ctric[oa]|electr[oó]nic[oa])/i;
 
-// --- Redirect messages ---
 const REDIRECT = {
   injection: {
     es:  "Centrémonos en el ejercicio de circuitos. Soy tu tutor y no puedo cambiar de rol ni de tema. ¿Seguimos con la pregunta anterior?",
@@ -65,15 +65,26 @@ const REDIRECT = {
 };
 
 class HeuristicSecurityAdapter extends ISecurityService {
-  /**
-   * @param {object} [deps]
-   * @param {Function} [deps.logger] - optional (event, payload) logger
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> HeuristicSecurityAdapter    (writes attribute logger (Fn))
+          -----------------
+      Builds the adapter, defaulting logger to a no-op (event, payload)
+      function when none is injected.
+  */
   constructor(deps = {}) {
     super();
     this.logger = deps.logger || (() => {});
   }
 
+  /*
+   Txt, Obj -> ____|________________
+              | analyzeInput() | -> Obj    (reads attribute logger (Fn))
+               -----------------
+      Classifies the user message: blocks prompt-injection patterns
+      (highest priority), then off-topic patterns when no domain keyword
+      is present, otherwise returns safe. Logs every decision.
+  */
   analyzeInput(userMessage, ctx = {}) {
     const lang = (ctx.lang || "es").toLowerCase();
     const text = (userMessage || "").trim();
@@ -84,7 +95,6 @@ class HeuristicSecurityAdapter extends ISecurityService {
       return safeResult;
     }
 
-    // 1) Prompt injection (highest priority)
     for (const p of INJECTION_PATTERNS) {
       if (p.re.test(text)) {
         const msg = REDIRECT.injection[lang] || REDIRECT.injection.es;
@@ -100,7 +110,6 @@ class HeuristicSecurityAdapter extends ISecurityService {
       }
     }
 
-    // 2) Off-topic: only if no domain keyword appears.
     const hasDomain = DOMAIN_KEYWORDS.test(text);
     if (!hasDomain) {
       for (const p of OFF_TOPIC_PATTERNS) {

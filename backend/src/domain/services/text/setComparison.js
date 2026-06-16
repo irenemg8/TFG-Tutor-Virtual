@@ -1,12 +1,27 @@
 "use strict";
 
-// Set equality and subset utilities for element arrays (e.g., ["R1","R2","R4"]).
-// Previously duplicated in queryClassifier.js, guardrails.js, and ollamaChatRoutes.js.
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                     SET COMPARISON                    |
+            |  Module of set equality and subset utilities for       |
+            |  element arrays (e.g. ["R1","R2","R4"]).               |
+        ____|________________                                       |
+   [Txt], [Txt] -> | sameSet()     | -> T/F                         |
+                   ------------------                               |
+   [Txt], [Txt] -> | containsAll() | -> T/F                         |
+                   ------------------                               |
+   Txt -> | _norm() | -> Txt                                        |
+          -----------                                               |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 
-/**
- * Return true if both arrays contain the same elements, regardless of order.
- * Arrays are compared as sets (duplicates are not counted).
- */
+/*
+   [Txt], [Txt] -> ____|___________
+                  | sameSet() | -> T/F
+                   ------------
+      True when both arrays hold the same elements regardless of order
+      (compared as sets; duplicates ignored).
+*/
 function sameSet(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   const A = new Set(a.map(_norm));
@@ -16,9 +31,12 @@ function sameSet(a, b) {
   return true;
 }
 
-/**
- * Return true if every element in `subset` also appears in `superset`.
- */
+/*
+   [Txt], [Txt] -> ____|_______________
+                  | containsAll() | -> T/F
+                   ----------------
+      True when every element in subset also appears in superset.
+*/
 function containsAll(superset, subset) {
   if (!Array.isArray(superset) || !Array.isArray(subset)) return false;
   const S = new Set(superset.map(_norm));

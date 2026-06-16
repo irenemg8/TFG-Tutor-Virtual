@@ -1,10 +1,34 @@
-// backend/src/interfaces/http/routes/ejercicios.js
 const express = require("express");
 const container = require("../../../container");
 const { requireRole } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                   EJERCICIOS ROUTES                   |
+            |  Express router exposing CRUD over exercises. Mounted  |
+            |  under /api/ejercicios. Reads are open; writes require |
+            |  the profesor/admin role. Endpoints:                  |
+            |     GET    /          -> [Ejercicio]                  |
+            |     POST   /          -> Ejercicio   (profesor/admin) |
+            |     GET    /:id        -> Ejercicio                    |
+            |     PUT    /:id        -> Ejercicio   (profesor/admin) |
+            |     DELETE /:id        -> Obj         (profesor/admin) |
+        ____|__________                                              |
+   Obj -> | repo() | -> EjercicioRepo | null     (reads container)   |
+          ----------                                                 |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+/*
+ Obj -> ____|__________
+       | repo() | -> EjercicioRepo | null    (reads container (Obj))
+        ----------
+    Resolves the exercise repository from the container. Sends a 503 and
+    returns null when the persistence layer is not initialized yet.
+*/
 function repo(res) {
   if (!container._initialized || !container.ejercicioRepo) {
     res.status(503).json({ error: "service_unavailable" });
@@ -13,7 +37,6 @@ function repo(res) {
   return container.ejercicioRepo;
 }
 
-// Obtener todos los ejercicios
 router.get("/", async (_req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -24,7 +47,6 @@ router.get("/", async (_req, res) => {
   }
 });
 
-// Crear un nuevo ejercicio (profesor/admin only)
 router.post("/", requireRole("profesor", "admin"), async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -45,7 +67,6 @@ router.post("/", requireRole("profesor", "admin"), async (req, res) => {
   }
 });
 
-// Obtener un ejercicio por ID
 router.get("/:id", async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -57,7 +78,6 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Actualizar un ejercicio por ID (profesor/admin only)
 router.put("/:id", requireRole("profesor", "admin"), async (req, res) => {
   const r = repo(res); if (!r) return;
   try {
@@ -77,7 +97,6 @@ router.put("/:id", requireRole("profesor", "admin"), async (req, res) => {
   }
 });
 
-// Eliminar un ejercicio por ID (profesor/admin only)
 router.delete("/:id", requireRole("profesor", "admin"), async (req, res) => {
   const r = repo(res); if (!r) return;
   try {

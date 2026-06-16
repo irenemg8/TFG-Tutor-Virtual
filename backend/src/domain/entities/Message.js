@@ -2,20 +2,45 @@
 
 const MessageMetadata = require("./MessageMetadata");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                        MESSAGE                        |
+            |  Value object representing a single message in a       |
+            |  conversation. Replaces the embedded conversacion[]    |
+            |  elements of the legacy Mongo document.                |
+        ____|________________                                       |
+   Obj -> | constructor() | -> Message              (writes attrs)  |
+          -----------------                                         |
+            |                                                       |
+            |   id: Txt | null         interactionId: Txt           |
+            |   sequenceNum: Z | null  role: Txt                    |
+            |   content: Txt           timestamp: Date              |
+            |   metadata: MessageMetadata | null                    |
+        ____|___________                                            |
+        | isUser() | -> T/F                          (reads attrs)  |
+        -----------                                                 |
+        ____|________________                                       |
+        | isAssistant() | -> T/F                     (reads attrs)  |
+        ----------------                                            |
+        ____|____________________                                   |
+        | toOllamaFormat() | -> Obj                  (reads attrs)  |
+        --------------------                                        |
+        ____|___________                                            |
+        | toJSON() | -> Obj                          (reads attrs)  |
+        ------------                                                |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 class Message {
-  /**
-   * Value object representing a single message in a conversation.
-   * Replaces the embedded elements of conversacion[] in MongoDB.
-   *
-   * @param {object} props
-   * @param {string}  [props.id]
-   * @param {string}   props.interactionId
-   * @param {number}  [props.sequenceNum]
-   * @param {string}   props.role           - "user" | "assistant"
-   * @param {string}   props.content
-   * @param {Date}    [props.timestamp]
-   * @param {object}  [props.metadata]
-   */
+  /*
+   Obj -> ____|________________
+         | constructor() | -> Message    (writes attributes id (Txt|null),
+          -----------------               interactionId (Txt), sequenceNum (Z|null),
+                                          role (Txt), content (Txt), timestamp (Date),
+                                          metadata (MessageMetadata|null))
+      Builds the message from a plain props object. `role` is "user" or
+      "assistant"; metadata is wrapped into a MessageMetadata when present.
+  */
   constructor(props) {
     this.id = props.id || null;
     this.interactionId = props.interactionId;
@@ -26,19 +51,43 @@ class Message {
     this.metadata = props.metadata ? new MessageMetadata(props.metadata) : null;
   }
 
+  /*
+       ____|___________
+      | isUser() | -> T/F    (reads attribute role (Txt))
+       -----------
+      True when this message was authored by the student.
+  */
   isUser() {
     return this.role === "user";
   }
 
+  /*
+       ____|________________
+      | isAssistant() | -> T/F    (reads attribute role (Txt))
+       ----------------
+      True when this message was authored by the tutor.
+  */
   isAssistant() {
     return this.role === "assistant";
   }
 
+  /*
+       ____|____________________
+      | toOllamaFormat() | -> Obj    (reads attributes role (Txt), content (Txt))
+       --------------------
+      Returns the {role, content} shape consumed by the LLM chat API.
+  */
   toOllamaFormat() {
     return { role: this.role, content: this.content };
   }
 
-  /** Legacy Mongo JSON shape for frontend compat (conversacion[] items). */
+  /*
+       ____|___________
+      | toJSON() | -> Obj    (reads attributes id (Txt|null), role (Txt),
+       ------------          content (Txt), timestamp (Date),
+                             metadata (MessageMetadata|null))
+      Serializes to the legacy Mongo shape used inside conversacion[].
+  */
   toJSON() {
     return {
       _id: this.id,

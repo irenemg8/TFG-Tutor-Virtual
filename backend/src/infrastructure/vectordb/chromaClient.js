@@ -1,11 +1,30 @@
-// ChromaDB client for semantic search over datasets and knowledge graph
-
 const { ChromaClient } = require("chromadb");
 const config = require("../llm/config");
 
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                     CHROMA CLIENT                     |
+            |  ChromaDB client for semantic search over datasets    |
+            |  and the knowledge graph. Lazily creates the client   |
+            |  and caches collection handles by name.               |
+            |                                                       |
+            |          -> | getClient()       | -> ChromaClient     |
+            |        Txt -> | getCollection()  | -> Promise<Obj>     |
+            |   Txt, Obj -> | addDocuments()   | -> Promise<void>    |
+            |   [R], Txt, Z, Obj -> | searchSemantic() | -> Promise<[Obj]> |
+            |          -> | resetCollectionCache() | -> void         |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
 let client = null;
 
-// Initialize and return the ChromaDB client
+/*
+       ____|____________
+      | getClient() | -> ChromaClient
+       -------------
+      Lazily creates and returns the singleton ChromaDB client pointed
+      at config.CHROMA_URL.
+*/
 function getClient() {
   if (client == null) {
     client = new ChromaClient({ path: config.CHROMA_URL });
@@ -13,15 +32,16 @@ function getClient() {
   return client;
 }
 
-// Per-name cache of resolved collection handles. Without this every
-// hybridSearch round-trips Chroma with getOrCreateCollection BEFORE issuing
-// the query — production logs showed 2-3 redundant collection lookups per
-// search and 20s retrievals when those compounded across 7 collections.
-// Collections are immutable by name once created, so caching the handle is
-// safe; we only invalidate on explicit reset (tests / re-ingest scripts).
 const collectionCache = new Map();
 
-// Get or create a collection with cosine similarity (cached).
+/*
+   Txt -> ____|________________
+         | getCollection() | -> Promise<Obj>
+          -----------------
+      Returns the cosine-similarity collection handle for the given
+      name, caching it so repeated searches skip the getOrCreate
+      round-trip. Collections are immutable by name once created.
+*/
 async function getCollection(name) {
   const cached = collectionCache.get(name);
   if (cached) return cached;
@@ -34,20 +54,38 @@ async function getCollection(name) {
   return col;
 }
 
+/*
+       ____|_______________________
+      | resetCollectionCache() | -> void
+       -------------------------
+      Clears the cached collection handles (used by tests and re-ingest
+      scripts).
+*/
 function resetCollectionCache() {
   collectionCache.clear();
 }
 
-// Add documents with embeddings to a collection
+/*
+   Txt, Obj -> ____|________________
+              | addDocuments() | -> Promise<void>
+               ----------------
+      Adds documents with their ids, embeddings and metadatas to the
+      named collection.
+*/
 async function addDocuments(collectionName, {ids, documents, embeddings, metadatas}) {
   const collection = await getCollection(collectionName);
   await collection.add({ids, documents, embeddings, metadatas});
 }
 
-// Semantic search using query embedding -> Returns results sorted by similarity (highest first)
-// `options.signal` lets the retrieval pipeline abort a slow Chroma query when
-// the per-stage budget runs out. Chroma's JS client doesn't expose AbortSignal
-// natively, so we race the query against signal abort and surface AbortError.
+/*
+   [R], Txt, Z, Obj -> ____|__________________
+                      | searchSemantic() | -> Promise<[Obj]>
+                       ------------------
+      Queries the collection with the query embedding and resolves
+      results sorted by similarity (highest first). options.signal lets
+      the pipeline abort a slow query: the query is raced against the
+      abort and surfaces an AbortError.
+*/
 async function searchSemantic(queryEmbedding, collectionName, topK = config.TOP_K_RETRIEVAL, options) {
   options = options || {};
   const collection = await getCollection(collectionName);
@@ -81,8 +119,6 @@ async function searchSemantic(queryEmbedding, collectionName, topK = config.TOP_
     results = await queryPromise;
   }
 
-  // Convert ChromaDB arrays to results with similarity scores
-  // ChromaDB cosine distance = 1 - cosine_similarity
   const items = [];
   for (let i = 0; i < results.ids[0].length; i++) {
     items.push({
