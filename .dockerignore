@@ -1,0 +1,23 @@
+# No copiar al contexto de build (más rápido y evita filtrar secretos)
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+**/dist
+**/build
+**/.git
+**/logs
+**/*.log
+backend/chroma
+backend/debug_ollama
+backend/test_conversations
+backend/tests
+chroma
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.ps1
+material-complementario
+docs
+evaluation/results

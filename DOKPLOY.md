@@ -1,29 +1,36 @@
-# Desplegar el Tutor Virtual en Dokploy
+# Desplegar el Tutor Virtual (Irene) en Dokploy
 
-Guía paso a paso. Todo lo tuyo va en contenedores Docker **aislados**: no
-toca nada de lo de Dennis.
+Este despliegue **sustituye** a la app que hay viva (la de Dennis) por **este
+código**, usando el mismo patrón que ya funciona en ese servidor: un solo
+contenedor `app` (el backend sirve el frontend compilado) + `postgres` +
+`chromadb`, todo en la red `dokploy-network`, servido en la **raíz `/`** y con
+el dominio/HTTPS gestionados desde la UI de Dokploy.
 
-Servicios que se levantan (un solo `docker-compose.yml`):
-
-| Servicio   | Qué es                  | Acceso        |
-|------------|-------------------------|---------------|
-| `postgres` | Base de datos           | solo interno  |
-| `chroma`   | Vectorial (RAG)         | solo interno  |
-| `backend`  | API Node/Express        | solo interno  |
-| `frontend` | React + nginx (`/v2/`)  | puerto host   |
+| Servicio   | Qué es                          | Acceso                         |
+|------------|---------------------------------|--------------------------------|
+| `postgres` | Base de datos                   | solo interno                   |
+| `chromadb` | Vectorial (RAG)                 | solo interno                   |
+| `app`      | Backend + frontend (un contenedor) | `expose 3001` → dominio por UI |
 
 ---
 
-## 1) Antes de empezar — reúne tus secretos
+## 0) Importante: esto toca el proyecto de Dennis
 
-Sácalos de tu `.env` del servidor Windows
-(`C:\Users\admin\TutorVirtual_Irene\backend\.env`). Los necesitarás en el
-paso 4. **No los subas al repo.**
+Como el objetivo es **reemplazar** lo que está vivo, hay que cambiar a qué repo
+apunta el despliegue actual (o crear uno nuevo y apagar el suyo). **Coordínalo
+con Dennis / tu jefa antes** de tocar su proyecto en Dokploy.
 
-- `POSTGRES_PASSWORD` — invéntate una nueva (solo letras y números, sin `@`, `:`, `/`)
-- `SESSION_SECRET`
-- `POLIGPT_API_KEY`
-- `OAUTH_CLIENT_SECRET`
+---
+
+## 1) Reúne tus secretos
+
+Los pegarás en el paso 4. **No los subas al repo.**
+
+- `PG_PASSWORD` — invéntate una nueva (solo letras y números)
+- `SESSION_SECRET` — cadena larga aleatoria
+- `POLIGPT_API_KEY` — tu API key de PoliGPT
+- `OAUTH_CLIENT_SECRET` — el secreto del CAS (está en la pestaña *Environment*
+  del proyecto de Dennis en Dokploy)
 - `EXPORT_TOKEN`
 
 ---
@@ -33,111 +40,69 @@ paso 4. **No los subas al repo.**
 Desde `C:\Users\irene\Desktop\UNIVERSIDAD\TFG\TFG-Tutor-Virtual`:
 
 ```powershell
-git add docker-compose.yml DOKPLOY.md backend/Dockerfile backend/.dockerignore frontend/Dockerfile frontend/.dockerignore frontend/nginx.conf
-git commit -m "chore(deploy): dockerizar para Dokploy"
-git push -u origin dokploy
+git push origin dokploy
 ```
 
 Esto sube SOLO la rama `dokploy` a **tu** repo `irenemg8/TFG-Tutor-Virtual`.
-No afecta a `main`, ni a Dennis, ni a producción.
 
 ---
 
-## 3) Crea la aplicación en Dokploy
+## 3) Apunta el despliegue a tu repo
 
-1. Entra a `http://158.42.148.30:3000`.
-2. **Create Project** → ponle un nombre tuyo (p. ej. `tutor-virtual-irene`).
-3. Dentro del proyecto: **Create Service → Compose**.
-4. **Provider: GitHub** → repo `irenemg8/TFG-Tutor-Virtual`, **Branch: `dokploy`**.
-5. **Compose Path**: `docker-compose.yml` (en la raíz).
+**Opción A — reemplazar el servicio existente (recomendada con permiso):**
+en el servicio `compose` que ya existe en Dokploy, cambia el **Provider/Repo**
+a `irenemg8/TFG-Tutor-Virtual`, **Branch `dokploy`**, **Compose Path
+`docker-compose.yml`**.
 
-> Si Dokploy te pide conectar GitHub primero, sigue su asistente para
-> autorizar tu cuenta. Si tu repo es privado, tendrás que darle acceso.
-
----
-
-## 4) Pega las variables de entorno
-
-En la aplicación → pestaña **Environment**, pega esto y **rellena los `<...>`**:
-
-```
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=<tu_password_nueva_solo_alfanumerica>
-POSTGRES_DB=tutorvirtual
-
-FRONTEND_HOST_PORT=8082
-
-SERVER_BASE_URL=https://tutor-socratico.gnd.upv.es/v2
-FRONTEND_BASE_URL=https://tutor-socratico.gnd.upv.es/v2
-
-SESSION_SECRET=<cadena_larga_aleatoria>
-
-LLM_PROVIDER=poligpt
-EMBEDDING_PROVIDER=openai
-POLIGPT_BASE_URL=https://api.poligpt.upv.es
-POLIGPT_API_KEY=<tu_api_key_poligpt>
-POLIGPT_MODEL=qwen2.5vl:32b
-POLIGPT_EMBED_MODEL=nomic-embed-text
-
-USE_ORCHESTRATOR=1
-ORCHESTRATOR_BUDGET_MS=90000
-GUARDRAIL_BUDGET_MS=20000
-GUARDRAIL_MIN_RETRY_BUDGET_MS=10000
-ORCHESTRATOR_STREAM_TOKENS=1
-AUDIT_LOG=1
-DEV_BYPASS_AUTH=false
-
-CAS_BASE_URL=https://caspre.upv.es/cas
-OAUTH_CLIENT_ID=TUTOR-VIRTUAL
-OAUTH_CLIENT_SECRET=<secreto_cas>
-OAUTH_REDIRECT_URI=https://tutor-socratico.gnd.upv.es/v2/api/auth/cas/callback
-OAUTH_SCOPES=profile email
-
-EXPORT_TOKEN=<token_export>
-```
-
-> El `PG_CONNECTION_STRING` y el `CHROMA_URL` **no** se ponen aquí: el
-> `docker-compose.yml` ya los fija apuntando a los contenedores internos.
+**Opción B — crear uno nuevo:** Create Project → Create Service → **Compose** →
+GitHub `irenemg8/TFG-Tutor-Virtual`, Branch `dokploy`, Compose Path
+`docker-compose.yml`. (Luego habría que apagar el de Dennis para liberar el
+dominio.)
 
 ---
 
-## 5) Deploy
+## 4) Variables de entorno
 
-Pulsa **Deploy**. Dokploy clona la rama, construye las imágenes y levanta los
-4 contenedores. La primera vez tarda (descarga Postgres, Chroma y compila).
+En el servicio → **Environment**, pega el contenido de `.env.example` y rellena
+los `<...>`. Las obligatorias (si faltan, el deploy falla aposta):
+`PG_PASSWORD`, `SESSION_SECRET`, `POLIGPT_API_KEY`, `OAUTH_CLIENT_SECRET`.
 
-El backend **crea las tablas solo** al arrancar (corre las migraciones SQL).
-
-**Prueba directa:** `http://158.42.148.30:8082/v2/`
-(si cambiaste `FRONTEND_HOST_PORT`, usa ese puerto).
+> El resto (`PG_CONNECTION_STRING`, `CHROMA_URL`…) ya las fija el
+> `docker-compose.yml` apuntando a los contenedores internos.
 
 ---
 
-## 6) El dominio `/v2/` (coordinar con Dennis)
+## 5) Dominio (UI de Dokploy, NO /v2)
 
-Tu app espera vivir bajo `https://tutor-socratico.gnd.upv.es/v2/`. Quien
-gestione el proxy de delante (Traefik de Dokploy o el nginx del servidor)
-debe reenviar **todo `/v2`** al servicio `frontend` (puerto 80) **SIN quitar
-el prefijo `/v2`**. Pregúntale a Dennis cómo está montado el enrutado del
-dominio y pásale ese dato.
+En el servicio → pestaña **Domains**: añade `tutor-socratico.gnd.upv.es`,
+apuntando al servicio **`app`**, **puerto `3001`**, con HTTPS. Se sirve en la
+**raíz `/`**. No hace falta nginx ni labels de Traefik a mano.
+
+> El callback del CAS es `https://tutor-socratico.gnd.upv.es/api/auth/cas/callback`
+> (sin `/v2`). Debe coincidir con el registrado en el CAS de la UPV.
+
+---
+
+## 6) Deploy
+
+Pulsa **Deploy**. La primera vez tarda (descarga Postgres/Chroma y compila).
+El backend **crea las tablas solo** al arrancar (migraciones SQL en
+`backend/src/infrastructure/persistence/postgresql/migrations`).
 
 ---
 
 ## 7) Cargar los datos del RAG (Chroma empieza vacío)
 
-El contenedor `chroma` arranca sin datos. Tendrás que **re-ejecutar tu
-ingesta** de material para poblar los embeddings (igual que hacías en el
-servidor Windows, pero apuntando al nuevo Chroma). Si no, el RAG no
-encontrará contexto.
+El contenedor `chromadb` arranca sin datos. Re-ejecuta tu **ingesta** de
+material para poblar los embeddings; si no, el RAG no encontrará contexto.
 
 ---
 
 ## Notas / problemas típicos
 
-- **El puerto 8082 ya está usado** → cambia `FRONTEND_HOST_PORT` a otro libre.
-- **Falla la build de Chroma/onnx** → el backend usa imagen Debian (no alpine)
-  justo para evitar eso; si Chroma da error de API, ajusta la versión
-  `chromadb/chroma:0.5.23` del compose a la de tu cliente.
-- **Cambiaste código** → haz `git push` a la rama `dokploy` y pulsa **Redeploy**.
-- **Logs** → cada servicio tiene su pestaña de logs en Dokploy; míralos si algo
-  no arranca.
+- **`dokploy-network` no existe** → suele crearla Dokploy. Con *Isolated
+  Deployments* puedes quitar el bloque `networks: dokploy-network` del compose.
+- **Cambiaste código** → `git push` a `dokploy` y pulsa **Redeploy**.
+- **Logs** → cada servicio tiene su pestaña de logs; míralos si algo no arranca.
+- **Chroma da error de API** → el cliente `chromadb@3` usa la API v2; si la
+  imagen `latest` cambiara, fija una versión concreta en el compose.
