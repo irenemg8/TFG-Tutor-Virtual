@@ -83,7 +83,10 @@ services:
       PG_CONNECTION_STRING: postgresql://${PG_USER:-postgres}:${PG_PASSWORD:?PG_PASSWORD is required}@postgres:5432/${PG_DB:-tutorvirtual}
       # --- General ---
       PORT: 3001
-      NODE_ENV: production
+      # NODE_ENV configurable: para el smoke-test puedes poner "development"
+      # (junto con DEV_BYPASS_AUTH=true) y probar el tutor sin login CAS.
+      # Para el despliegue final: production.
+      NODE_ENV: ${NODE_ENV:-production}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       SERVER_BASE_URL: ${SERVER_BASE_URL:-https://tutor-socratico.gnd.upv.es}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-https://tutor-socratico.gnd.upv.es}
@@ -132,8 +135,10 @@ services:
       OAUTH_SCOPES: ${OAUTH_SCOPES:-profile email}
       # --- Export de interacciones ---
       EXPORT_TOKEN: ${EXPORT_TOKEN:-}
-      # --- Bypass de auth (SIEMPRE false en producción) ---
-      DEV_BYPASS_AUTH: "false"
+      # --- Bypass de auth: SIEMPRE false en producción.
+      #     Solo true (con NODE_ENV=development) para el smoke-test.
+      #     El backend aborta si bypass=true + NODE_ENV=production. ---
+      DEV_BYPASS_AUTH: ${DEV_BYPASS_AUTH:-false}
     volumes:
       - app_logs:/app/backend/logs
     extra_hosts:
