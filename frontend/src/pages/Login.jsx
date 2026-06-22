@@ -81,10 +81,10 @@ export default function Login() {
             </span>
           </button>
 
-          {import.meta.env.DEV && (
+          {(import.meta.env.DEV || import.meta.env.VITE_DEV_BYPASS_AUTH === "true") && (
             <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "1rem", paddingTop: "1rem", textAlign: "center" }}>
               <p style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: "0.5rem" }}>
-                Modo desarrollo local
+                Modo demo (sin CAS)
               </p>
               <button
                 type="button"
