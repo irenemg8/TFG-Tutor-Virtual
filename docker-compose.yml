@@ -1,0 +1,109 @@
+# ============================================================
+#  Tutor Virtual (Irene) — despliegue en Dokploy
+#  4 servicios aislados: postgres, chroma, backend, frontend.
+#
+#  Las variables SECRETAS no van aquí: se pegan en Dokploy
+#  (pestaña Environment). Las que aparecen abajo SIN "=valor"
+#  (p. ej.  - POLIGPT_API_KEY) se heredan de ese Environment.
+#  Las que SÍ tienen valor están fijadas a propósito para que
+#  apunten a los contenedores internos (postgres, chroma...).
+#
+#  Ver DOKPLOY.md para la lista completa de variables a pegar.
+# ============================================================
+
+services:
+  # ---------------- Base de datos relacional ----------------
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-tutorvirtual}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-tutorvirtual}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------------- Base de datos vectorial (RAG) -----------
+  chroma:
+    image: chromadb/chroma:0.5.23
+    restart: unless-stopped
+    volumes:
+      - chromadata:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+
+  # ---------------- Backend (Node/Express) ------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chroma:
+        condition: service_started
+    environment:
+      # --- Fijadas para apuntar a los contenedores internos ---
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_TYPE=postgresql
+      - PG_CONNECTION_STRING=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-tutorvirtual}
+      - CHROMA_URL=http://chroma:8000
+      # --- Heredadas del Environment de Dokploy (sin valor aquí) ---
+      - SESSION_SECRET
+      - SERVER_BASE_URL
+      - FRONTEND_BASE_URL
+      - LLM_PROVIDER
+      - EMBEDDING_PROVIDER
+      - POLIGPT_BASE_URL
+      - POLIGPT_API_KEY
+      - POLIGPT_MODEL
+      - POLIGPT_EMBED_MODEL
+      - USE_ORCHESTRATOR
+      - ORCHESTRATOR_BUDGET_MS
+      - GUARDRAIL_BUDGET_MS
+      - GUARDRAIL_MIN_RETRY_BUDGET_MS
+      - ORCHESTRATOR_STREAM_TOKENS
+      - AUDIT_LOG
+      - DEV_BYPASS_AUTH
+      - CAS_BASE_URL
+      - OAUTH_CLIENT_ID
+      - OAUTH_CLIENT_SECRET
+      - OAUTH_REDIRECT_URI
+      - OAUTH_SCOPES
+      - EXPORT_TOKEN
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  # ---------------- Frontend (React + nginx) ----------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_PATH: /v2
+        VITE_BACKEND_URL: /v2
+    restart: unless-stopped
+    depends_on:
+      - backend
+    # Puerto en el HOST para probar directo: http://158.42.148.30:8082/v2/
+    # Si choca con algo de Dennis, cambia 8082 por otro libre.
+    ports:
+      - "${FRONTEND_HOST_PORT:-8082}:80"
+
+volumes:
+  pgdata:
+  chromadata:
