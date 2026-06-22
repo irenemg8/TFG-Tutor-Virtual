@@ -138,6 +138,11 @@ services:
       - app_logs:/app/backend/logs
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # ⚠️ TEMPORAL: solo para probar por IP antes de cambiar el dominio.
+    #    Prueba en http://158.42.148.30:8090/  — QUITAR estas 2 líneas
+    #    (ports) antes del despliegue final con dominio.
+    ports:
+      - "8090:3001"
     expose:
       - 3001
     networks:
