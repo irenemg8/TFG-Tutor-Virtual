@@ -23,7 +23,7 @@ services:
       POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD is required}
       POSTGRES_DB: ${PG_DB:-tutorvirtual}
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pg_data_v2:/var/lib/postgresql/data
     networks:
       - dokploy-network
     healthcheck:
@@ -160,7 +160,7 @@ services:
       start_period: 40s
 
 volumes:
-  pg_data:
+  pg_data_v2:
   chroma_data:
   app_logs:
 
