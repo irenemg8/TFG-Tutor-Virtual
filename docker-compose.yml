@@ -20,10 +20,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${PG_USER:-postgres}
-      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD is required}
+      POSTGRES_PASSWORD: smoketestpw2026
       POSTGRES_DB: ${PG_DB:-tutorvirtual}
     volumes:
-      - pg_data_v2:/var/lib/postgresql/data
+      - pg_data_v3:/var/lib/postgresql/data
     networks:
       - dokploy-network
     healthcheck:
@@ -80,7 +80,7 @@ services:
     environment:
       # --- Base de datos (apunta al contenedor interno) ---
       DATABASE_TYPE: postgresql
-      PG_CONNECTION_STRING: postgresql://${PG_USER:-postgres}:${PG_PASSWORD:?PG_PASSWORD is required}@postgres:5432/${PG_DB:-tutorvirtual}
+      PG_CONNECTION_STRING: postgresql://postgres:smoketestpw2026@postgres:5432/tutorvirtual
       # --- General ---
       PORT: 3001
       # NODE_ENV configurable: para el smoke-test puedes poner "development"
@@ -160,7 +160,7 @@ services:
       start_period: 40s
 
 volumes:
-  pg_data_v2:
+  pg_data_v3:
   chroma_data:
   app_logs:
 
