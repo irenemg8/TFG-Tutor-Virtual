@@ -115,6 +115,9 @@ services:
       OLLAMA_INSECURE_TLS: ${OLLAMA_INSECURE_TLS:-0}
       # --- ChromaDB (contenedor interno) ---
       CHROMA_URL: http://chromadb:8000
+      # Chroma arranca vacío; false = modo solo-BM25 hasta que ingestes el RAG.
+      # Pon true cuando hayas cargado los embeddings.
+      CHROMA_REQUIRED: ${CHROMA_REQUIRED:-false}
       # --- Orquestador hexagonal ---
       USE_ORCHESTRATOR: ${USE_ORCHESTRATOR:-1}
       ORCHESTRATOR_BUDGET_MS: ${ORCHESTRATOR_BUDGET_MS:-90000}
