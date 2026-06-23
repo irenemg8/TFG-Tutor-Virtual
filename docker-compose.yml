@@ -80,7 +80,9 @@ services:
     environment:
       # --- Base de datos (apunta al contenedor interno) ---
       DATABASE_TYPE: postgresql
-      PG_CONNECTION_STRING: postgresql://postgres:smoketestpw2026@postgres:5432/tutorvirtual
+      # Host = nombre ÚNICO del contenedor (no "postgres", que colisiona con
+      # el servicio homónimo de Dennis en la red compartida dokploy-network).
+      PG_CONNECTION_STRING: postgresql://postgres:smoketestpw2026@tutor-irene-postgres:5432/tutorvirtual
       # --- General ---
       PORT: 3001
       # NODE_ENV configurable: para el smoke-test puedes poner "development"
@@ -114,7 +116,7 @@ services:
       OLLAMA_CLASSIFIER_TIMEOUT_MS: ${OLLAMA_CLASSIFIER_TIMEOUT_MS:-120000}
       OLLAMA_INSECURE_TLS: ${OLLAMA_INSECURE_TLS:-0}
       # --- ChromaDB (contenedor interno) ---
-      CHROMA_URL: http://chromadb:8000
+      CHROMA_URL: http://tutor-irene-chromadb:8000
       # Chroma arranca vacío; false = modo solo-BM25 hasta que ingestes el RAG.
       # Pon true cuando hayas cargado los embeddings.
       CHROMA_REQUIRED: ${CHROMA_REQUIRED:-false}
