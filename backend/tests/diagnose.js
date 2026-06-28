@@ -1,0 +1,1374 @@
+"use strict";
+
+const path = require("path");
+const ROOT = path.join(__dirname, "..");
+process.chdir(ROOT);
+require("dotenv").config({ path: path.join(ROOT, ".env") });
+
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                        DIAGNOSE                       |
+            |  Real (no-mock) diagnostic suite. Loads the actual    |
+            |  guardrail and classifier code, hits real production  |
+            |  strings, and reports which foci of error reproduce.  |
+        ____|________________                                       |
+   Txt -> | assert() | -> void                                      |
+          ------------                                              |
+        ____|_______                                                |
+   Txt -> | section() | -> void                                     |
+          -----------                                               |
+            |                                                       |
+   void -> | section8() | -> Promise<void>                          |
+   void -> | section9() | -> Promise<void>                          |
+   void -> | section10() | -> void                                  |
+   void -> | section11() | -> Promise<void>                         |
+   void -> | section12() | -> Promise<void>                         |
+   void -> | section13() | -> Promise<void>                         |
+   void -> | section14() | -> void                                  |
+   void -> | section15() | -> void                                  |
+   void -> | section16() | -> void                                  |
+   void -> | section17() | -> Promise<void>                         |
+   void -> | section18() | -> Promise<void>                         |
+            |                                                       |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
+
+const results = [];
+
+/*
+   IN -> ____|________________
+        | assert() | -> void
+         ----------
+      Records a check result and prints PASS/FAIL with the detail.
+   */
+function assert(name, ok, detail) {
+  results.push({ name, ok, detail });
+  console.log((ok ? "  PASS " : "  FAIL ") + name + (detail ? "  ::  " + detail : ""));
+}
+
+/*
+   IN -> ____|_________
+        | section() | -> void
+         -----------
+      Prints a section header to the console.
+   */
+function section(t) { console.log("\n=== " + t + " ==="); }
+
+const { createDefaultGuardrails } = require(path.join(ROOT, "src/infrastructure/guardrails"));
+const { classifyQuery } = require(path.join(ROOT, "src/domain/services/rag/queryClassifier"));
+const {
+  isNegatedInContext,
+} = require(path.join(ROOT, "src/domain/services/text/negationDetector"));
+const guardrails = createDefaultGuardrails();
+const byId = {}; for (const g of guardrails) byId[g.id] = g;
+
+section("1. StateReveal: pattern coverage on real production strings");
+const sr = byId.state_reveal;
+const ctxSR = { evaluableElements: ["R1","R2","R3","R4","R5"], kgConceptPatterns: [], lang: "es" };
+const stateCases = [
+  { msg: "R5 está cortocircuitada en este circuito.",         expect: true,  why: "feminine -ada (canonical)" },
+  { msg: "Correcto, R5 no contribuye porque está cortocircuitado.", expect: true, why: "masculine -ado" },
+  { msg: "Exacto, R3 también no contribuye debido al interruptor abierto entre N2 y N3.", expect: true, why: "switch-open phrase" },
+  { msg: "R5 se cortocircuita cuando el switch cierra.",       expect: true,  why: "reflexive verb form" },
+  { msg: "R3 queda en corto en esa rama.",                     expect: true,  why: "queda en corto" },
+  { msg: "R1 está en corto y por eso no afecta.",              expect: true,  why: "está en corto (no -circuitado)" },
+  { msg: "R5 tiene los terminales unidos, no opone resistencia.", expect: true, why: "topology-described state" },
+  { msg: "El switch entre N2 y N3 está abierto, así que R3 no influye.", expect: true, why: "switch open + element" },
+  { msg: "¿Por qué R1 contribuye a la diferencia de potencial?", expect: false, why: "Socratic question about KG concept (FP guard)" },
+  { msg: "R5 esta cortocircuitada en este circuito.",          expect: true,  why: "G1 accent-less -ada LEAK" },
+  { msg: "R3 esta abierto, no influye.",                       expect: true,  why: "G1 accent-less abierto LEAK" },
+];
+for (const c of stateCases) {
+  const r = sr.check(c.msg, ctxSR);
+  assert(`SR ${c.expect ? "TP" : "FP"}: ${c.why}`, r.violated === c.expect, c.msg);
+}
+
+section("2. FalseConfirmation: detects confirmations in the response head");
+const fc = byId.false_confirmation;
+const fcCtx = { classification: "wrong_answer", lang: "es", mentionedElements: ["R5"] };
+const fcCases = [
+  { msg: "Perfecto. Muy bien.",                                                     expect: true,  why: "opener" },
+  { msg: "No es exactamente así. Vamos a repasar.",                                 expect: false, why: "negated FP" },
+  { msg: "Eh, vamos a pensarlo. Has hecho un análisis interesante. Perfecto, ahora R1...", expect: true, why: "confirmation at char ~75 — likely MISSED" },
+  { msg: "Vamos a pensar paso a paso, considerando la Ley de Ohm. Exactamente, así es como se calcula.", expect: true, why: "confirmation at char ~67 — likely MISSED" },
+  { msg: "Sí, la corriente preferirá pasar por ese camino de baja resistencia.",    expect: true,  why: "opens with affirmative 'Sí'" },
+  { msg: "¿Vamos a revisarlo? Exacto, R5 forma parte de la respuesta.",            expect: true,  why: "G2 confirmation after leading question" },
+  { msg: "Vamos a revisar R5. ¿Está claro?",                                        expect: false, why: "G2 FP: 'claro' inside a question" },
+];
+for (const c of fcCases) {
+  const r = fc.check(c.msg, fcCtx);
+  assert(`FC ${c.expect ? "TP" : "FP"}: ${c.why}`, r.violated === c.expect, c.msg.slice(0, 80) + "...");
+}
+
+section("2b. CompleteSolution case-norm (G3) + RepeatedQuestion symmetry (G4)");
+const CompleteSolutionGuardrail = require(path.join(ROOT, "src/infrastructure/guardrails/CompleteSolutionGuardrail"));
+const cs = new CompleteSolutionGuardrail();
+const g3FP = cs.check("Perfecto, has acertado.", { correctAnswer: ["R1","R2","R4"], lang: "es", proposed: ["r4"], negated: [] });
+assert("G3: lowercase proposed 'r4' (in answer) → NOT a violation", g3FP.violated === false, "got violated=" + g3FP.violated);
+const g3TP = cs.check("Perfecto, has acertado.", { correctAnswer: ["R1","R2","R4"], lang: "es", proposed: ["R3"], negated: [] });
+assert("G3: genuinely wrong proposed 'R3' → still a violation", g3TP.violated === true, "got violated=" + g3TP.violated);
+
+const RepeatedQuestionGuardrail = require(path.join(ROOT, "src/infrastructure/guardrails/RepeatedQuestionGuardrail"));
+const g4FP = RepeatedQuestionGuardrail._similarity(
+  "¿Qué resistencias importan?",
+  "¿Qué pasa con las resistencias que importan cuando el interruptor esta abierto y la corriente busca otro camino?");
+assert("G4: short-subset vs long question → below 0.7 threshold", g4FP < 0.7, "got sim=" + g4FP.toFixed(2));
+const g4TP = RepeatedQuestionGuardrail._similarity(
+  "¿Por qué circula corriente por esa rama?",
+  "¿Por qué circula corriente por esta rama?");
+assert("G4: genuine repeat still scores >= 0.7", g4TP >= 0.7, "got sim=" + g4TP.toFixed(2));
+
+section("2c. Surgical fixes: accent-fold redact (S1), idioms (S2), gender (S3), spacing (S4)");
+const gr = require(path.join(ROOT, "src/domain/services/rag/guardrails"));
+
+const s1 = byId.state_reveal.surgicalFix(
+  "R5 esta cortocircuitada, asi que no influye. Piensa en el resto.",
+  { evaluableElements: ["R1","R2","R3","R4","R5"], lang: "es", messages: [] });
+assert("S1: accent-less state reveal IS redacted (not passed through)",
+  s1.applied === true && !/cortocircuitada/i.test(s1.text),
+  "applied=" + s1.applied + " text=" + JSON.stringify(s1.text).slice(0, 80));
+
+assert("S2: idiom 'Claro está que…' is NOT decapitated",
+  gr.removeOpeningConfirmation("Claro está que R5 no va.", "es") === "Claro está que R5 no va.",
+  "got: " + gr.removeOpeningConfirmation("Claro está que R5 no va.", "es"));
+assert("S2: idiom 'Justo por eso…' is NOT decapitated",
+  gr.removeOpeningConfirmation("Justo por eso R5 importa.", "es") === "Justo por eso R5 importa.",
+  "got: " + gr.removeOpeningConfirmation("Justo por eso R5 importa.", "es"));
+assert("S2 control: 'Claro, R5 no va.' still strips 'Claro'",
+  gr.removeOpeningConfirmation("Claro, R5 no va.", "es") === "R5 no va.",
+  "got: " + gr.removeOpeningConfirmation("Claro, R5 no va.", "es"));
+assert("S2 control: 'Claro que sí, R5 va.' still strips the multiword confirm",
+  gr.removeOpeningConfirmation("Claro que sí, R5 va.", "es") === "R5 va.",
+  "got: " + gr.removeOpeningConfirmation("Claro que sí, R5 va.", "es"));
+
+assert("S5: opening '¿' of the following question is preserved",
+  gr.removeOpeningConfirmation("Exacto. ¿Qué pasa con R3?", "es") === "¿Qué pasa con R3?",
+  "got: " + gr.removeOpeningConfirmation("Exacto. ¿Qué pasa con R3?", "es"));
+assert("S5: opening '¡' is preserved too",
+  gr.removeOpeningConfirmation("Perfecto. ¡Cuidado con R5!", "es") === "¡Cuidado con R5!",
+  "got: " + gr.removeOpeningConfirmation("Perfecto. ¡Cuidado con R5!", "es"));
+
+const s3 = gr.redactElementMentions("¿Por qué R1, R2 y R4 son las correctas?", ["R1","R2","R4"], "es").text;
+assert("S3: no gender clash ('esos elementos … son los correctos')",
+  /esos\s+elementos/i.test(s3) && /los\s+correctos/i.test(s3) && !/las\s+correctas/i.test(s3),
+  "got: " + JSON.stringify(s3));
+
+const s4 = gr.redactStateRevealSentence(
+  "Buen avance aqui. R5 está cortocircuitada. Ahora dime que ocurre en la otra rama. Sigue pensando bien.",
+  ["R1","R5"], "está cortocircuitad", "es", 0).text;
+assert("S4: no glued sentences in the untouched tail (no 'rama.Sigue')",
+  !/[a-zñáéíóú][.!?][A-ZÁÉÍÓÚÑ]/.test(s4),
+  "got: " + JSON.stringify(s4).slice(0, 120));
+
+section("2d. SolutionLeak accent-fold (SL), Adherence tag-questions (AD), orchestrator 1b (ORC)");
+const SolutionLeakGuardrail = require(path.join(ROOT, "src/infrastructure/guardrails/SolutionLeakGuardrail"));
+const sl = byId.solution_leak;
+assert("SL: accent-less semantic leak detected ('Asi es, esos elementos contribuyen.')",
+  SolutionLeakGuardrail.looksLikeSemanticAffirmation("Asi es, esos elementos contribuyen.") === true);
+assert("SL: accent-less reveal phrase detected ('La solucion es R1.')",
+  sl.check("La solucion es R1.", { correctAnswer: ["R1"], lang: "es" }).violated === true);
+assert("SL: Valencian accent-less reveal detected ('La resposta es R2.')",
+  sl.check("La resposta es R2.", { correctAnswer: ["R2"], lang: "val" }).violated === true);
+assert("SL control: Socratic question is not a leak",
+  sl.check("¿Qué pasa con la corriente en R1?", { correctAnswer: ["R1"], lang: "es" }).violated === false);
+
+const adg = byId.adherence;
+assert("AD: tag-question + 1 real question → NOT a multi-question violation",
+  adg.check("Eso tiene lógica, ¿verdad? Ahora, ¿qué pasa cuando el interruptor se abre?", { lang: "es" }).violated === false);
+const adFix = adg.surgicalFix("¿Qué nodo conecta R1? ¿Y qué pasa con R2 cuando el switch abre?", { lang: "es" });
+assert("AD: two real questions → fix keeps the first substantive question",
+  adFix.applied === true && /R1/.test(adFix.text) && !/R2/.test(adFix.text),
+  "got: " + JSON.stringify(adFix.text));
+
+const orch = Object.create(require(path.join(ROOT, "src/domain/agents/orchestrator")).prototype);
+function _nw(s) { const c = { finalResponse: s }; orch._normaliseWhitespace(c); return c.finalResponse; }
+assert("ORC: still splits real concat error 'identificarAhora'",
+  _nw("Debes identificarAhora el nodo") === "Debes identificar Ahora el nodo",
+  "got: " + _nw("Debes identificarAhora el nodo"));
+assert("ORC: no longer splits acronym glue 'voltajeDC'",
+  _nw("mide el voltajeDC ahora") === "mide el voltajeDC ahora",
+  "got: " + _nw("mide el voltajeDC ahora"));
+assert("ORC: leaves legitimate text untouched ('la Ley de Ohm')",
+  _nw("Aplica la Ley de Ohm aqui") === "Aplica la Ley de Ohm aqui",
+  "got: " + _nw("Aplica la Ley de Ohm aqui"));
+
+section("2e. normalizeToSpanish (LM1), polite switch (LM2), per-element case (LM3), stopwords (LM4)");
+const lmgr = require(path.join(ROOT, "src/domain/services/languageManager"));
+assert("LM1: normalizeToSpanish('divisor de tensión') is NOT corrupted",
+  lmgr.normalizeToSpanish("divisor de tensión") === "divisor de tensión",
+  "got: " + lmgr.normalizeToSpanish("divisor de tensión"));
+assert("LM1: Valencian 'divisor de tensió' → 'divisor de tensión' (single n)",
+  lmgr.normalizeToSpanish("divisor de tensió") === "divisor de tensión",
+  "got: " + lmgr.normalizeToSpanish("divisor de tensió"));
+
+assert("LM2: 'sorry, can we continue in english' → switch to 'en'",
+  lmgr.detectLanguageSwitch("sorry, can we continue in english") === "en",
+  "got: " + lmgr.detectLanguageSwitch("sorry, can we continue in english"));
+assert("LM2 control: 'lo siento, no entiendo nada en english' → still null (real negation)",
+  lmgr.detectLanguageSwitch("lo siento, no entiendo nada en english please") === null,
+  "got: " + lmgr.detectLanguageSwitch("lo siento, no entiendo nada en english please"));
+
+const { analyzeStudentElements } = require(path.join(ROOT, "src/domain/services/rag/ragPipeline"));
+const lm3 = analyzeStudentElements({ proposed: ["R1","R3"], negated: ["R2"] }, ["r1","r2","r4"]);
+assert("LM3: lowercase correctAnswer → R1 still CORRECT, R2 still WRONG REJECTION",
+  /CORRECT PROPOSALS: R1\b/.test(lm3) && /WRONG REJECTION/.test(lm3) && /WRONG PROPOSALS: R3\b/.test(lm3),
+  "banner: " + JSON.stringify(lm3.replace(/\n/g, " ")).slice(0, 160));
+
+assert("LM4: no multi-word Valencian stopwords remain",
+  lmgr.HEURISTIC_STOPWORDS.val.filter((w) => w.includes(" ")).length === 0,
+  "got: " + JSON.stringify(lmgr.HEURISTIC_STOPWORDS.val.filter((w) => w.includes(" "))));
+
+section("4. NegationDetector: pre-window length");
+assert("'No es exactamente'   detected", isNegatedInContext("No es exactamente así", "exactamente") === true);
+assert("'No es para nada exactamente' detected (long pre-negation)",
+  isNegatedInContext("No es para nada exactamente correcto", "exactamente") === true,
+  "if false: pre-window is too short to span 'no...para nada...exactamente'");
+assert("'Tampoco es exactamente' detected",
+  isNegatedInContext("Tampoco es exactamente así", "exactamente") === true);
+assert("'Ni siquiera exactamente' detected",
+  isNegatedInContext("Ni siquiera es exactamente así", "exactamente") === true);
+
+section("5. Classifier: edge cases that affect routing");
+const correct = ["R1","R2","R4"];
+const evalEl  = ["R1","R2","R3","R4","R5"];
+const c1 = classifyQuery("hola", correct, evalEl);
+assert("'hola' → greeting", c1.type === "greeting", "got: " + c1.type);
+const c2 = classifyQuery("hola, ahora voy a pensar en R1 y R2", correct, evalEl);
+assert("'hola, ahora voy a pensar en R1 y R2' is NOT swallowed as greeting (D1 fix)",
+  c2.type !== "greeting", "got: " + c2.type);
+const c3 = classifyQuery("r1 r2 r4 because they're in series", correct, evalEl);
+assert("correct answer + concept keyword 'series' → correct_wrong_reasoning (KG verification, intentional)",
+  c3.type === "correct_wrong_reasoning",
+  "got: " + c3.type);
+const c4 = classifyQuery("r1 r2 r4", correct, evalEl);
+assert("'r1 r2 r4' → correct_no_reasoning", c4.type === "correct_no_reasoning", "got: " + c4.type);
+const c5 = classifyQuery("ni idea", correct, evalEl);
+assert("'ni idea' → dont_know", c5.type === "dont_know", "got: " + c5.type);
+const c6 = classifyQuery("sí", correct, evalEl);
+assert("'sí' (no tutor context) → wrong_answer", c6.type === "wrong_answer", "got: " + c6.type);
+const c6b = classifyQuery("sí", correct, evalEl, "Vale, ¿tienes alguna duda sobre el circuito?");
+assert("'sí' replying to '¿tienes dudas?' → closed_answer", c6b.type === "closed_answer", "got: " + c6b.type);
+const c6c = classifyQuery("sí", correct, evalEl, "¿Es R3 una resistencia que conduce corriente?");
+assert("'sí' affirming an element NOT in the answer → wrong_concept (BUG-006)",
+  c6c.type === "wrong_concept", "got: " + c6c.type);
+
+const c7msg = "El interruptor abierto impide el paso de la corriente por R3, por lo que R3 no influye en el valor de tensión entre N2 y 0";
+const c7 = classifyQuery(c7msg, correct, evalEl);
+assert("restated-negation 'R3 ... R3 no influye' → R3 negated, not proposed",
+  c7.negated.indexOf("R3") >= 0 && c7.proposed.indexOf("R3") < 0,
+  "got proposed=[" + c7.proposed.join(",") + "] negated=[" + c7.negated.join(",") + "]");
+assert("restated-negation 'R3 no influye' (R3 not in correct) → partial_correct",
+  c7.type === "partial_correct", "got: " + c7.type);
+
+const cAccent = classifyQuery("R1 R2 R4 porque R3 esta abierto y R5 cortocircuitada", correct, evalEl);
+assert("accent-less 'R3 esta abierto' → R3 & R5 negated",
+  cAccent.negated.indexOf("R3") >= 0 && cAccent.negated.indexOf("R5") >= 0,
+  "got negated=[" + cAccent.negated.join(",") + "]");
+
+const quAll = classifyQuery("todas las resistencias", correct, evalEl);
+assert("'todas las resistencias' → proposes the full evaluable set",
+  quAll.proposed.length === evalEl.length, "got P=[" + quAll.proposed.join(",") + "]");
+const quExcept = classifyQuery("todas menos R3", correct, evalEl);
+assert("'todas menos R3' → R3 negated, rest proposed",
+  quExcept.negated.indexOf("R3") >= 0 && quExcept.proposed.indexOf("R3") < 0 && quExcept.proposed.length === 4,
+  "got P=[" + quExcept.proposed.join(",") + "] N=[" + quExcept.negated.join(",") + "]");
+const quCorrect = classifyQuery("todas menos R3 y R5", correct, evalEl);
+assert("'todas menos R3 y R5' equals the correct answer → correct_no_reasoning",
+  quCorrect.type === "correct_no_reasoning", "got: " + quCorrect.type + " P=[" + quCorrect.proposed.join(",") + "]");
+const quRest = classifyQuery("R3 no influye, el resto si", correct, evalEl);
+assert("'R3 no influye, el resto si' → R3 negated, rest proposed (post-only polarity)",
+  quRest.negated.indexOf("R3") >= 0 && quRest.proposed.indexOf("R3") < 0 && quRest.proposed.length === 4,
+  "got P=[" + quRest.proposed.join(",") + "] N=[" + quRest.negated.join(",") + "]");
+const quIdiom = classifyQuery("de todos modos no lo se", correct, evalEl);
+assert("'de todos modos no lo se' is NOT expanded (idiom guard) → dont_know",
+  quIdiom.type === "dont_know" && quIdiom.proposed.length === 0,
+  "got: " + quIdiom.type + " P=[" + quIdiom.proposed.join(",") + "]");
+
+const dudasQ = "Vale, ¿tienes alguna duda sobre el circuito?";
+const h6a = classifyQuery("sí, lo tengo claro", correct, evalEl, dudasQ);
+assert("H6: verbose 'sí, lo tengo claro' to '¿tienes dudas?' → closed_answer",
+  h6a.type === "closed_answer", "got: " + h6a.type);
+const h6b = classifyQuery("no, ninguna duda", correct, evalEl, dudasQ);
+assert("H6: 'no, ninguna duda' → closed_answer, NOT all elements negated",
+  h6b.type === "closed_answer" && h6b.negated.length === 0,
+  "got: " + h6b.type + " N=[" + h6b.negated.join(",") + "]");
+const h6c = classifyQuery("ninguna resistencia", correct, evalEl);
+assert("H6 guard does NOT break real 'ninguna resistencia' → all negated",
+  h6c.negated.length === evalEl.length, "got N=[" + h6c.negated.join(",") + "]");
+
+const h5a = classifyQuery("R1 no, R2 sí", correct, evalEl);
+assert("H5: 'R1 no, R2 sí' → R1 negated, R2 proposed (not inverted)",
+  h5a.negated.indexOf("R1") >= 0 && h5a.proposed.indexOf("R2") >= 0 &&
+  h5a.negated.indexOf("R2") < 0 && h5a.proposed.indexOf("R1") < 0,
+  "got P=[" + h5a.proposed.join(",") + "] N=[" + h5a.negated.join(",") + "]");
+
+const h5b = classifyQuery("R4 sí, R5 no", correct, evalEl);
+assert("H5: 'R4 sí, R5 no' → R4 proposed, R5 negated",
+  h5b.proposed.indexOf("R4") >= 0 && h5b.negated.indexOf("R5") >= 0 &&
+  h5b.proposed.indexOf("R5") < 0,
+  "got P=[" + h5b.proposed.join(",") + "] N=[" + h5b.negated.join(",") + "]");
+const h5c = classifyQuery("R1, no R2", correct, evalEl);
+assert("H5: 'R1, no R2' → R1 proposed, R2 negated (comma before 'no')",
+  h5c.proposed.indexOf("R1") >= 0 && h5c.negated.indexOf("R2") >= 0,
+  "got P=[" + h5c.proposed.join(",") + "] N=[" + h5c.negated.join(",") + "]");
+const h5d = classifyQuery("R1 R2 pero no R3", correct, evalEl);
+assert("H5 guard does NOT break comma-less pre-negation 'pero no R3'",
+  h5d.negated.indexOf("R3") >= 0 && h5d.proposed.indexOf("R3") < 0,
+  "got P=[" + h5d.proposed.join(",") + "] N=[" + h5d.negated.join(",") + "]");
+
+const h1a = classifyQuery("R3 no influye, pero R3 tiene resistencia alta", correct, evalEl);
+assert("H1: 'R3 no influye, pero R3 …' → R3 NEGATED (not proposed by last-wins)",
+  h1a.negated.indexOf("R3") >= 0 && h1a.proposed.indexOf("R3") < 0,
+  "got P=[" + h1a.proposed.join(",") + "] N=[" + h1a.negated.join(",") + "]");
+const h1b = classifyQuery("pasa corriente por R3, por lo que R3 no influye", correct, evalEl);
+assert("H1: restated-negation 'por R3 … R3 no influye' still → R3 negated",
+  h1b.negated.indexOf("R3") >= 0 && h1b.proposed.indexOf("R3") < 0,
+  "got P=[" + h1b.proposed.join(",") + "] N=[" + h1b.negated.join(",") + "]");
+
+const adv1a = classifyQuery("he probado todas las opciones", correct, evalEl);
+assert("ADV1: 'todas las opciones' (idiom, no element) → no expansion",
+  adv1a.proposed.length === 0 && adv1a.negated.length === 0,
+  "got P=[" + adv1a.proposed.join(",") + "] N=[" + adv1a.negated.join(",") + "]");
+const adv1b = classifyQuery("ninguno de estos R me convence", correct, evalEl);
+assert("ADV1: 'ninguno de estos' (idiom) → does NOT negate the whole set",
+  adv1b.negated.length === 0,
+  "got N=[" + adv1b.negated.join(",") + "]");
+
+const adv1c = classifyQuery("todos los caminos llevan a R1", correct, evalEl);
+assert("ADV1: 'todos los caminos…R1' → only R1, not the full set",
+  adv1c.proposed.length === 1 && adv1c.proposed[0] === "R1",
+  "got P=[" + adv1c.proposed.join(",") + "]");
+const adv1d = classifyQuery("todas las resistencias", correct, evalEl);
+assert("ADV1 guard: 'todas las resistencias' still expands to full set",
+  adv1d.proposed.length === evalEl.length, "got P=[" + adv1d.proposed.join(",") + "]");
+const adv1e = classifyQuery("todos los elementos contribuyen", correct, evalEl);
+assert("ADV1 guard: 'todos los elementos' (circuit noun) still expands",
+  adv1e.proposed.length === evalEl.length, "got P=[" + adv1e.proposed.join(",") + "]");
+
+const adv2 = classifyQuery("R3 no influye. R1 si va. Ademas R1 es fundamental para todo", correct, evalEl);
+assert("ADV2: cross-sentence 'no' does NOT negate R1 (sentence-bounded pre-window)",
+  adv2.negated.indexOf("R1") < 0 && adv2.negated.indexOf("R3") >= 0,
+  "got P=[" + adv2.proposed.join(",") + "] N=[" + adv2.negated.join(",") + "]");
+
+assert("ADV3: '¿Claro? Piensa en R5.' keeps the question (not '? Piensa…')",
+  gr.removeOpeningConfirmation("¿Claro? Piensa en R5.", "es") === "¿Claro? Piensa en R5.",
+  "got: " + gr.removeOpeningConfirmation("¿Claro? Piensa en R5.", "es"));
+
+const f2a = classifyQuery("muy elemental todo, todas", correct, evalEl);
+assert("ADV1b: adjective 'elemental' does NOT anchor 'todas' → no expansion",
+  f2a.proposed.length === 0 && f2a.negated.length === 0,
+  "got P=[" + f2a.proposed.join(",") + "] N=[" + f2a.negated.join(",") + "]");
+
+const f2b = classifyQuery("todas las elementales, R1", correct, evalEl);
+assert("ADV1b: 'todas las elementales' (adjective noun) → only R1, not full set",
+  f2b.proposed.length === 1 && f2b.proposed[0] === "R1",
+  "got P=[" + f2b.proposed.join(",") + "]");
+const f2c = classifyQuery("no es... R3", correct, evalEl);
+assert("ADV2b: ellipsis does not break 'no es… R3' negation",
+  f2c.negated.indexOf("R3") >= 0, "got N=[" + f2c.negated.join(",") + "]");
+
+const f2d = classifyQuery("R1 si. no R3", correct, evalEl);
+assert("ADV2b guard: a real sentence break still bounds the window ('R1 si. no R3' → R3 negated)",
+  f2d.negated.indexOf("R3") >= 0 && f2d.negated.indexOf("R1") < 0,
+  "got P=[" + f2d.proposed.join(",") + "] N=[" + f2d.negated.join(",") + "]");
+assert("ADV3b: '¡Claro! R5 no influye' → strips the opening confirmation",
+  gr.removeOpeningConfirmation("¡Claro! R5 no influye, piensa", "es") === "R5 no influye, piensa",
+  "got: " + gr.removeOpeningConfirmation("¡Claro! R5 no influye, piensa", "es"));
+assert("ADV3b guard: standalone '¡Claro!' survives",
+  gr.removeOpeningConfirmation("¡Claro!", "es") === "¡Claro!",
+  "got: " + gr.removeOpeningConfirmation("¡Claro!", "es"));
+
+const g1 = classifyQuery("Que no deja pasar la corriente por r3 r4 ni r5", correct, evalEl);
+assert("G(run): 'no deja pasar la corriente por r3 r4 ni r5' → R3,R4,R5 ALL negated",
+  ["R3","R4","R5"].every((x) => g1.negated.indexOf(x) >= 0) && g1.proposed.length === 0,
+  "got P=[" + g1.proposed.join(",") + "] N=[" + g1.negated.join(",") + "]");
+const g2 = classifyQuery("no pasa corriente por R3, R4 y R5", correct, evalEl);
+assert("G(run): flow-negation over a comma list negates the WHOLE list",
+  ["R3","R4","R5"].every((x) => g2.negated.indexOf(x) >= 0),
+  "got N=[" + g2.negated.join(",") + "]");
+const g3 = classifyQuery("no pasa corriente por R3 pero R4 si", correct, evalEl);
+assert("G(run): contrast 'pero R4 sí' keeps R4 proposed, R3 negated",
+  g3.negated.indexOf("R3") >= 0 && g3.proposed.indexOf("R4") >= 0 && g3.negated.indexOf("R4") < 0,
+  "got P=[" + g3.proposed.join(",") + "] N=[" + g3.negated.join(",") + "]");
+const g4 = classifyQuery("No he dicho en ningún momento que r4 influya", correct, evalEl);
+assert("G(run): 'en ningún momento' does NOT negate the whole set",
+  g4.negated.length === 0,
+  "got N=[" + g4.negated.join(",") + "]");
+
+const { isExplanationRequest } = require(path.join(ROOT, "src/domain/services/rag/queryClassifier"));
+assert("C(run): 'puedes explicarme el concepto de divisor de tensión?' → explanation request",
+  isExplanationRequest("puedes explicarme el concepto de divisor de tensión?") === true);
+assert("C(run): 'No entiendo el concepto de divisor de tensión' → explanation request",
+  isExplanationRequest("No entiendo el concepto de divisor de tensión") === true);
+assert("C(run) guard: a plain element answer is NOT an explanation request",
+  isExplanationRequest("Sí, de R1 y R2") === false &&
+  isExplanationRequest("ni idea") === false);
+
+section("H. Run-2: false-premise question guardrail (T1) + topology/flow leaks");
+const adh = byId.adherence;
+const tctx = { lang: "es", correctAnswer: ["R1","R2","R4"] };
+assert("H/T1: '¿por qué R4 no influye?' (R4 correct) → adherence violation",
+  adh.check("R1 y R2 son resistencias. ¿Por qué crees que R4 no influye en la tensión?", tctx).violated === true);
+assert("H/T1: false premise survives an intervening relative clause (R2)",
+  adh.check("¿Por qué R2, que está conectada entre N2 y tierra, no influye en la tensión?", tctx).violated === true);
+assert("H/T1 guard: '¿por qué R3 no influye?' (R3 NOT correct) → no violation",
+  adh.check("¿Por qué pensaste que R3 también influía en la tensión?", tctx).violated === false);
+assert("H/T1 guard: 'R4 importa pero R3 no influye' does not false-fire on R4",
+  adh.check("¿Por qué R4 importa pero R3 no influye?", tctx).violated === false);
+
+const srg = byId.state_reveal;
+const sctx = { evaluableElements: ["R1","R2","R3","R4","R5"], kgConceptPatterns: [], lang: "es", messages: [] };
+assert("H/topo: 'R4 conectada en paralelo con R2' → state_reveal",
+  srg.check("R4 está conectada en paralelo con R2 entre N2 y tierra.", sctx).violated === true);
+assert("H/topo: topology assertion inside a question still leaks",
+  srg.check("¿Te das cuenta de que R4 está conectada en paralelo con R2?", sctx).violated === true);
+assert("H/flow: 'la corriente … pasa por R2 y R4' → state_reveal",
+  srg.check("La corriente desde N2 hacia tierra pasa por R2 y R4.", sctx).violated === true);
+assert("H/flow guard: '¿pasa la corriente por R2?' is a legitimate question",
+  srg.check("¿Pasa la corriente por R2 hacia tierra?", sctx).violated === false);
+assert("H/flow guard: 'la corriente no pasa por R3' (correct exclusion) is not a leak",
+  srg.check("La corriente no pasa por R3, está bien excluida.", sctx).violated === false);
+
+section("6. ElementNaming retry hint contains a quotable example");
+const { getElementNamingInstruction } = require(path.join(ROOT, "src/domain/services/languageManager"));
+const hintSamples = new Set();
+for (let i = 0; i < 6; i++) hintSamples.add(getElementNamingInstruction("es"));
+assert("retry hint rotates examples across calls (C5 fix)",
+  hintSamples.size >= 2,
+  "got " + hintSamples.size + " distinct samples in 6 calls");
+
+section("7. ContextAgent question-similarity threshold");
+const ContextAgent = require(path.join(ROOT, "src/domain/agents/contextAgent"));
+const ca = new (class extends ContextAgent { constructor() {
+  super({ ejercicioRepo: {}, interaccionRepo: {}, messageRepo: {}, config: {}, historySummarizer: {} });
+}})();
+const q1 = "¿qué condiciones se necesitan para que circule corriente por una rama del circuito?";
+const q2 = "¿qué condiciones necesitas para que la corriente circule por una rama?";
+const sim = ca._questionSimilarity(q1, q2);
+assert("Two near-identical questions return high similarity (>0.5)", sim > 0.5, "sim=" + sim.toFixed(2));
+const repeated = ca._detectRepetition([
+  { content: q1 }, { content: q2 }, { content: q1 },
+]);
+assert("_detectRepetition fires on 3 same-ish questions", repeated === true);
+
+const a2short = "¿qué resistencias importan aquí?";
+const a2long = "¿qué resistencias importan aquí cuando el interruptor esta abierto y la corriente busca otro camino?";
+assert("A2: similarity is symmetric (subset vs superset)",
+  ca._questionSimilarity(a2short, a2long) === ca._questionSimilarity(a2long, a2short),
+  "sim(s,l)=" + ca._questionSimilarity(a2short, a2long).toFixed(2) + " sim(l,s)=" + ca._questionSimilarity(a2long, a2short).toFixed(2));
+assert("A2: short-subset vs long unrelated → NOT flagged as repetition",
+  ca._detectRepetition([{ content: a2short }, { content: a2long }]) === false,
+  "got: " + ca._detectRepetition([{ content: a2short }, { content: a2long }]));
+
+const a3msgs = [
+  { content: "¿R1 no conduce corriente en esa rama?" },
+  { content: "¿Qué nodo conecta R1 con el resto? ¿Y qué opinas de R2?" },
+];
+assert("A3: stuck-on-element counts Rn across ALL question fragments → R1",
+  ca._detectStuckOnElement(a3msgs) === "R1", "got: " + ca._detectStuckOnElement(a3msgs));
+assert("A3 control: different elements per turn → not stuck (null)",
+  ca._detectStuckOnElement([{ content: "¿Y R1?" }, { content: "¿Y R2?" }]) === null,
+  "got: " + ca._detectStuckOnElement([{ content: "¿Y R1?" }, { content: "¿Y R2?" }]));
+
+/*
+   IN -> ____|___________
+        | section8() | -> Promise<void>
+         -----------
+      Checks the same-classification streak loop breaker and the TutorAgent strategy hint.
+   */
+async function section8() {
+  section("8. ContextAgent._lastClassificationStreak + TutorAgent strategy hint");
+  function fakeMsg(role, classification) {
+    return {
+      role, isAssistant: () => role === "assistant",
+      metadata: classification ? { classification } : null,
+    };
+  }
+  class StubRepo {
+    constructor(msgs) { this.msgs = msgs; }
+    async getAllMessages() { return this.msgs; }
+  }
+  async function streakCase(seq) {
+    const stub = new StubRepo(seq);
+    const agent = new (class extends ContextAgent { constructor() {
+      super({ ejercicioRepo: {}, interaccionRepo: {}, messageRepo: stub, config: {}, historySummarizer: {} });
+    }})();
+    return agent._lastClassificationStreak("any");
+  }
+
+  const r1 = await streakCase([
+    fakeMsg("user"), fakeMsg("assistant", "wrong_answer"),
+    fakeMsg("user"), fakeMsg("assistant", "correct_no_reasoning"),
+    fakeMsg("user"), fakeMsg("assistant", "correct_no_reasoning"),
+    fakeMsg("user"), fakeMsg("assistant", "correct_no_reasoning"),
+  ]);
+  assert("streak: 3 consecutive correct_no_reasoning",
+    r1.type === "correct_no_reasoning" && r1.streak === 3, JSON.stringify(r1));
+  const r2 = await streakCase([
+    fakeMsg("assistant", "wrong_answer"),
+    fakeMsg("assistant", "correct_no_reasoning"),
+  ]);
+  assert("streak: classification change resets to 1",
+    r2.type === "correct_no_reasoning" && r2.streak === 1, JSON.stringify(r2));
+  const r3 = await streakCase([fakeMsg("user")]);
+  assert("streak: empty assistant history returns 0",
+    r3.type === null && r3.streak === 0, JSON.stringify(r3));
+
+  const TutorAgent = require(path.join(ROOT, "src/domain/agents/tutorAgent"));
+  const tStub = new (class extends TutorAgent { constructor() {
+    super({ llmService: {}, buildSystemPrompt: () => "", config: {}, debugLogger: {} });
+  }})();
+  assert("strategyHint fires for correct_no_reasoning streak>=2",
+    tStub._buildStrategyHint("correct_no_reasoning", 2, "correct_no_reasoning").includes("ESCALATE"));
+  assert("strategyHint silent for streak=1",
+    tStub._buildStrategyHint("correct_no_reasoning", 1, "correct_no_reasoning") === "");
+  assert("strategyHint silent if classification changed across turns",
+    tStub._buildStrategyHint("correct_no_reasoning", 2, "wrong_answer") === "");
+  assert("strategyHint fires for wrong_answer streak>=2",
+    tStub._buildStrategyHint("wrong_answer", 3, "wrong_answer").includes("ESCALATE"));
+  assert("strategyHint fires for dont_know streak>=2",
+    tStub._buildStrategyHint("dont_know", 2, "dont_know").includes("ESCALATE"));
+
+  const AcDetectorAgent = require(path.join(ROOT, "src/domain/agents/acDetectorAgent"));
+  const acd = new AcDetectorAgent({});
+  const onlyNegCtx = { classification: { proposed: [], negated: ["R1"] }, correctAnswer: ["R1","R2","R4"], exerciseNum: null };
+  await acd.execute(onlyNegCtx);
+  assert("A1: AcDetector yields only_negation with wronglyNegated=[R1]",
+    onlyNegCtx.turnVerdict.verdict === "only_negation" &&
+    onlyNegCtx.turnVerdict.wronglyNegated.indexOf("R1") >= 0,
+    JSON.stringify(onlyNegCtx.turnVerdict.verdict) + " wn=" + JSON.stringify(onlyNegCtx.turnVerdict.wronglyNegated));
+  assert("A1: verdict banner IS rendered for only_negation (wrong rejection reaches LLM)",
+    tStub._shouldRenderVerdictBanner(onlyNegCtx.turnVerdict) === true);
+  assert("A1 control: proposed-only verdict still renders",
+    tStub._shouldRenderVerdictBanner({ proposed: ["R1"], wronglyNegated: [] }) === true);
+  assert("A1 control: empty verdict does NOT render",
+    tStub._shouldRenderVerdictBanner({ proposed: [], wronglyNegated: [] }) === false &&
+    tStub._shouldRenderVerdictBanner(null) === false);
+}
+
+/*
+   IN -> ____|___________
+        | section9() | -> Promise<void>
+         -----------
+      Drives the real GuardrailPipeline end-to-end so detections must act, not just fire.
+   */
+async function section9() {
+  section("9. GuardrailPipeline end-to-end: detections must ACT, not just fire");
+  const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
+
+  function makePipeline(retryText) {
+    let calls = 0;
+    const llm = { chatCompletion: async function () { calls++; return retryText; } };
+    const pipeline = new GuardrailPipeline({
+      guardrails: createDefaultGuardrails(), llmService: llm, budgetMs: 45000,
+    });
+    return { pipeline, calls: () => calls };
+  }
+  const e2eCtx = {
+    correctAnswer: ["R1", "R2", "R4"], evaluableElements: ["R1", "R2", "R3", "R4", "R5"],
+    kgConceptPatterns: [], lang: "es", messages: [],
+  };
+  const sysMsgs = [{ role: "system", content: "tutor prompt" }, { role: "user", content: "r1 y r2" }];
+
+  const cleanQ = "¿Has tenido en cuenta todas las resistencias conectadas a ese nodo?";
+  const h1 = makePipeline(cleanQ);
+  const r1 = await h1.pipeline.validate(
+    "R1 y R2 son resistencias en el camino. ¿Por qué crees que R4 no influye en la tensión entre N2 y tierra?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/CRIT: false_premise (R4 correct) is REPAIRED, not sent verbatim",
+    !/por qu[eé][^?]*r4[^?]*no influye/i.test(r1.response),
+    "path=" + r1.path + " sent=" + JSON.stringify(r1.response).slice(0, 90));
+  assert("9/CRIT: pipeline actually triggered the consolidated retry (LLM called once)",
+    r1.llmRetryCount === 1 && h1.calls() === 1,
+    "retries=" + r1.llmRetryCount + " llmCalls=" + h1.calls() + " path=" + r1.path);
+
+  const h2 = makePipeline(cleanQ);
+  const r2 = await h2.pipeline.validate(
+    "R1 y R2 están en el camino de la corriente. ¿Qué otra resistencia conecta el nodo N2 con tierra?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/GUARD: a clean Socratic turn passes primary_ok with no retry",
+    r2.path === "primary_ok" && r2.llmRetryCount === 0 && h2.calls() === 0,
+    "path=" + r2.path + " retries=" + r2.llmRetryCount + " llmCalls=" + h2.calls());
+
+  const h3 = makePipeline(cleanQ);
+  const r3 = await h3.pipeline.validate(
+    "¿Por qué pensaste que R3 también influía en la tensión entre N2 y tierra?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/GUARD: legitimate '¿por qué R3 (irrelevant) influía?' is NOT rewritten",
+    r3.path === "primary_ok" && /R3/.test(r3.response) && h3.calls() === 0,
+    "path=" + r3.path + " sent=" + JSON.stringify(r3.response).slice(0, 80));
+
+  const h4 = makePipeline(cleanQ);
+  const r4 = await h4.pipeline.validate(
+    "¿Te das cuenta de que R4 está conectada en paralelo con R2 entre N2 y tierra?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/LEAK: topology reveal 'en paralelo con' never reaches the student",
+    !/en paralelo con|en serie con/i.test(r4.response),
+    "path=" + r4.path + " sent=" + JSON.stringify(r4.response).slice(0, 90));
+
+  const h5 = makePipeline(cleanQ);
+  const r5 = await h5.pipeline.validate(
+    "La corriente desde N2 hacia tierra pasa por R2 y R4. ¿Hay algún interruptor en el circuito?",
+    e2eCtx, { messages: sysMsgs });
+  assert("9/LEAK: current-path 'pasa por R2 y R4' is redacted yet a question remains",
+    !/pasa por r2 y r4/i.test(r5.response) && /\?/.test(r5.response),
+    "path=" + r5.path + " sent=" + JSON.stringify(r5.response).slice(0, 90));
+
+  const correctCtx = Object.assign({}, e2eCtx, {
+    proposed: ["R1", "R2", "R4"],
+    turnVerdict: { verdict: "correct", hits: ["R1", "R2", "R4"], missing: [], errors: [] },
+    messages: [{ role: "user", content: "pasa por r1 r2 r4" }],
+  });
+  const h6 = makePipeline(cleanQ);
+  const r6 = await h6.pipeline.validate(
+    "R1, R2 y R4 están en el camino. ¿Está R5 conectada a tierra en ambos extremos?",
+    correctCtx, { messages: sysMsgs });
+  assert("9/ALGUNOS: complete-correct answer is NOT rewritten into the false 'Algunos…'",
+    !/algunos de los elementos/i.test(r6.response) && r6.path === "primary_ok",
+    "path=" + r6.path + " sent=" + JSON.stringify(r6.response).slice(0, 90));
+  assert("9/ALGUNOS: the honest acknowledgment of the student's own answer survives",
+    /r1[,\s].*r2.*r4/i.test(r6.response),
+    "sent=" + JSON.stringify(r6.response).slice(0, 90));
+
+  const supersetCtx = Object.assign({}, e2eCtx, {
+    proposed: ["R1", "R2", "R3", "R4"],
+    turnVerdict: { verdict: "wrong_concept", hits: ["R1", "R2", "R4"], errors: ["R3"], missing: [] },
+    messages: [{ role: "user", content: "r1 r2 r3 r4" }],
+  });
+  const h7 = makePipeline(cleanQ);
+  const r7 = await h7.pipeline.validate(
+    "R1, R2 y R4 están en el camino. ¿Está R5 conectada a tierra en ambos extremos?",
+    supersetCtx, { messages: sysMsgs });
+  assert("9/ALGUNOS guard: wrong superset answer still has its correct subset redacted",
+    !/r1[,\s]+r2\s*y\s*r4\s+est[aá]n en el camino/i.test(r7.response),
+    "path=" + r7.path + " sent=" + JSON.stringify(r7.response).slice(0, 90));
+}
+
+/*
+   IN -> ____|____________
+        | section10() | -> void
+         ------------
+      Replays transcript turns to verify the conversation-level cumulative answer state.
+   */
+function section10() {
+  section("10. cumulativeAnswer: the conversation-level state the per-turn verdict forgets");
+  const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
+  const correctA = ["R1", "R2", "R4"];
+  const evalA = ["R1", "R2", "R3", "R4", "R5"];
+  function pairsToMessages(pairs) {
+    const out = [];
+    for (const [q, a] of pairs) { out.push({ role: "assistant", content: q }); out.push({ role: "user", content: a }); }
+    return out;
+  }
+
+  const loopMsgs = pairsToMessages([
+    ["¿cómo se distribuye la corriente?", "pasa por r1 r2 r4"],
+    ["¿Está R5 conectada a tierra en ambos extremos?", "No porque está en corto"],
+  ]);
+  const cum = computeCumulativeAnswer(loopMsgs, correctA, evalA);
+  assert("10/CORE: full set stays 'named' after a later bare-negation turn (no forgetting)",
+    cum.complete === true && cum.stillMissing.length === 0 &&
+    ["R1", "R2", "R4"].every((r) => cum.namedCorrect.indexOf(r) >= 0),
+    "namedCorrect=[" + cum.namedCorrect + "] stillMissing=[" + cum.stillMissing + "]");
+  assert("10/CORE: R5 (context-resolved 'No porque está en corto') is in excluded",
+    cum.excluded.indexOf("R5") >= 0, "excluded=[" + cum.excluded + "]");
+
+  const fullMsgs = pairsToMessages([
+    ["¿Está R3 en el camino de la corriente que va de N2 a tierra?", "No"],
+    ["¿cómo se distribuye la corriente?", "pasa por r1 r2 r4"],
+    ["¿Está R5 conectada a tierra en ambos extremos?", "No porque está en corto"],
+    ["¿por qué R1, R2 y R4 son relevantes pero R3 no?", "Porque el interruptor está abierto"],
+  ]);
+  const full = computeCumulativeAnswer(fullMsgs, correctA, evalA);
+  assert("10/CLOSURE: complete set + R3,R5 excluded + reasoned → closureReady=true",
+    full.closureReady === true &&
+    ["R3", "R5"].every((r) => full.excluded.indexOf(r) >= 0) &&
+    full.reasoningConcepts.length > 0,
+    "excluded=[" + full.excluded + "] concepts=[" + full.reasoningConcepts + "] closureReady=" + full.closureReady);
+
+  const partialMsgs = pairsToMessages([
+    ["¿Está R3 en el camino?", "No"],
+    ["¿qué resistencias?", "r1 y r2"],
+    ["¿Está R5?", "No porque está en corto"],
+  ]);
+  const partial = computeCumulativeAnswer(partialMsgs, correctA, evalA);
+  assert("10/GUARD: missing R4 → not complete, not closureReady",
+    partial.complete === false && partial.closureReady === false &&
+    partial.stillMissing.indexOf("R4") >= 0,
+    "stillMissing=[" + partial.stillMissing + "] complete=" + partial.complete);
+
+  const wrongExclMsgs = pairsToMessages([
+    ["¿Está R4 en el camino?", "no, R4 no influye"],
+  ]);
+  const wrongExcl = computeCumulativeAnswer(wrongExclMsgs, correctA, evalA);
+  assert("10/GUARD: wrongly excluding correct R4 is flagged in wronglyExcluded",
+    wrongExcl.wronglyExcluded.indexOf("R4") >= 0,
+    "wronglyExcluded=[" + wrongExcl.wronglyExcluded + "]");
+  const correctedMsgs = pairsToMessages([
+    ["¿Está R4 en el camino?", "no, R4 no influye"],
+    ["¿seguro?", "perdona, sí: r1 r2 r4"],
+  ]);
+  const corrected = computeCumulativeAnswer(correctedMsgs, correctA, evalA);
+  assert("10/GUARD: naming R4 later clears it from wronglyExcluded (self-correction)",
+    corrected.wronglyExcluded.indexOf("R4") < 0 && corrected.namedCorrect.indexOf("R4") >= 0,
+    "wronglyExcluded=[" + corrected.wronglyExcluded + "] namedCorrect=[" + corrected.namedCorrect + "]");
+}
+
+/*
+   IN -> ____|____________
+        | section11() | -> Promise<void>
+         ------------
+      Verifies the settled-element guardrail wiring and cumulative closure logic.
+   */
+async function section11() {
+  section("11. Loop fix: settled-element guardrail (pipeline) + cumulative closure");
+  const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
+
+  let calls = 0;
+  const pivot = "Has identificado las resistencias correctas. ¿Qué condición hace que una rama no transporte corriente?";
+  const llm = { chatCompletion: async function () { calls++; return pivot; } };
+  const pipeline = new GuardrailPipeline({ guardrails: createDefaultGuardrails(), llmService: llm, budgetMs: 45000 });
+  const loopCtx = {
+    correctAnswer: ["R1", "R2", "R4"], evaluableElements: ["R1", "R2", "R3", "R4", "R5"],
+    kgConceptPatterns: [], lang: "es", messages: [],
+    cumulativeAnswer: { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [] },
+  };
+  const rLoop = await pipeline.validate(
+    "R2 está confirmada. ¿Está R1 en el camino de la corriente que va desde la fuente hasta N2?",
+    loopCtx, { messages: [{ role: "system", content: "s" }] });
+  assert("11/SETTLED: a topology re-ask of a settled element triggers a retry/pivot",
+    rLoop.llmRetryCount === 1 && calls === 1 &&
+    !/¿est[aá]\s+r1\s+en el camino/i.test(rLoop.response),
+    "path=" + rLoop.path + " retries=" + rLoop.llmRetryCount + " sent=" + JSON.stringify(rLoop.response).slice(0, 70));
+
+  let calls2 = 0;
+  const llm2 = { chatCompletion: async function () { calls2++; return pivot; } };
+  const pipeline2 = new GuardrailPipeline({ guardrails: createDefaultGuardrails(), llmService: llm2, budgetMs: 45000 });
+  const rConcept = await pipeline2.validate(
+    "Has nombrado las correctas. ¿Por qué R2 forma parte del camino pero R3 no?",
+    loopCtx, { messages: [{ role: "system", content: "s" }] });
+  assert("11/SETTLED guard: conceptual '¿por qué…?' about settled elements is NOT retried",
+    rConcept.path === "primary_ok" && calls2 === 0,
+    "path=" + rConcept.path + " retries=" + rConcept.llmRetryCount);
+
+  const Orchestrator = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const orch = Object.create(Orchestrator.prototype);
+  const readyCum = { closureReady: true, wronglyNamed: [], wronglyExcluded: [] };
+  assert("11/CLOSE: closureReady + non-blocked turn → deterministic finish",
+    orch._shouldFinishDeterministically({ classification: { type: "wrong_concept" }, cumulativeAnswer: readyCum }) === true);
+  assert("11/CLOSE guard: closureReady but current turn is dont_know → NO finish",
+    orch._shouldFinishDeterministically({ classification: { type: "dont_know" }, cumulativeAnswer: readyCum }) === false);
+  assert("11/CLOSE guard: closureReady but an outstanding wrong proposal → NO finish",
+    orch._shouldFinishDeterministically({ classification: { type: "partial_correct" }, cumulativeAnswer: { closureReady: true, wronglyNamed: ["R3"], wronglyExcluded: [] } }) === false);
+  assert("11/CLOSE guard: NOT closureReady → NO finish",
+    orch._shouldFinishDeterministically({ classification: { type: "partial_correct" }, cumulativeAnswer: { closureReady: false, wronglyNamed: [], wronglyExcluded: [] } }) === false);
+  assert("11/CLOSE: legacy correct_good_reasoning ×2 path still finishes",
+    orch._shouldFinishDeterministically({ classification: { type: "correct_good_reasoning" }, loopState: { prevGoodReasoningTurns: 1 } }) === true);
+  assert("11/CLOSE guard: closureReady but student asks to EXPLAIN a concept → NO finish",
+    orch._shouldFinishDeterministically({
+      classification: { type: "wrong_concept", concepts: ["divisor de tensión"] },
+      userMessage: "¿puedes explicarme el concepto de divisor de tensión?",
+      cumulativeAnswer: readyCum,
+    }) === false);
+
+  assert("11/DESTICKY: closureReady but exercise already closed → NO re-finish",
+    orch._shouldFinishDeterministically({ classification: { type: "closed_answer" }, cumulativeAnswer: readyCum, exerciseAlreadyClosed: true }) === false);
+
+  const ctxKeep = { finalResponse: "¡Bien! <END_EXERCISE>", classification: { type: "wrong_concept" }, cumulativeAnswer: readyCum };
+  orch._stripUnauthorizedFinToken(ctxKeep);
+  assert("11/CLOSE: FIN token kept when closureReady",
+    /<END_EXERCISE>/.test(ctxKeep.finalResponse), "got: " + ctxKeep.finalResponse);
+  const ctxStrip = { finalResponse: "¿Está R1 en el camino? <END_EXERCISE>", classification: { type: "wrong_answer" }, cumulativeAnswer: { closureReady: false, wronglyNamed: [], wronglyExcluded: [] }, loopState: {} };
+  orch._stripUnauthorizedFinToken(ctxStrip);
+  assert("11/CLOSE guard: unauthorised FIN token is stripped",
+    !/<END_EXERCISE>/.test(ctxStrip.finalResponse), "got: " + ctxStrip.finalResponse);
+  const ctxReClose = { finalResponse: "¡Excelente! <END_EXERCISE>", classification: { type: "closed_answer" }, cumulativeAnswer: readyCum, exerciseAlreadyClosed: true, loopState: {} };
+  orch._stripUnauthorizedFinToken(ctxReClose);
+  assert("11/DESTICKY: FIN token in a post-close follow-up is stripped (no double close)",
+    !/<END_EXERCISE>/.test(ctxReClose.finalResponse), "got: " + ctxReClose.finalResponse);
+}
+
+/*
+   IN -> ____|____________
+        | section12() | -> Promise<void>
+         ------------
+      Checks the TutorAgent cumulative-progress banner and stale-Missing suppression.
+   */
+async function section12() {
+  section("12. TutorAgent [PROGRESO ACUMULADO] banner + stale-'Missing' suppression");
+  const TutorAgent = require(path.join(ROOT, "src/domain/agents/tutorAgent"));
+  let captured = null;
+  const agent = new (class extends TutorAgent { constructor() {
+    super({
+      llmService: { chatCompletion: async function (msgs) { captured = msgs; return "ok"; } },
+      buildSystemPrompt: function () { return "SYS"; },
+      config: {},
+      debugLogger: { logPrompt: function () {}, traceLlmCall: function () {}, logLlmOut: function () {} },
+    });
+  }})();
+  const ctx = {
+    exercise: {}, lang: "es", userMessage: "No porque está en corto", reqId: "t", config: {},
+    classification: { type: "correct_no_reasoning", concepts: ["corto"], proposed: [], negated: ["R5"] },
+    turnVerdict: { verdict: "only_negation", hits: [], errors: [], missing: ["R1", "R2", "R4"], wronglyNegated: [], proposed: [], negated: ["R5"] },
+    detectedACs: [],
+    cumulativeAnswer: { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: false, wronglyNamed: [], wronglyExcluded: [] },
+    correctAnswer: ["R1", "R2", "R4"], evaluableElements: ["R1", "R2", "R3", "R4", "R5"],
+    history: [{ role: "assistant", content: "¿Está R5 conectada a tierra en ambos extremos?" }, { role: "user", content: "No porque está en corto" }],
+    ragResult: { augmentation: "" }, historySummary: null,
+    loopState: { prevCorrectTurns: 1, sameClassificationStreak: 1, tutorRepeating: false, lastAssistantQuestion: "¿Está R5 conectada a tierra en ambos extremos?", establishedFacts: [], tutorStuckOnElement: null, studentFrustrated: false, consecutiveWrongTurns: 0, totalAssistantTurns: 11, lastClassification: "correct_no_reasoning" },
+    timing: { pipelineStartMs: Date.now() },
+  };
+  await agent.execute(ctx);
+  const userMsg = captured[captured.length - 1].content;
+  assert("12/BANNER: [PROGRESO ACUMULADO] names R1,R2,R4 as already identified",
+    /PROGRESO ACUMULADO/.test(userMsg) && /YA ha identificado correctamente[^\n]*R1, R2, R4/.test(userMsg),
+    "banner missing or incomplete");
+  assert("12/BANNER: R3,R5 listed as already excluded",
+    /YA ha excluido correctamente: R3, R5/.test(userMsg));
+  assert("12/BANNER: the STALE 'Missing: R1,R2,R4' line is suppressed (no re-interrogation)",
+    !/Missing \(correcto que el alumno a[uú]n NO/.test(userMsg),
+    "stale Missing line leaked into the prompt");
+  assert("12/BANNER: complete-but-not-closure → asks for ONE consolidation",
+    /consolidaci[oó]n del razonamiento/.test(userMsg));
+
+  const cumComplete = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: false };
+  const bEn = agent._buildCumulativeBanner(cumComplete, "en", false);
+  assert("12/I18N: English session → English banner ('CUMULATIVE PROGRESS')",
+    /CUMULATIVE PROGRESS/.test(bEn) && !/PROGRESO ACUMULADO/.test(bEn), bEn.slice(0, 40));
+  const bVal = agent._buildCumulativeBanner(cumComplete, "val", false);
+  assert("12/I18N: Valencian session → Valencian banner ('PROGRÉS ACUMULAT')",
+    /PROGR[ÉE]S ACUMULAT/.test(bVal) && /L'alumne JA ha identificat/.test(bVal), bVal.slice(0, 40));
+
+  const cumClosure = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true };
+  const bOpen = agent._buildCumulativeBanner(cumClosure, "es", false);
+  const bClosed = agent._buildCumulativeBanner(cumClosure, "es", true);
+  assert("12/DESTICKY: not-yet-closed → 'Cierra' instruction present",
+    /Cierra con un reconocimiento/.test(bOpen));
+  assert("12/DESTICKY: already-closed → drops 'Cierra', answers the follow-up, keeps settled facts",
+    !/Cierra con un reconocimiento/.test(bClosed) &&
+    /YA se cerró/.test(bClosed) && /R1, R2, R4/.test(bClosed),
+    bClosed.slice(0, 60));
+}
+
+/*
+   IN -> ____|____________
+        | section13() | -> Promise<void>
+         ------------
+      Replays run-3: cumulative fair-game, false accusation, question-leak and settled flow phrases.
+   */
+async function section13() {
+  section("13. Run-3: cumulative fair-game (SL), false accusation (AD), question-leak (SL), flow re-asks (SEQ)");
+  const slg = byId.solution_leak;
+  const adg13 = byId.adherence;
+  const seq13 = byId.settled_element_question;
+  const correct13 = ["R1", "R2", "R4"];
+  const cum13 = {
+    namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [],
+    complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [],
+    reasoningConcepts: ["abierto", "corto"],
+    perTurn: [{ proposed: ["R1", "R2", "R4"], negated: [] }, { proposed: [], negated: ["R3", "R5"] }],
+  };
+  const ctx13 = {
+    correctAnswer: correct13, lang: "es", turnVerdict: { verdict: "only_negation" },
+    proposed: [], negated: ["R3", "R5"], cumulativeAnswer: cum13,
+  };
+
+  const echo13 = "R1, R2 y R4 están en el camino de la corriente. Bien razonado.";
+  assert("13/SL: echo of the set is fair game when CUMULATIVE complete (verdict only_negation)",
+    slg.check(echo13, ctx13).violated === false);
+  const cumPartial13 = Object.assign({}, cum13, { complete: false, namedCorrect: ["R1", "R2"], stillMissing: ["R4"] });
+  assert("13/SL guard: same echo with cumulative INCOMPLETE → still a leak",
+    slg.check(echo13, Object.assign({}, ctx13, { cumulativeAnswer: cumPartial13, turnVerdict: { verdict: "partial_correct" } })).violated === true);
+
+  const acc13 = "¿Por qué pensaste que R3 también influía en la tensión entre N2 y tierra?";
+  assert("13/AD: accusation about a negated, never-proposed element → violation",
+    adg13.check(acc13, ctx13).violated === true);
+  const cumR3prop = Object.assign({}, cum13, {
+    perTurn: [{ proposed: ["R1", "R2", "R3"], negated: [] }, { proposed: [], negated: ["R3", "R5"] }],
+  });
+  assert("13/AD guard: student DID propose R3 in an earlier turn → legitimate, no violation",
+    adg13.check(acc13, Object.assign({}, ctx13, { cumulativeAnswer: cumR3prop })).violated === false);
+  assert("13/AD guard: '¿por qué pensaste que R3 NO influía?' (about the exclusion) → no violation",
+    adg13.check("¿Por qué pensaste que R3 no influía en la tensión?", ctx13).violated === false);
+  assert("13/AD guard: legacy ctx without negated/cumulative info → no violation (H/T1 compat)",
+    adg13.check(acc13, { lang: "es", correctAnswer: correct13 }).violated === false);
+
+  const qleak13 = "¿Has considerado cómo las resistencias conectadas a N2, como R1, R2 y R4, podrían afectar la tensión entre N2 y tierra?";
+  assert("13/SL-Q: full-set + 'podrían afectar' question with nothing named yet → leak",
+    slg.check(qleak13, { correctAnswer: correct13, lang: "es" }).violated === true);
+  assert("13/SL-Q guard: same question AFTER cumulative complete (consolidation) → no leak",
+    slg.check(qleak13, ctx13).violated === false);
+  assert("13/SL-Q guard: question listing ALL evaluables R1–R5 → no leak",
+    slg.check("¿Cuáles de R1, R2, R3, R4 y R5 influyen en la tensión?", { correctAnswer: correct13, lang: "es" }).violated === false);
+  assert("13/SL-Q guard: '¿por qué R3 y R5 no influyen?' (names no correct element) → no leak",
+    slg.check("¿Por qué R3 y R5 no influyen en la diferencia de potencial pedida?", ctx13).violated === false);
+
+  assert("13/SEQ: 'no puede fluir a través de R3' (R3 settled) → violation",
+    seq13.check("¿Significa el interruptor abierto que la corriente no puede fluir a través de R3?", { cumulativeAnswer: cum13 }).violated === true);
+  assert("13/SEQ: 4th re-ask of R5's both-ends-grounded → violation",
+    seq13.check("¿La resistencia R5, al estar conectada a tierra en ambos extremos, significa que no forma parte del camino de la corriente?", { cumulativeAnswer: cum13 }).violated === true);
+  assert("13/SEQ guard: the same probe BEFORE R5 is settled → legitimate Socratic probe",
+    seq13.check("¿Está R5 conectada a tierra en ambos extremos?", { cumulativeAnswer: { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3"], stillMissing: [], complete: true } }).violated === false);
+
+  const t7 = classifyQuery("porque r3 está en interruptor abierto y r5 en corto", correct13, ["R1","R2","R3","R4","R5"], "¿Por qué R3 y R5 no influyen?");
+  assert("13/NEG-INT: 'r3 está en interruptor abierto y r5 en corto' → R3,R5 negated, nothing proposed",
+    t7.negated.indexOf("R3") >= 0 && t7.negated.indexOf("R5") >= 0 && t7.proposed.length === 0,
+    "got P=[" + t7.proposed.join(",") + "] N=[" + t7.negated.join(",") + "]");
+  const t7g = classifyQuery("R4 influye porque R3 está en interruptor abierto", correct13, ["R1","R2","R3","R4","R5"]);
+  assert("13/NEG-INT guard: 'R4 influye porque R3 está en interruptor abierto' → R4 proposed, R3 negated",
+    t7g.proposed.indexOf("R4") >= 0 && t7g.negated.indexOf("R3") >= 0 && t7g.negated.indexOf("R4") < 0,
+    "got P=[" + t7g.proposed.join(",") + "] N=[" + t7g.negated.join(",") + "]");
+
+  const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
+  const run3 = [
+    ["¿qué identificas en el enunciado?", "las resistencias por las que pasa la corriente"],
+    ["¿Hacia qué nudo va la corriente desde N2?", "a tierra"],
+    ["¿Has considerado cómo las resistencias R2 y R4 podrían influir en la tensión entre N2 y tierra?", "sí, influyen"],
+    ["¿Has considerado cómo la resistencia R1 podría influir en la tensión?", "sí, influye"],
+    ["¿Has considerado cómo la resistencia R2 podría influir en la tensión?", "sí, influyen r1 r2 r4"],
+    ["R1, R2 y R4 son las resistencias que influyen. ¿Por qué R3 y R5 no influyen en la diferencia de potencial pedida?", "porque r3 está en interruptor abierto y r5 en corto"],
+  ];
+  const run3msgs = [];
+  for (const [q, a] of run3) { run3msgs.push({ role: "assistant", content: q }); run3msgs.push({ role: "user", content: a }); }
+  const run3cum = computeCumulativeAnswer(run3msgs, correct13, ["R1", "R2", "R3", "R4", "R5"]);
+  assert("13/REPLAY: run-3 turn 7 → closureReady (set named + R3,R5 excluded + reasoned)",
+    run3cum.closureReady === true && run3cum.wronglyNamed.length === 0,
+    "excluded=[" + run3cum.excluded + "] wronglyNamed=[" + run3cum.wronglyNamed + "] closureReady=" + run3cum.closureReady);
+  const Orch13 = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const orch13 = Object.create(Orch13.prototype);
+  assert("13/REPLAY: orchestrator CLOSES at run-3 turn 7 (the 8-11 loop never happens)",
+    orch13._shouldFinishDeterministically({
+      classification: { type: t7.type, concepts: t7.concepts },
+      userMessage: "porque r3 está en interruptor abierto y r5 en corto",
+      cumulativeAnswer: run3cum, loopState: {},
+    }) === true);
+
+  const GuardrailPipeline = require(path.join(ROOT, "src/domain/services/GuardrailPipeline"));
+  let calls13 = 0;
+  const pivot13 = "Exacto: esa exclusión es correcta. ¿Qué ley te permite calcular ahora la tensión entre N2 y tierra?";
+  const llm13 = { chatCompletion: async function () { calls13++; return pivot13; } };
+  const pl13 = new GuardrailPipeline({ guardrails: createDefaultGuardrails(), llmService: llm13, budgetMs: 45000 });
+  const r13 = await pl13.validate(
+    "R1, R2 y R4 están en el camino de la corriente. ¿Por qué pensaste que R3 también influía en la tensión entre N2 y tierra?",
+    Object.assign({}, ctx13, { evaluableElements: ["R1", "R2", "R3", "R4", "R5"], kgConceptPatterns: [], messages: [] }),
+    { messages: [{ role: "system", content: "s" }] });
+  assert("13/E2E: turn-7 — no 'Algunos…' lie and no false accusation reaches the student",
+    !/algunos de los elementos/i.test(r13.response) && !/pensaste que r3/i.test(r13.response) &&
+    r13.llmRetryCount === 1 && calls13 === 1,
+    "path=" + r13.path + " retries=" + r13.llmRetryCount + " sent=" + JSON.stringify(r13.response).slice(0, 80));
+}
+
+/*
+   IN -> ____|____________
+        | section14() | -> void
+         ------------
+      Replays run-4: article variants, the 'todo' quantifier, state-question polarity and path accusations.
+   */
+function section14() {
+  section("14. Run-4: 'en UN interruptor' (NEG), 'todo menos' (QUANT), state-question polarity (STATEQ), path accusation (AD)");
+  const correct14 = ["R1", "R2", "R4"];
+  const eval14 = ["R1", "R2", "R3", "R4", "R5"];
+
+  const q14a = classifyQuery("todo menos r3 r5", correct14, eval14);
+  assert("14/QUANT: 'todo menos r3 r5' expands → R1,R2,R4 proposed, R3,R5 negated",
+    ["R1", "R2", "R4"].every((r) => q14a.proposed.indexOf(r) >= 0) &&
+    ["R3", "R5"].every((r) => q14a.negated.indexOf(r) >= 0),
+    "got P=[" + q14a.proposed + "] N=[" + q14a.negated + "]");
+  assert("14/QUANT guard: idiom 'todo el rato pensando' does NOT expand",
+    classifyQuery("todo el rato pensando en eso", correct14, eval14).proposed.length === 0);
+
+  const q14b = classifyQuery("porque r3 esta en un interruptor abierto y r5 en corto", correct14, eval14, "¿Por qué crees que R3 y R5 no influyen?");
+  assert("14/NEG: 'r3 esta en UN interruptor abierto y r5 en corto' → both negated, none proposed",
+    q14b.negated.indexOf("R3") >= 0 && q14b.negated.indexOf("R5") >= 0 && q14b.proposed.length === 0,
+    "got P=[" + q14b.proposed + "] N=[" + q14b.negated + "]");
+  assert("14/NEG guard: global 'r1 r2 r4 porque el interruptor esta abierto' does NOT negate R4",
+    classifyQuery("r1 r2 r4 porque el interruptor esta abierto", correct14, eval14).negated.indexOf("R4") < 0,
+    "N=[" + classifyQuery("r1 r2 r4 porque el interruptor esta abierto", correct14, eval14).negated + "]");
+
+  const q14c = classifyQuery("sí", correct14, eval14, "¿Puedes confirmar si la resistencia R5 está conectada a tierra en ambos extremos?");
+  assert("14/STATEQ: 'sí' to an excluding-state question → R5 NEGATED, correct_no_reasoning",
+    q14c.negated.indexOf("R5") >= 0 && q14c.proposed.length === 0 && q14c.type === "correct_no_reasoning",
+    "got P=[" + q14c.proposed + "] N=[" + q14c.negated + "] type=" + q14c.type);
+  assert("14/STATEQ guard: 'sí' to a normal path question still PROPOSES the element",
+    classifyQuery("sí", correct14, eval14, "¿Está R2 en el camino de la corriente hacia tierra?").proposed.indexOf("R2") >= 0);
+  assert("14/STATEQ guard: 'No porque está en corto' (answer carries the state) still negates R5",
+    classifyQuery("No porque está en corto", correct14, eval14, "¿Está R5 conectada a tierra en ambos extremos?").negated.indexOf("R5") >= 0);
+
+  const adg14 = byId.adherence;
+  const cum14 = { namedCorrect: ["R1", "R2", "R4"], excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [], perTurn: [{ proposed: ["R1", "R2", "R4"], negated: ["R3", "R5"] }] };
+  assert("14/AD: '¿por qué pensaste que R5 también estaba en el camino?' → false accusation",
+    adg14.check("¿Por qué pensaste que R5 también estaba en el camino, considerando sus conexiones?",
+      { lang: "es", correctAnswer: correct14, proposed: [], negated: [], cumulativeAnswer: cum14 }).violated === true);
+  assert("14/AD guard: '¿por qué pensaste que R5 NO estaba en el camino?' → no violation",
+    adg14.check("¿Por qué pensaste que R5 no estaba en el camino?",
+      { lang: "es", correctAnswer: correct14, proposed: [], negated: [], cumulativeAnswer: cum14 }).violated === false);
+
+  const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
+  const run4 = [
+    { role: "user", content: "todo menos r3 r5" },
+    { role: "assistant", content: "Entiendo. ¿hacia qué nudo crees que va la corriente desde N2, y qué resistencias podrían estar en su camino?" },
+    { role: "user", content: "r1 r2 r4" },
+    { role: "assistant", content: "R1, R2 y R4 son los elementos que influyen. ¿Por qué crees que R3 y R5 no influyen en esta tensión, considerando su conexión en el circuito?" },
+    { role: "user", content: "porque r3 esta en un interruptor abierto y r5 en corto" },
+  ];
+  const run4cum = computeCumulativeAnswer(run4, correct14, eval14);
+  assert("14/REPLAY: run-4 reaches closureReady at turn 3",
+    run4cum.closureReady === true && run4cum.wronglyNamed.length === 0,
+    "excluded=[" + run4cum.excluded + "] wronglyNamed=[" + run4cum.wronglyNamed + "] closureReady=" + run4cum.closureReady);
+  const run4t1 = computeCumulativeAnswer(run4.slice(0, 1), correct14, eval14);
+  assert("14/REPLAY guard: turn 1 ('todo menos r3 r5', no reasoning) → complete but NOT closureReady",
+    run4t1.complete === true && run4t1.closureReady === false,
+    "complete=" + run4t1.complete + " closureReady=" + run4t1.closureReady);
+  const Orch14 = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const orch14 = Object.create(Orch14.prototype);
+  const t3cls = classifyQuery(run4[4].content, correct14, eval14, run4[3].content);
+  assert("14/REPLAY: orchestrator CLOSES at run-4 turn 3 (turns 4-5 never happen)",
+    orch14._shouldFinishDeterministically({
+      classification: { type: t3cls.type, concepts: t3cls.concepts },
+      userMessage: run4[4].content, cumulativeAnswer: run4cum, loopState: {},
+    }) === true);
+}
+
+/*
+   IN -> ____|____________
+        | section15() | -> void
+         ------------
+      Replays run-5: state_reveal flow-probe false positives, cumulative per-element analysis and replay.
+   */
+function section15() {
+  section("15. Run-5: state_reveal flow-probe FP (SR), cumulative [PER-ELEMENT ANALYSIS] (PEA), replay");
+  const correct15 = ["R1", "R2", "R4"];
+  const eval15 = ["R1", "R2", "R3", "R4", "R5"];
+  const sr15 = byId.state_reveal;
+  const srCtx15 = { evaluableElements: eval15, kgConceptPatterns: [], lang: "es", messages: [] };
+
+  assert("15/SR: probe '¿Pasa corriente por R3 hacia tierra?' is NOT a reveal",
+    sr15.check("Establecido sobre R5. ¿Pasa corriente por R3 hacia tierra en este circuito?", srCtx15).violated === false);
+  assert("15/SR: affirmation 'Pasa corriente por R2 hacia tierra.' IS still a reveal",
+    sr15.check("Pasa corriente por R2 hacia tierra.", srCtx15).violated === true);
+  assert("15/SR: negated flow 'No pasa corriente por R3, bien excluida.' is NOT a reveal",
+    sr15.check("No pasa corriente por R3, está bien excluida.", srCtx15).violated === false);
+  assert("15/SR: non-flow state inside a question still fires ('¿Sabías que R5 está cortocircuitada?')",
+    sr15.check("¿Sabías que R5 está cortocircuitada?", srCtx15).violated === true);
+
+  const { analyzeStudentElements } = require(path.join(ROOT, "src/domain/services/rag/ragPipeline"));
+  const pea = analyzeStudentElements(
+    { proposed: [], negated: ["R3", "R5"], cumulativeNamedCorrect: ["R1", "R2", "R4"] }, correct15);
+  assert("15/PEA: cumulative-named elements are NOT reported as MISSING",
+    !/MISSING/.test(pea) && /ALREADY ESTABLISHED in earlier turns: R1, R2, R4/.test(pea),
+    "banner: " + JSON.stringify(pea.replace(/\n/g, " ")).slice(0, 140));
+  const peaFresh = analyzeStudentElements({ proposed: [], negated: ["R3", "R5"] }, correct15);
+  assert("15/PEA guard: without cumulative info, MISSING still reported (legacy behaviour)",
+    /MISSING: The student has not mentioned R1, R2, R4/.test(peaFresh));
+
+  const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
+  const open5 = "todas menos r3 porque el interruptor está abierto y r5 por estar en cortocircuito";
+  const cls5 = classifyQuery(open5, correct15, eval15);
+  assert("15/REPLAY: run-5 opening message → full set proposed, R3,R5 negated, reasoned",
+    ["R1", "R2", "R4"].every((r) => cls5.proposed.indexOf(r) >= 0) &&
+    ["R3", "R5"].every((r) => cls5.negated.indexOf(r) >= 0) && cls5.hasReasoning === true,
+    "P=[" + cls5.proposed + "] N=[" + cls5.negated + "] reasoning=" + cls5.hasReasoning);
+  const cum5 = computeCumulativeAnswer([{ role: "user", content: open5 }], correct15, eval15);
+  const Orch15 = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const orch15 = Object.create(Orch15.prototype);
+  assert("15/REPLAY: orchestrator CLOSES at run-5 turn 1 (complete reasoned answer in one message)",
+    cum5.closureReady === true &&
+    orch15._shouldFinishDeterministically({
+      classification: { type: cls5.type, concepts: cls5.concepts },
+      userMessage: open5, cumulativeAnswer: cum5, loopState: {},
+    }) === true,
+    "closureReady=" + cum5.closureReady);
+}
+
+/*
+   IN -> ____|____________
+        | section16() | -> void
+         ------------
+      Exercises the confirmed adversarial review findings on coordination, closure and guardrail FP/FN.
+   */
+function section16() {
+  section("16. Review findings: coordination/windows (A1-A9), closure integrity (A3-A10), guardrail FP/FN (C1-C10)");
+  const correct16 = ["R1", "R2", "R4"];
+  const eval16 = ["R1", "R2", "R3", "R4", "R5"];
+  const { computeCumulativeAnswer } = require(path.join(ROOT, "src/domain/services/rag/cumulativeAnswer"));
+  const Orch16 = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const orch16 = Object.create(Orch16.prototype);
+  const SL16 = require(path.join(ROOT, "src/infrastructure/guardrails/SolutionLeakGuardrail"));
+
+  const a1 = classifyQuery("r3 y r5 no influyen", correct16, eval16);
+  assert("16/A1: 'r3 y r5 no influyen' negates BOTH (coordination propagation)",
+    a1.negated.indexOf("R3") >= 0 && a1.negated.indexOf("R5") >= 0 && a1.proposed.length === 0,
+    "P=[" + a1.proposed + "] N=[" + a1.negated + "]");
+
+  const a1g = classifyQuery("r1 r2 r4 y r5 en corto", correct16, eval16);
+  assert("16/A1 guard: state description does NOT propagate ('…y r5 en corto' keeps R4 proposed)",
+    a1g.proposed.indexOf("R4") >= 0 && a1g.negated.indexOf("R4") < 0,
+    "P=[" + a1g.proposed + "] N=[" + a1g.negated + "]");
+  const a1h = classifyQuery("no pasa corriente por R3 pero R4 si", correct16, eval16);
+  assert("16/A1 guard: contrast 'pero R4 sí' still bounds propagation",
+    a1h.proposed.indexOf("R4") >= 0 && a1h.negated.indexOf("R3") >= 0);
+
+  const a2 = classifyQuery("todas menos la r3 y la r5", correct16, eval16);
+  assert("16/A2: 'todas menos la r3 y la r5' → full set minus both",
+    ["R1", "R2", "R4"].every((r) => a2.proposed.indexOf(r) >= 0) &&
+    ["R3", "R5"].every((r) => a2.negated.indexOf(r) >= 0),
+    "P=[" + a2.proposed + "] N=[" + a2.negated + "]");
+
+  const a3 = computeCumulativeAnswer([
+    { role: "user", content: "r1 r2 y r4" },
+    { role: "assistant", content: "¿Y por qué no las otras?" },
+    { role: "user", content: "no se, igual es porque r3 esta abierta y r5 en corto?" },
+  ], correct16, eval16);
+  assert("16/A3: guess turn ('no sé… ?') does NOT arm closureReady", a3.closureReady === false);
+
+  const a3b = computeCumulativeAnswer([
+    { role: "user", content: "r1 r2 y r4" },
+    { role: "assistant", content: "¿Y por qué no las otras?" },
+    { role: "user", content: "porque r3 esta abierta y r5 en corto" },
+  ], correct16, eval16);
+  assert("16/A3 guard: the ASSERTIVE version still arms closureReady", a3b.closureReady === true);
+
+  const a4 = classifyQuery("r1 r2 y r4 porque por r3 y r5 no se va la corriente", correct16, eval16);
+  assert("16/A4: 'no se va la corriente' with elements → NOT dont_know, full parse",
+    a4.type !== "dont_know" && ["R1", "R2", "R4"].every((r) => a4.proposed.indexOf(r) >= 0) &&
+    ["R3", "R5"].every((r) => a4.negated.indexOf(r) >= 0),
+    "type=" + a4.type + " P=[" + a4.proposed + "] N=[" + a4.negated + "]");
+  assert("16/A4 guard: bare 'ni idea' still dont_know",
+    classifyQuery("ni idea", correct16, eval16).type === "dont_know");
+
+  const a5 = classifyQuery("no", correct16, eval16, "¿Crees que R3 contribuye, con el interruptor abierto entre N2 y N3?");
+  assert("16/A5: 'no' to a CONTRIBUTION question that mentions the state → R3 negated",
+    a5.negated.indexOf("R3") >= 0 && a5.proposed.length === 0,
+    "P=[" + a5.proposed + "] N=[" + a5.negated + "]");
+  assert("16/A5 guard: 'sí' to a pure state question still inverts (R5 negated)",
+    classifyQuery("sí", correct16, eval16, "¿Está R5 conectada a tierra en ambos extremos?").negated.indexOf("R5") >= 0);
+
+  assert("16/A6: correct_good_reasoning ×2 after a close does NOT re-close",
+    orch16._shouldFinishDeterministically({ classification: { type: "correct_good_reasoning" }, loopState: { prevGoodReasoningTurns: 2 }, exerciseAlreadyClosed: true }) === false);
+
+  const a7 = computeCumulativeAnswer([
+    { role: "user", content: "r1 r2 r4" },
+    { role: "assistant", content: "¿Y R3?" },
+    { role: "user", content: "r4 no, me equivoque" },
+  ], correct16, eval16);
+  assert("16/A7: retracting R4 drops it from namedCorrect and complete=false",
+    a7.namedCorrect.indexOf("R4") < 0 && a7.complete === false,
+    "namedCorrect=[" + a7.namedCorrect + "] complete=" + a7.complete);
+
+  const a8 = classifyQuery("vale, ya entiendo todas las resistencias", correct16, eval16);
+  assert("16/A8: 'ya entiendo todas las resistencias' does NOT expand",
+    a8.proposed.length === 0 && a8.negated.length === 0,
+    "P=[" + a8.proposed + "]");
+  assert("16/A8 guard: real 'todas las resistencias' still expands",
+    classifyQuery("todas las resistencias", correct16, eval16).proposed.length === eval16.length);
+
+  const a9 = classifyQuery("r1 r2 r4 no?", correct16, eval16);
+  assert("16/A9: 'r1 r2 r4 no?' proposes all three (tag question)",
+    ["R1", "R2", "R4"].every((r) => a9.proposed.indexOf(r) >= 0) && a9.negated.length === 0,
+    "P=[" + a9.proposed + "] N=[" + a9.negated + "]");
+  assert("16/A9 guard: 'R4 sí, R5 no' still negates R5",
+    classifyQuery("R4 sí, R5 no", correct16, eval16).negated.indexOf("R5") >= 0);
+
+  assert("16/C1: 'No es correcto. Piensa en esas resistencias.' is NOT a semantic leak",
+    SL16.looksLikeSemanticAffirmation("No es correcto. Piensa de nuevo en esas resistencias. ¿Cuál falta?") === false);
+  assert("16/C1 guard: 'Así es, esos elementos contribuyen.' still IS",
+    SL16.looksLikeSemanticAffirmation("Así es, esos elementos contribuyen.") === true);
+
+  const slg16 = byId.solution_leak;
+  const cumC16 = { namedCorrect: correct16, excluded: ["R3", "R5"], stillMissing: [], complete: true, closureReady: true, wronglyNamed: [], wronglyExcluded: [], perTurn: [] };
+  assert("16/C2: post-completion confirmation is exempt from rule (c)",
+    slg16.check("Correcto, esas resistencias son las que influyen. Repasa si te queda alguna duda.", { correctAnswer: correct16, lang: "es", cumulativeAnswer: cumC16 }).violated === false);
+
+  const srg16 = byId.state_reveal;
+  const srCtx16 = { evaluableElements: eval16, kgConceptPatterns: [], lang: "es", messages: [] };
+  assert("16/C3: 'no pasa por R3, pero sí fluye por R2 y R4' → affirmed flow caught",
+    srg16.check("La corriente no pasa por R3, pero sí fluye por R2 y R4.", srCtx16).violated === true);
+  assert("16/C3 guard: fully negated flow still exempt",
+    srg16.check("La corriente no pasa por R3, está bien excluida.", srCtx16).violated === false);
+
+  assert("16/C4: '¿te das cuenta de que la corriente pasa por R1, R2 y R4?' → leak",
+    slg16.check("¿Te das cuenta de que la corriente pasa por R1, R2 y R4?", { correctAnswer: correct16, lang: "es", evaluableElements: eval16 }).violated === true);
+  assert("16/C7: full set + ONE extra ('a diferencia de R3') is still a leak",
+    slg16.check("¿Has considerado cómo R1, R2 y R4, a diferencia de R3, afectan la tensión entre N2 y tierra?", { correctAnswer: correct16, lang: "es", evaluableElements: eval16 }).violated === true);
+  assert("16/C7 guard: full evaluable enumeration still exempt",
+    slg16.check("¿Cuáles de R1, R2, R3, R4 y R5 influyen en la tensión?", { correctAnswer: correct16, lang: "es", evaluableElements: eval16 }).violated === false);
+
+  assert("16/C5: '¿por qué crees que R4 no está en el camino?' (R4 correct) → violation",
+    byId.adherence.check("¿Por qué crees que R4 no está en el camino?", { lang: "es", correctAnswer: correct16 }).violated === true);
+
+  assert("16/C6: '¿Qué impide que la corriente fluya a través de R3?' is consolidation, not a re-ask",
+    byId.settled_element_question.check("¿Qué impide que la corriente fluya a través de R3?", { cumulativeAnswer: cumC16 }).violated === false);
+
+  const banner16 = "[TURN CONTEXT — x]\nMissing: R4\n[/TURN CONTEXT]\n\nhola";
+  assert("16/C8: KG-pattern check fires for elements only named in the injected banner",
+    srg16.check("R4 contribuye a la diferencia de potencial del nodo.",
+      { evaluableElements: eval16, kgConceptPatterns: ["diferencia de potencial"], lang: "es", messages: [{ role: "user", content: banner16 }] }).violated === true);
+
+  assert("16/C9: complete_solution retry hint names the wrongly proposed element",
+    /R3/.test(byId.complete_solution.buildRetryHint("es", { proposed: ["R3"], negated: [], correctAnswer: correct16 })));
+
+  const TutorAgent16 = require(path.join(ROOT, "src/domain/agents/tutorAgent"));
+  const tut16 = Object.create(TutorAgent16.prototype);
+  const bErr = tut16._buildCumulativeBanner(cumC16, "es", false, true);
+  assert("16/C10: fresh-error turn suppresses the consolidation/closure line",
+    !/consolidaci|Cierra con/.test(bErr) && /YA ha identificado/.test(bErr),
+    bErr.slice(0, 80));
+  const bNoErr = tut16._buildCumulativeBanner(cumC16, "es", false, false);
+  assert("16/C10 guard: without fresh errors the closure line is back",
+    /Cierra con un reconocimiento/.test(bNoErr));
+
+  const ctxFin = { finalResponse: "ok <END_EXERCISE>", classification: { type: "dont_know" }, cumulativeAnswer: cumC16, loopState: {}, userMessage: "no se" };
+  orch16._stripUnauthorizedFinToken(ctxFin);
+  assert("16/A10: LLM FIN token on a dont_know turn is stripped even with closureReady",
+    !/<END_EXERCISE>/.test(ctxFin.finalResponse));
+
+  const run6 = [
+    { role: "user", content: "r1 r2 r4" },
+    { role: "assistant", content: "Los elementos R1, R2 y R4 están correctamente identificados. ¿Por qué crees que R3 y R5 no influyen en la tensión entre N2 y tierra?" },
+    { role: "user", content: "r3 está en un interruptor abierto y r5 en corto" },
+  ];
+  const run6cum = computeCumulativeAnswer(run6, correct16, eval16);
+  assert("16/RUN6: markerless justification ('r3 está en…, r5 en corto') arms closureReady",
+    run6cum.closureReady === true,
+    "concepts=[" + run6cum.reasoningConcepts + "] closureReady=" + run6cum.closureReady);
+  const run6cls = classifyQuery(run6[2].content, correct16, eval16, run6[1].content);
+  assert("16/RUN6: orchestrator CLOSES at run-6 turn 2",
+    orch16._shouldFinishDeterministically({
+      classification: { type: run6cls.type, concepts: run6cls.concepts },
+      userMessage: run6[2].content, cumulativeAnswer: run6cum, loopState: {},
+    }) === true);
+  const run6g = computeCumulativeAnswer([
+    { role: "user", content: "r1 r2 r4" },
+    { role: "assistant", content: "¿por qué?" },
+    { role: "user", content: "r3 y r5 no" },
+  ], correct16, eval16);
+  assert("16/RUN6 guard: bare negation without a state concept does NOT arm closureReady",
+    run6g.closureReady === false && run6g.complete === true,
+    "closureReady=" + run6g.closureReady);
+}
+
+/*
+   IN -> ____|____________
+        | section17() | -> Promise<void>
+         ------------
+      Runs the real orchestrator.process() end-to-end over in-memory repos to verify run-7 closure.
+   */
+async function section17() {
+  section("17. Integration: orchestrator.process() end-to-end closure (run-7)");
+  const TutoringOrchestrator = require(path.join(ROOT, "src/domain/agents/orchestrator"));
+  const ContextAgent = require(path.join(ROOT, "src/domain/agents/contextAgent"));
+  const ClassifierAgent = require(path.join(ROOT, "src/domain/agents/classifierAgent"));
+  const AcDetectorAgent = require(path.join(ROOT, "src/domain/agents/acDetectorAgent"));
+
+  const store = [];
+  function mkMsg(role, content, classification) {
+    return {
+      role, content,
+      metadata: classification ? { classification } : null,
+      isAssistant: function () { return role === "assistant"; },
+      toOllamaFormat: function () { return { role: role, content: content }; },
+    };
+  }
+  const messageRepo = {
+    getAllMessages: async () => store.slice(),
+    countConsecutiveFromEnd: async (id, types) => 0,
+    countAssistantMessages: async () => store.filter((m) => m.isAssistant()).length,
+    getLastAssistantMessages: async (id, n) => store.filter((m) => m.isAssistant()).slice(-n),
+  };
+  const exercise = {
+    hasValidTutorContext: () => true,
+    getExerciseNumber: () => 1,
+    getCorrectAnswer: () => ["R1", "R2", "R4"],
+    getEvaluableElements: () => ["R1", "R2", "R3", "R4", "R5"],
+    tutorContext: { correctAnswer: ["R1", "R2", "R4"], acRefs: [] },
+  };
+  const noLog = { logClassify: () => {}, logPrompt: () => {}, traceLlmCall: () => {}, logLlmOut: () => {}, logGuardrail: () => {} };
+  const agents = {
+    context: new ContextAgent({
+      ejercicioRepo: { findById: async () => exercise },
+      interaccionRepo: { existsForUser: async () => true, create: async () => ({ id: "int-1" }) },
+      messageRepo: messageRepo,
+      config: { HISTORY_MAX_MESSAGES: 80 },
+      historySummarizer: { summarize: async () => null },
+    }),
+    inputGuardrail: { execute: async (ctx) => { ctx.inputSecurity = { safe: true, category: "safe" }; ctx.inputBlocked = false; } },
+    classifier: new ClassifierAgent({ classifyQuery: classifyQuery, debugLogger: noLog }),
+    acDetector: new AcDetectorAgent({}),
+    retrieval: { canSkip: () => true },
+    tutor: { execute: async (ctx) => { ctx.llmResponse = ctx._scriptedReply || "ok"; ctx.llmMessages = []; } },
+    guardrail: { canSkip: () => true },
+    persistence: {
+      execute: async (ctx) => {
+        store.push(mkMsg("user", ctx.userMessage, null));
+        store.push(mkMsg("assistant", ctx.finalResponse || ctx.llmResponse || "", ctx.classification && ctx.classification.type));
+      },
+    },
+  };
+  const orch17 = new TutoringOrchestrator(agents);
+
+  async function turn(userMessage, scriptedReply) {
+    const ctx = await orch17.process({
+      userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: userMessage,
+    });
+    return ctx;
+  }
+  let scripted = "";
+  agents.tutor = { execute: async (ctx) => { ctx.llmResponse = scripted; ctx.llmMessages = []; } };
+
+  scripted = "Los elementos R1, R2 y R4 están correctamente identificados. ¿Por qué crees que R3 y R5 no influyen en la tensión entre N2 y 0?";
+  const t1 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "r1 r2 r4" });
+  assert("17/INT: turn 1 ('r1 r2 r4') does NOT close",
+    t1.deterministicFinish !== true,
+    "deterministicFinish=" + t1.deterministicFinish + " final=" + String(t1.finalResponse).slice(0, 60));
+
+  scripted = "(no debería llegar al tutor)";
+  const t2 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "porque r3 está en circuito abierto y r5 en corto" });
+  assert("17/INT: turn 2 (reasoned exclusions) CLOSES through the real pipeline",
+    t2.deterministicFinish === true && /<END_EXERCISE>/.test(t2.finalResponse || ""),
+    "deterministicFinish=" + t2.deterministicFinish + " final=" + JSON.stringify(String(t2.finalResponse).slice(0, 80)));
+
+  scripted = "Respuesta normal al follow-up. ¿Alguna duda más?";
+  const t3 = await orch17.process({ userId: "u1", exerciseId: "ex1", interactionId: "int-1", userMessage: "gracias, ya lo entiendo" });
+  assert("17/INT: post-close follow-up does NOT re-close (de-sticky through real pipeline)",
+    t3.deterministicFinish !== true && !/<END_EXERCISE>/.test(t3.finalResponse || ""),
+    "deterministicFinish=" + t3.deterministicFinish + " final=" + String(t3.finalResponse).slice(0, 60));
+}
+
+/*
+   IN -> ____|____________
+        | section18() | -> Promise<void>
+         ------------
+      Runs the closure battery: realistic conversations end-to-end through the real pipeline.
+   */
+async function section18() {
+  section("18. Closure battery (tests/closure_battery.js): realistic phrasings end-to-end");
+  const { runBattery, SCENARIOS } = require(path.join(ROOT, "tests/closure_battery"));
+  const r = await runBattery(false);
+  assert("18/BATTERY: all " + SCENARIOS.length + " realistic scenarios behave (close ⇔ expected)",
+    r.fail === 0,
+    r.fail + " failed: " + r.failures.join(" | ").slice(0, 300));
+}
+
+(async function main() {
+  await section8();
+  await section9();
+  section10();
+  await section11();
+  await section12();
+  await section13();
+  section14();
+  section15();
+  section16();
+  await section17();
+  await section18();
+
+  const passed = results.filter(r => r.ok).length;
+  const failed = results.length - passed;
+  console.log("\n=== SUMMARY ===");
+  console.log(passed + " passed / " + failed + " failed / " + results.length + " total");
+  if (failed > 0) {
+    console.log("\nFAILED (these are confirmed foci of error):");
+    for (const r of results) if (!r.ok) console.log("  - " + r.name + (r.detail ? " :: " + r.detail : ""));
+  }
+  process.exit(failed > 0 ? 1 : 0);
+})();

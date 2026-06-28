@@ -1,0 +1,240 @@
+[
+  {
+    "ejercicio": 1,
+    "tutorContext": {
+      "enunciado": "En el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3.",
+      "objetivo": "Tienes que comportarte como un tutor socrático para ayudar a los estudiantes a superar las concepciones alternativas que poseen en relación con el concepto Ley de Ohm, a través de la resolución del ejercicio 1. Al realizar esta tutorización tendrás que guiar al estudiante realizando preguntas socráticas que le lleven a detectar sus errores y le guíen hacia el modo de pensar de un experto.",
+      "netlist": "R1 N1 N2 1\n\nV1 N1 0 1\n\nR2 N2 0 1\n\nR3 N3 0 1\n\nR4 N2 0 1\n\nR5 0 0 1\n\nExiste un interruptor abierto entre los nudos N2 y N3.",
+      "modoExperto": "Un experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R5 no contribuye porque está cortocircuitada. Se detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a la diferencia de potencial entre N2 y 0.",
+      "ac_refs": ["AC1", "AC6", "AC9"],
+      "acPatterns": [
+        {
+          "id": "AC1",
+          "name": "Modelo del circuito abierto",
+          "misconception": "Incluye R3 pensando que circula corriente por la rama del interruptor abierto entre N2 y N3",
+          "strategy": "Pregunta sobre lo que ocurre con la corriente en una rama interrumpida; nunca nombres R3 ni reveles que el interruptor la deja sin camino",
+          "match": { "includes": ["R3"] }
+        },
+        {
+          "id": "AC6",
+          "name": "Modelo del cortocircuito",
+          "misconception": "Incluye R5 sin reconocer que sus dos terminales están en el mismo nudo (cortocircuito)",
+          "strategy": "Pregunta qué tienen en común los dos terminales de R5 mirando el netlist, sin afirmar tú mismo que está cortocircuitada",
+          "match": { "includes": ["R5"] }
+        },
+        {
+          "id": "AC9",
+          "name": "Razonamiento local",
+          "misconception": "Olvida R4 (o las resistencias del camino N2 a tierra) por analizar solo una parte del circuito",
+          "strategy": "Recuérdale al alumno mirar el camino global desde V1 hasta tierra; pregunta si ha tenido en cuenta todas las resistencias entre N2 y 0",
+          "match": { "missesAny": ["R4", "R1", "R2"] }
+        }
+      ],
+      "version": 1,
+      "respuestaCorrecta": ["R1", "R2", "R4"]
+    }
+  },
+  {
+    "ejercicio": 2,
+    "tutorContext": {
+      "enunciado": "En el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Existe un interruptor abierto entre los nudos N2 y N3 y observa con cuidado la conexión de R5.",
+      "objetivo": "Tienes que comportarte como un tutor socrático para ayudar a los estudiantes a superar las concepciones alternativas que poseen en relación con el concepto Ley de Ohm, a través de la resolución del ejercicio 2. Este ejercicio comparte la topología del ejercicio 1 (mismo circuito con interruptor abierto entre N2 y N3 y R5 con ambos terminales en el mismo nudo). Al realizar esta tutorización tendrás que guiar al estudiante realizando preguntas socráticas que le lleven a detectar sus errores —especialmente en la identificación del cortocircuito de R5 y del circuito abierto en la rama de R3— y le guíen hacia el modo de pensar de un experto.",
+      "netlist": "R1 N1 N2 1\n\nV1 N1 0 1\n\nR2 N2 0 1\n\nR3 N3 0 1\n\nR4 N2 0 1\n\nR5 0 0 1\n\nExiste un interruptor abierto entre los nudos N2 y N3.",
+      "modoExperto": "El experto descompone el problema en dos pasos. Primero descarta las resistencias que no pueden afectar a la diferencia de potencial entre N2 y 0: R5 queda fuera porque sus dos terminales están en el mismo nudo (cortocircuito) y R3 queda fuera porque la rama N2-N3 está interrumpida por el interruptor abierto. Después analiza la red resultante: R1 conecta la fuente con N2 y R2 y R4 cierran el circuito desde N2 a 0. Por tanto sólo R1, R2 y R4 contribuyen a la diferencia de potencial pedida.",
+      "ac_refs": ["AC1", "AC6", "AC9"],
+      "acPatterns": [
+        {
+          "id": "AC1",
+          "name": "Modelo del circuito abierto",
+          "misconception": "Incluye R3 sin tener en cuenta que la rama N2-N3 está interrumpida por el interruptor abierto",
+          "strategy": "Pregunta qué pasa con la corriente cuando una rama tiene un interruptor abierto, sin nombrar R3",
+          "match": { "includes": ["R3"] }
+        },
+        {
+          "id": "AC6",
+          "name": "Modelo del cortocircuito",
+          "misconception": "Incluye R5 sin notar que sus dos terminales están en el mismo nudo",
+          "strategy": "Pregunta qué tienen en común los dos terminales de R5 mirando el netlist",
+          "match": { "includes": ["R5"] }
+        },
+        {
+          "id": "AC9",
+          "name": "Razonamiento local",
+          "misconception": "Olvida alguna resistencia del camino global de la corriente",
+          "strategy": "Recuérdale seguir el camino completo de la corriente desde V1 hasta tierra",
+          "match": { "missesAny": ["R4", "R1", "R2"] }
+        }
+      ],
+      "version": 1,
+      "respuestaCorrecta": ["R1", "R2", "R4"]
+    }
+  },
+  {
+    "ejercicio": 3,
+    "tutorContext": {
+      "enunciado": "En el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.",
+      "objetivo": "Tienes que comportarte como un tutor socrático para ayudar a los estudiantes a superar las concepciones alternativas que poseen en relación con el concepto Ley de Ohm, a través de la resolución del ejercicio 3. Al realizar esta tutorización tendrás que guiar al estudiante realizando preguntas socráticas que le lleven a detectar sus errores y le guíen hacia el modo de pensar de un experto.",
+      "netlist": "R2 0 0 1\n\nR1 0 N1 1\n\nV1 N1 0 1\n\nR3 N1 N2 1\n\nR4 N2 0 1\n\nR5 N2 0 1",
+      "modoExperto": "Un experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.",
+      "ac_refs": ["AC6", "AC9", "AC13"],
+      "acPatterns": [
+        {
+          "id": "AC6",
+          "name": "Modelo del cortocircuito",
+          "misconception": "Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)",
+          "strategy": "Pregunta qué tienen en común los dos terminales de R2 según el netlist",
+          "match": { "includes": ["R2"] }
+        },
+        {
+          "id": "AC13",
+          "name": "Confusión V/R/I — fuente en paralelo",
+          "misconception": "Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella",
+          "strategy": "Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente",
+          "match": { "includes": ["R1"] }
+        },
+        {
+          "id": "AC9",
+          "name": "Razonamiento local",
+          "misconception": "Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen",
+          "strategy": "Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+          "match": { "missesAny": ["R3", "R4", "R5"] }
+        }
+      ],
+      "version": 1,
+      "respuestaCorrecta": ["R3", "R4", "R5"]
+    }
+  },
+  {
+    "ejercicio": 4,
+    "tutorContext": {
+      "enunciado": "En el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N1 y N2.",
+      "objetivo": "Tienes que comportarte como un tutor socrático para ayudar a los estudiantes a superar las concepciones alternativas que poseen en relación con el concepto Ley de Ohm, a través de la resolución del ejercicio 4. Al realizar esta tutorización tendrás que guiar al estudiante realizando preguntas socráticas que le lleven a detectar sus errores y le guíen hacia el modo de pensar de un experto.",
+      "netlist": "R1 N1 0 1\n\nV1 N1 0 1\n\nR2 N1 0 1\n\nR3 N2 0 1",
+      "modoExperto": "Un experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1 y R2 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en paralelo.",
+      "ac_refs": ["AC1", "AC13", "AC14"],
+      "acPatterns": [
+        {
+          "id": "AC1",
+          "name": "Modelo del circuito abierto",
+          "misconception": "Incluye R3 sin notar que la rama N1-N2 está interrumpida por el interruptor abierto",
+          "strategy": "Pregunta qué pasa con la corriente que llegaría a R3 si el interruptor está abierto",
+          "match": { "includes": ["R3"] }
+        },
+        {
+          "id": "AC13",
+          "name": "Confusión V/R/I",
+          "misconception": "Excluye R1 o R2 confundiendo corriente con diferencia de potencial",
+          "strategy": "Recuérdale que la pregunta es por la corriente que sale de la fuente y guíale a ver qué resistencias forman el camino que cierra desde V1",
+          "match": { "excludes": ["R1", "R2"] }
+        },
+        {
+          "id": "AC14",
+          "name": "Topología serie/paralelo",
+          "misconception": "Cree que R1 y R2 están en serie cuando comparten ambos terminales (paralelo)",
+          "strategy": "Pregunta cuántos terminales comparten R1 y R2 — si comparten dos, no pueden estar en serie",
+          "match": { "missesAny": ["R1", "R2"] }
+        }
+      ],
+      "version": 1,
+      "respuestaCorrecta": ["R1", "R2"]
+    }
+  },
+  {
+    "ejercicio": 5,
+    "tutorContext": {
+      "enunciado": "En el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.",
+      "objetivo": "Tienes que comportarte como un tutor socrático para ayudar a los estudiantes a superar las concepciones alternativas que poseen en relación con el concepto Ley de Ohm, a través de la resolución del ejercicio 5. Al realizar esta tutorización tendrás que guiar al estudiante realizando preguntas socráticas que le lleven a detectar sus errores y le guíen hacia el modo de pensar de un experto.",
+      "netlist": "V1 N1 0 1\n\nR1 N1 N2 1\n\nR2 N2 N3 1\n\nR4 N3 0 1\n\nR3 N4 0 1",
+      "modoExperto": "Un experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.",
+      "ac_refs": ["AC1", "AC13", "AC14"],
+      "acPatterns": [
+        {
+          "id": "AC1",
+          "name": "Modelo del circuito abierto",
+          "misconception": "Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4",
+          "strategy": "Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3",
+          "match": { "includes": ["R3"] }
+        },
+        {
+          "id": "AC13",
+          "name": "Confusión V/R/I",
+          "misconception": "Excluye R1 o R2 confundiendo corriente con diferencia de potencial",
+          "strategy": "Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0",
+          "match": { "excludes": ["R1", "R2", "R4"] }
+        },
+        {
+          "id": "AC14",
+          "name": "Topología serie/paralelo",
+          "misconception": "Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par",
+          "strategy": "Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito",
+          "match": { "missesAny": ["R1", "R2", "R4"] }
+        }
+      ],
+      "version": 1,
+      "respuestaCorrecta": ["R1", "R2", "R4"]
+    }
+  },
+  {
+    "ejercicio": 6,
+    "tutorContext": {
+      "enunciado": "En el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente?",
+      "objetivo": "Tienes que comportarte como un tutor socrático para ayudar a los estudiantes a superar las concepciones alternativas que poseen en relación con el concepto Ley de Ohm, a través de la resolución del ejercicio 6. Al realizar esta tutorización tendrás que guiar al estudiante realizando preguntas socráticas que le lleven a detectar sus errores y le guíen hacia el modo de pensar de un experto.",
+      "netlist": "V1 N1 0 1\n\nR1 N1 N2 1\n\nR2 N2 N3 1\n\nR3 N3 N4 1\n\nR4 N4 N5 1\n\nR5 N5 N6 1\n\nR6 N6 0 1",
+      "modoExperto": "Un experto analiza el circuito comenzando por identificar la topología de las resistencias que están conectadas. En este caso detecta que todas las resistencias están en serie, por lo que por todas ellas atraviesa la misma corriente.\n\nLa respuesta correcta será: por todas las resistencias pasa la misma corriente.",
+      "ac_refs": ["AC14", "AC2"],
+      "acPatterns": [
+        {
+          "id": "AC2",
+          "name": "Modelo de la atenuación",
+          "misconception": "Cree que la corriente se va consumiendo en cada resistencia, así que por R1 (cerca de la fuente) circula más que por R6 (al final)",
+          "strategy": "Pregunta si por dos resistencias en serie atraviesa la misma corriente o corrientes distintas, sin nombrar R1 ni R6",
+          "match": { "includes": ["R1", "R2", "R3", "R4", "R5", "R6"] }
+        },
+        {
+          "id": "AC14",
+          "name": "Topología serie/paralelo",
+          "misconception": "Cree que las seis resistencias están en paralelo en lugar de en serie",
+          "strategy": "Pregunta cuántos terminales comparte cada par de resistencias consecutivas",
+          "match": { "includes": ["R1", "R2", "R3", "R4", "R5", "R6"] }
+        }
+      ],
+      "version": 1,
+      "respuestaCorrecta": ["por todas las resistencias pasa la misma corriente"]
+    }
+  },
+  {
+    "ejercicio": 7,
+    "tutorContext": {
+      "enunciado": "En el circuito descrito en el siguiente netlist, ¿por qué resistencia atraviesa mayor corriente? Las tres resistencias R1, R2 y R3 son del mismo valor.",
+      "objetivo": "Tienes que comportarte como un tutor socrático para ayudar a los estudiantes a superar las concepciones alternativas que poseen en relación con el concepto Ley de Ohm, a través de la resolución del ejercicio 7. La pregunta es por qué resistencia atraviesa mayor corriente. El estudiante suele caer en la concepción de la atenuación (creer que la corriente se consume al avanzar) o confundir serie con paralelo. Tu trabajo es guiarlo con preguntas socráticas para que identifique la topología real y deduzca cómo se reparte la corriente.",
+      "netlist": "V1 N1 0 1\n\nR1 N1 0 1\n\nR2 N1 0 1\n\nR3 N1 0 1",
+      "modoExperto": "Un experto analiza primero la topología y observa que las tres resistencias R1, R2 y R3 están conectadas en paralelo entre N1 y 0, que es exactamente entre los terminales de la fuente V1.\n\nAl ser todas iguales (mismo valor) y compartir la misma diferencia de potencial, por las tres resistencias circula exactamente la misma corriente. La corriente no se atenúa al avanzar por el circuito: cada rama paralela ve la misma tensión y por tanto el mismo flujo.\n\nLa respuesta correcta será: por todas las resistencias circula la misma corriente.",
+      "ac_refs": ["AC2", "AC14"],
+      "acPatterns": [
+        {
+          "id": "AC2",
+          "name": "Modelo de la atenuación",
+          "misconception": "Cree que por la primera resistencia (cerca de la fuente) circula más corriente y va decreciendo",
+          "strategy": "Pregunta si dos resistencias en paralelo a la misma fuente tienen la misma diferencia de potencial, sin nombrar R1",
+          "match": { "includes": ["R1"] }
+        },
+        {
+          "id": "AC14-near",
+          "name": "Topología — confunde paralelo con secuencia",
+          "misconception": "Da una sola resistencia (R2 o R3) creyendo que la posición física determina la corriente",
+          "strategy": "Pregunta entre qué nudos están conectadas las tres resistencias",
+          "match": { "includes": ["R2", "R3"] }
+        },
+        {
+          "id": "AC14-series",
+          "name": "Topología serie/paralelo",
+          "misconception": "Cree que las tres resistencias están en serie",
+          "strategy": "Pregunta cuántos terminales comparten cada par de resistencias entre N1 y 0",
+          "match": { "missesAll": ["R1", "R2", "R3"] }
+        }
+      ],
+      "version": 1,
+      "respuestaCorrecta": ["por todas las resistencias circula la misma corriente"]
+    }
+  }
+]

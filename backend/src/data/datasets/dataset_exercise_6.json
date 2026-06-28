@@ -1,0 +1,106 @@
+[
+  {
+    "student": "Por ninguna, todas las resistencias poseen la misma corriente ya que están conectadas en serie",
+    "tutor": "Muy bien justificado. Al estar todas las resistencias en serie la corriente que circula es la misma en todas ellas."
+  },
+  {
+    "student": "En ninguna",
+    "tutor": "Razona tu respuesta"
+  },
+  {
+    "student": "La corriente es la misma en todas las resistencias porque es un circuito serie",
+    "tutor": "Muy bien justificado. Al estar todas las resistencias en serie la corriente que circula es la misma en todas ellas."
+  },
+  {
+    "student": "En R1 ya que es la primera resistencia",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R1 ya que la corriente se va consumiendo en las resistencias",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R1 ya que es la resistencia que está conectada a la fuente",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R6 ya que es la resistencia que está conectada a la fuente",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R2 porque es una de las primeras resistencias",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R1 porque todas las resistencias están conectadas en serie",
+    "tutor": "Al estar las resistencias conectadas en serie ¿qué ocurre con la corriente?"
+  },
+  {
+    "student": "En R1 porque todas las resistencias están conectadas en paralelo",
+    "tutor": "Las resistencias conectadas en paralelo tienen los dos terminales conectados al mismo punto. ¿Sucede esto en este circuito?"
+  },
+  {
+    "student": "En R6 porque es la última resistencia",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R3",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R4",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R5",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R1",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R2",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R1 y R2 pasa más corriente que en el resto",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R2 y R3 pasa más corriente que en el resto",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R3 y R4 pasa más corriente que en el resto",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R4 y R5 pasa más corriente que en el resto",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "En R5 y R6 pasa más corriente que en el resto",
+    "tutor": "Revisa de nuevo el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Todas las resistencias forman un divisor de corriente",
+    "tutor": "En un divisor de corriente todas las resistencias están conectadas en paralelo ¿Ocurre esto en este circuito?"
+  },
+  {
+    "student": "Todas las resistencias formar un divisor de tensión",
+    "tutor": "Es cierto, pero entonces ¿por qué resistencia circula más corriente?"
+  },
+  {
+    "student": "Todas las resistencias están conectadas en paralelo",
+    "tutor": "Las resistencias conectadas en paralelo tienen los dos terminales conectados al mismo punto. ¿Sucede esto en este circuito?"
+  },
+  {
+    "student": "Todas las resistencias están conectadas en serie",
+    "tutor": "Es cierto, pero entonces ¿por qué resistencia circula más corriente?"
+  },
+  {
+    "student": "La corriente irá disminuyendo conforme atraviesa las resistencias",
+    "tutor": "No es cierto. ¿Cómo están conectadas las resistencias?"
+  }
+]

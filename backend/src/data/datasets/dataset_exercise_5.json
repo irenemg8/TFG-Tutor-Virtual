@@ -1,0 +1,118 @@
+[
+  {
+    "student": "R1 y R2 porque están conectadas en serie con la fuente",
+    "tutor": "¿Por qué no estás considerando R3 y R4?. Razona tu respuesta"
+  },
+  {
+    "student": "R1 y R2 porque están conectadas en paralelo con la fuente",
+    "tutor": "La conexión en paraleo se da cuando los dos terminales de los componentes se encuentran conectados a los mismos dos puntos. ¿Ocurre eso en este circuito?"
+  },
+  {
+    "student": "R1, R2, y R4 porque están conectadas en serie con la fuente",
+    "tutor": "La respuesta es correcta pero no has explicado por qué no estás considerando R3. Explícalo, por favor."
+  },
+  {
+    "student": "R1, R2 y R4 porque por R3 no pasa corriente",
+    "tutor": "La respuesta es correcta pero no has explicado por qué no pasa corriente por R3. Explícalo, por favor."
+  },
+  {
+    "student": "R1, R2 y R4 porque R3 está en circuito abierto",
+    "tutor": "Muy bien. Dado que R3 está en cictuito abierto no pasa corriente por ella, por eso no se tiene en cuenta en los cálculos."
+  },
+  {
+    "student": "R1, R2, R3 y R4 porque son las resistencias que forman parte del circuito",
+    "tutor": "Revisa de nuevo el circuito. ¿Circula corriente por R3?"
+  },
+  {
+    "student": "R1, R2, R3 y R4 porque todas están conectadas al circuito",
+    "tutor": "Revisa de nuevo el circuito. ¿Circula corriente por R3?"
+  },
+  {
+    "student": "R3 porque R1 y R2 se pueden despreciar al estar en serie con la fuente",
+    "tutor": "Mira bien circuito. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R1 y R2 porque R3 está en circuito abierto y R4 está en paralelo con la fuente",
+    "tutor": "Para que una resistencia esté en paralelo con la fuente sus dos terminales deberían estar conectados a los mismos puntos que la fuente. ¿Sucede esto en este cirtuito?"
+  },
+  {
+    "student": "R4 porque R1 y R2 se pueden despreciar al estar en serie con la fuente y R3 está en circuito abierto",
+    "tutor": "Revisa de nuevo el circuito. ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R1 y R2 porque R3 se puede quitar y R4 está en paralelo con la fuente",
+    "tutor": "Para que una resistencia esté en paralelo con la fuente sus dos terminales deberían estar conectados a los mismos puntos que la fuente. ¿Sucede esto en este cirtuito?"
+  },
+  {
+    "student": "Todas porque todas están conectadas al circuito",
+    "tutor": "Revisa de nuevo el circuito. ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R1 y R2 porque forman un divisor de tensión",
+    "tutor": "Mira bien circuito. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R1, R2 y R4 porque forman un divisor de tension",
+    "tutor": "La respuesta es correcta pero no has explicado por qué no tienes en cuenta R3. Explícalo, por favor."
+  },
+  {
+    "student": "R1 y R2 porque forman un divisor de corriente",
+    "tutor": "Varias resistencias formarán un divisor de corriente cuando se encuentran conectadas en paralelo. ¿Sucede esto en este circuito?"
+  },
+  {
+    "student": "Sí",
+    "tutor": "Razona tu respuesta"
+  },
+  {
+    "student": "No",
+    "tutor": "Razona tu respuesta"
+  },
+  {
+    "student": "Puede ser",
+    "tutor": "Razona tu respuesta"
+  },
+  {
+    "student": "R1 porque está conectada a la fuente",
+    "tutor": "Mira bien circuito. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R2 porque es la última resistencia conectada",
+    "tutor": "Mira bien circuito. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R3 porque está en paralelo con la fuente",
+    "tutor": "Mira bien circuito. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R4 porque está en paralelo con la fuente",
+    "tutor": "Mira bien circuito. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R4 porque está en serie con la fuente",
+    "tutor": "Mira bien circuito. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R1",
+    "tutor": "Razona tu respuesta. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R2",
+    "tutor": "Razona tu respuesta. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R3",
+    "tutor": "Razona tu respuesta. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R4",
+    "tutor": "Razona tu respuesta. ¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "No lo sé",
+    "tutor": "Vamos a comenzar revisando el circuito.¿Por qué resistencias circulará la corriente?"
+  },
+  {
+    "student": "R1 y R2 están conectadas en serie",
+    "tutor": "Mira bien todo el circuito. ¿Por qué resistencias circulará la corriente?"
+  }
+]

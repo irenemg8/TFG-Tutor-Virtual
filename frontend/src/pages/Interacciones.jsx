@@ -4,8 +4,16 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { TrashIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { getCurrentUser } from "../services/auth";
 import { api } from "../services/api";
+import MessageRenderer from "../components/MessageRenderer";
 
-const FIN_TOKEN = "<FIN_EJERCICIO>";
+const FIN_TOKEN = "<END_EXERCISE>";
+
+// Placeholder shown while the backend's guardrail is regenerating a response
+// it judged unsafe (e.g. solution leak). Replaces the live-typed draft so the
+// student doesn't read the leaked answer for the 2-5s the LLM retry takes.
+// Italic so it visually reads as system-status, not as the tutor speaking.
+const REWRITING_PLACEHOLDER =
+  "_El tutor estaba respondiendo, pero se ha filtrado parte de la solución que debes averiguar por ti. Está regenerando la respuesta…_";
 
 function containsFinishToken(text) {
   return typeof text === "string" && text.includes(FIN_TOKEN);
@@ -66,11 +74,13 @@ async function enviarMensajeStream({
   signal,
   onInteraccionId,
   onChunk,
+  onRewriting,
   onDone,
   onError,
 }) {
+  const basePath = import.meta.env.VITE_BASE_PATH || "";
   try {
-    const resp = await fetch("/api/ollama/chat/stream", {
+    const resp = await fetch(basePath + "/api/ollama/chat/stream", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -118,8 +128,21 @@ async function enviarMensajeStream({
           onInteraccionId?.(msg.interaccionId);
           return;
         }
+        // Guardrail pipeline announced it's about to rewrite. Don't wait for
+        // the rewrite to finish to fix the UI — swap the leaked draft for a
+        // placeholder NOW so the student stops reading the leaked answer.
+        if (msg?.rewriting === true) {
+          onRewriting?.(msg.reason || "guardrail");
+          return;
+        }
         if (typeof msg?.chunk === "string" && msg.chunk.length > 0) {
-          onChunk?.(msg.chunk);
+          // {replace:true} signals that the backend's pedagogicalReviewer or
+          // guardrail rewrote the answer after streaming partial tokens —
+          // the frontend must REPLACE the accumulated text rather than
+          // append, otherwise the user sees the original draft followed by
+          // the corrected one. {partial:true} is informational and treated
+          // as a normal append.
+          onChunk?.(msg.chunk, { replace: msg.replace === true, partial: msg.partial === true });
         }
       } catch {
         // ignore
@@ -222,6 +245,20 @@ export default function Interacciones() {
     compute();
     window.addEventListener("resize", compute);
     return () => window.removeEventListener("resize", compute);
+  }, []);
+
+  // Warmup PoliGPT/Ollama al montar el chat — fire-and-forget.
+  // Si el modelo está frío en LiteLLM (llama3.1:8b cold start ≈ 5s) preferimos
+  // pagar esa latencia AHORA mientras el alumno lee el enunciado, en vez de
+  // hacerle esperar al enviar la primera pregunta. Si falla, no bloqueamos:
+  // la primera consulta simplemente pagará el cold start como hasta ahora.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    api
+      .post("/api/ollama/warmup", null, { signal: ctrl.signal })
+      .then((r) => console.debug("[WARMUP]", r.data))
+      .catch(() => {});
+    return () => ctrl.abort();
   }, []);
 
   useEffect(() => {
@@ -332,7 +369,7 @@ export default function Interacciones() {
     async (ejercicios) => {
       if (!userId) return;
       try {
-        const res = await api.get(`/api/interacciones/user/${userId}`);
+        const res = await api.get(`/api/interacciones/mine`);
         const lista = Array.isArray(res.data) ? res.data : [];
 
         const withDetails = lista.map((it) => {
@@ -547,7 +584,7 @@ export default function Interacciones() {
 
       try {
         await api.post("/api/resultados/finalizar", {
-          userId,
+          // userId is derived from session on the server (NOT sent from client)
           exerciseId,
           interaccionId,
           resueltoALaPrimera,
@@ -615,7 +652,7 @@ export default function Interacciones() {
     try {
       await enviarMensajeStream({
         payload: {
-          userId,
+          // userId is derived from session on the server (NOT sent from client)
           exerciseId: ej._id,
           interaccionId: currentInteraccionId || undefined,
           llmMode: "upv",
@@ -629,7 +666,26 @@ export default function Interacciones() {
           setCurrentInteraccionId(id);
         },
 
-        onChunk: (piece) => {
+        // Backend signals that a guardrail is regenerating the answer.
+        // Swap the live-typed draft for the placeholder so the student stops
+        // reading the leaked content; the next {replace:true} chunk that
+        // arrives (with the sanitised text) will overwrite this placeholder.
+        onRewriting: () => {
+          lastDataAt = Date.now();
+          acc = REWRITING_PLACEHOLDER;
+          finHandledRef.current = false;
+          finDetected = false;
+          setCurrentChatMessages((prev) => {
+            const copy = [...prev];
+            const last = copy.length - 1;
+            if (copy[last]?.role === "assistant") {
+              copy[last] = { ...copy[last], content: REWRITING_PLACEHOLDER };
+            }
+            return copy;
+          });
+        },
+
+        onChunk: (piece, meta) => {
           lastDataAt = Date.now();
 
           if (!firstChunkRef.current) {
@@ -637,7 +693,13 @@ export default function Interacciones() {
             setIsTutorThinking(false);
           }
 
-          acc += piece;
+          // Backend marks {replace:true} on the post-pipeline canonical text
+          // when a guardrail/pedagogicalReviewer rewrote the streamed draft.
+          if (meta && meta.replace) {
+            acc = piece;
+          } else {
+            acc += piece;
+          }
 
           // ✅ Detectar FIN una sola vez
           if (!finHandledRef.current && containsFinishToken(acc)) {
@@ -771,7 +833,8 @@ export default function Interacciones() {
     );
   }
 
-  const imgSrc = ejercicioActual.imagen ? `/static/${ejercicioActual.imagen}` : "/placeholder-ejercicio.png";
+  const basePath = import.meta.env.VITE_BASE_PATH || "";
+  const imgSrc = ejercicioActual.imagen ? `${basePath}/static/${ejercicioActual.imagen}` : `${basePath}/placeholder-ejercicio.png`;
 
   return (
     <div className="interacciones-scope">
@@ -957,7 +1020,9 @@ export default function Interacciones() {
             {currentChatMessages.length > 0 ? (
               currentChatMessages.map((m, i) => (
                 <div key={i} className={`msg ${m.role === "user" ? "msg-user" : "msg-assistant"}`}>
-                  {m.content}
+                  {m.role === "user"
+                    ? m.content
+                    : <MessageRenderer content={m.content} />}
                 </div>
               ))
             ) : (

@@ -1,0 +1,122 @@
+[
+  {
+    "student": "Por R1 ya que es la primera resistencia",
+    "tutor": "Revisa el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por R1 ya que consume la corriente que genera la fuente",
+    "tutor": "Revisa el circuito. ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "Por R1 ya que la corriente se la encuentra en primer lugar",
+    "tutor": "Revisa el circuito. ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "Por R1 ya que está más cerca de la fuente",
+    "tutor": "¿La posición de las resistencias afecta a la corriente que circula por todo el circuito?"
+  },
+  {
+    "student": "Por R2 ya que R1 se puede quitar al estar en paralelo con la fuente",
+    "tutor": "Revisa el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por R3 ya que R1 y R2 se pueden quitar por estar en paralelo con la fuente",
+    "tutor": "Revisa el circuito. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por todas las resistencias circula la misma corriente ya que todas poseen el mismo valor y están en paralelo con la fuente",
+    "tutor": "Genial. Al estar conectadas todas las resistencias en paralelo y ser iguales, por ellas circula la misma corriente."
+  },
+  {
+    "student": "La corriente es la misma en todas las resistencias",
+    "tutor": "Genial. Al estar conectadas todas las resistencias en paralelo y ser iguales, por ellas circula la misma corriente."
+  },
+  {
+    "student": "La corriente se divide en las tres ramas de igual manera",
+    "tutor": "Genial. Al estar conectadas todas las resistencias en paralelo y ser iguales, por ellas circula la misma corriente."
+  },
+  {
+    "student": "La corriente es un tercio de I en cada rama",
+    "tutor": "Genial. Al estar conectadas todas las resistencias en paralelo y ser iguales, por ellas circula la misma corriente."
+  },
+  {
+    "student": "Por el circuito no circula corriente ya que están las tres resistencias en paralelo y se pueden eliminar",
+    "tutor": "Revisa el circuito. ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "Todas las resistencias están conectadas en serie",
+    "tutor": "Las resistencias conectadas en serie comparten solo un terminal. ¿Sucede esto en este circuito?"
+  },
+  {
+    "student": "Todas las resistencias están conectadas en paralelo",
+    "tutor": "De acuerdo. Entonces ¿Por qué resistencia circula más corriente?"
+  },
+  {
+    "student": "Por R1",
+    "tutor": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por R2",
+    "tutor": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por R3",
+    "tutor": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por R1 y R2",
+    "tutor": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por R2 y R3",
+    "tutor": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por R1 y R3",
+    "tutor": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por la resistencia de menor valor",
+    "tutor": "Todas las resistencias tienen el mismo valor. ¿Por qué resistencias pasará más corriente?"
+  },
+  {
+    "student": "Por la que está en medio del circuito",
+    "tutor": "¿La posición de las resistencias afecta a la corriente?"
+  },
+  {
+    "student": "Sí",
+    "tutor": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "No",
+    "tutor": "Razona tu respuesta. ¿Cómo están conectadas las resistencias?"
+  },
+  {
+    "student": "Por la que está más cerca de la fuente físicamente",
+    "tutor": "¿La posición de las resistencias afecta a la corriente que circula por todo el circuito?"
+  },
+  {
+    "student": "Por la que está más lejos de la fuente",
+    "tutor": "¿La posición de las resistencias afecta a la corriente que circula por todo el circuito?"
+  },
+  {
+    "student": "Por la que tiene más voltaje aplicado",
+    "tutor": "¿El voltaje aplicado es diferente en todas las resistencias?"
+  },
+  {
+    "student": "Por la que aparece primero en el esquema",
+    "tutor": "¿La posición de las resistencias en el esquema gráfico afecta la corriente?"
+  },
+  {
+    "student": "Por la que tiene menos oposición al paso de corriente",
+    "tutor": "¿De qué influye la oposición al paso de corriente?"
+  },
+  {
+    "student": "Por la que está en paralelo con la fuente.",
+    "tutor": "¿Qué resistencia o resistencias están en paralelo con la fuente?"
+  },
+  {
+    "student": "R1, R2 y R3 ya que todas están en paralelo con la fuente y son iguales",
+    "tutor": "Muy bien justificado"
+  }
+]

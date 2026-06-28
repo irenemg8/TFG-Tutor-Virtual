@@ -1,0 +1,154 @@
+[
+  {
+    "student": "R4 y R5 dado que las dos resistencia forman un divisor de tensión",
+    "tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R4 y R5 dado que se pide la tensión en R4",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R4 y R5 por identificar un divisor de tensión",
+    "tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R4 y R5 hacen un divisor de tensión",
+    "tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R3, R4 y R5 porque son las resistencias que están conectadas a N2",
+    "tutor": "Justifica mejor tu respuesta. ¿Por qué no tienes en cuenta R1 y R2?"
+  },
+  {
+    "student": "R3, R4 y R5 porque están en paralelo",
+    "tutor": "Las resistencias conectadas en paralelo comparten los dos terminales. ¿Ocurre esto en este circuito?"
+  },
+  {
+    "student": "R3, R4 y R5 porque R3 está en serie con el paralelo de R4 y R5",
+    "tutor": "Correcto. ¿Por qué no tienes en cuenta R1 y R2?"
+  },
+  {
+    "student": "R3, R4 y R5 porque R1 está en paralelo con la fuente y R2 cortocircuitada",
+    "tutor": "Perfecto"
+  },
+  {
+    "student": "R3, R4 y R5 porque R2 se elimina y R1 también",
+    "tutor": "¿Por qué se elimina R1 y R2?"
+  },
+  {
+    "student": "R3, R4 y R5 porque R2 está en cortocircuito y R1 en paralelo con la fuente",
+    "tutor": "Perfecto"
+  },
+  {
+    "student": "R1 y R3 dado que R2 está cortocircuitada",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R1, R2 y R3 porque son las resistencias que están conectadas entre N2 y 0",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R4 porque es la resistencias que está conectadas entre N2 y 0",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R1, R3, R4 y R5 dado que R2 sobra",
+    "tutor": "¿Cómo está conectada R1?"
+  },
+  {
+    "student": "R1, R3, R4 y R5 dado que R2 no hace nada",
+    "tutor": "¿Cómo está conectada R1?"
+  },
+  {
+    "student": "R1, R3, R4 y R5 dado que R2 está cortocircuitada",
+    "tutor": "¿Cómo está conectada R1?"
+  },
+  {
+    "student": "R1, R2, R3, R4 y R5 dado que son las resistencias que forman parte del circuito.",
+    "tutor": "¿Cómo está conectada R2?"
+  },
+  {
+    "student": "R1, R2, R3 y R4 dado que R1, R2 y R3 están en paralelo con R4",
+    "tutor": "¿Cómo está conectada R1?"
+  },
+  {
+    "student": "R1, R3 y R4 dado que R2 está en cortocircuito",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R3, R4 y R5 dado que R1 y R2 se pueden quitar",
+    "tutor": "Tu respuesta es correcta pero tienes que justificar por qué se pueden quitar R1 y R2"
+  },
+  {
+    "student": "R3, R4 y R5 dado que R1 y R2 no afectan a la tensión pedida",
+    "tutor": "Tu respuesta es correcta pero tienes que justificar por qué R1 y R2 no afectan a la tensión pedida."
+  },
+  {
+    "student": "R3, R4 y R5 dado que R2 está en cortocircuito y la tensión en R1 es la de la fuente",
+    "tutor": "Muy bien justificado"
+  },
+  {
+    "student": "R2 está en cortocircuito y la tensión en R1 es la de la fuente",
+    "tutor": "Bien justificado. Entonces cual es la respuesta a la pregunta ¿Qué resistencias influyen en el cálculo de la tensión entre N2 y 0?"
+  },
+  {
+    "student": "R1 está en paralelo con la fuente y R2 está en cortocircuito",
+    "tutor": "Bien justificado. Entonces cual es la respuesta a la pregunta ¿Qué resistencias influyen en el cálculo de la tensión entre N2 y 0?"
+  },
+  {
+    "student": "R5 porque está al final del circuito",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "Depende de todas porque todas influyen en la tensión",
+    "tutor": "¿Alguna resistencia está en cortocircuito o en paralelo con la fuente?"
+  },
+  {
+    "student": "R3 y R4 porque están más lejos de la fuente",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R3 y R5 porque están conectadas en serie",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R3 porque está en el medio del circuito",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R3 porque está entre la fuente y el nodo N2",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R4 y R5 porque están conectadas al mismo nodo.",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R1 y R2 porque están cerca de la fuente",
+    "tutor": "¿Alguna resistencia está en cortocircuito o en paralelo con la fuente?"
+  },
+  {
+    "student": "R5 porque está entre N2 y 0",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R4 porque está en paralelo con R5",
+    "tutor": "Mira de nuevo el circuito ¿Por qué resistencias circula corriente?"
+  },
+  {
+    "student": "R3 y R4 porque forman un divisor de tensión",
+    "tutor": "Mira de nuevo el circuito, ¿por qué no has tenido en cuenta R1, R2 y R5?"
+  },
+  {
+    "student": "R1 y R2 porque forman un divisor de tensión",
+    "tutor": "Mira el cable que cortocircuita R2, ¿por dónde va a circular corriente, por el camino fácil (el cable) o por el que opone resistencia a su paso (R2)?"
+  },
+  {
+    "student": "R1 porque por R2 no circula corriente",
+    "tutor": "Fíjate en la tensión que hay en bornes de R1. Si cambiamos el valor de R1, ¿cambia la tensión en sus bornes? Si no cambia la tensión en sus bornes, no afecta a la tensión entre V2 y 0."
+  },
+  {
+    "student": "R3 y R5 porque R4 está en paralelo con la fuente",
+    "tutor": "Revisa la conexión de R4, ¿está conectada o dibujada en paralelo con la fuente?"
+  }
+]

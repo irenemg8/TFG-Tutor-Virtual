@@ -1,0 +1,134 @@
+[
+  {
+    "student": "R1, R2 y R3 porque son las resistencias que forman parte del circuito",
+    "tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?"
+  },
+  {
+    "student": "R1, R2 y R3 porque están conectadas a la fuente de tensión",
+    "tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?"
+  },
+  {
+    "student": "R1, R2 y R3 porque están conectadas en paralelo",
+    "tutor": "Revisa de nuevo el circuito ¿Circulará corriente por R3?"
+  },
+  {
+    "student": "R1, R2 y R3 porque están conectadas en serie",
+    "tutor": "Las resistencias conectadas en serie comparten sólo un nudo y no hay ningún otro componente conectado a ese nudo. ¿Sucede esto en este circuito?"
+  },
+  {
+    "student": "R1 y R2 porque son las resistencias por las que pasa corriente",
+    "tutor": "Correcto, pero ¿por qué no has tenido en cuenta R3?"
+  },
+  {
+    "student": "R1 y R2 porque están conectadas en paralelo con la fuente",
+    "tutor": "Correcto, pero ¿por qué no has tenido en cuenta R3?"
+  },
+  {
+    "student": "R1 y R2 porque podemos eliminar R3 ya que está en circuito abierto",
+    "tutor": "Perfecto"
+  },
+  {
+    "student": "R1 y R2",
+    "tutor": "Correcto, pero ¿por qué no has tenido en cuenta R3?"
+  },
+  {
+    "student": "R1 y R2 porque R3 se elimina",
+    "tutor": "Correcto, pero ¿por qué se elimina R3?"
+  },
+  {
+    "student": "R1 porque está conectada en paralelo con la fuente",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R2 porque R1 se puede quitar al estar en paralelo con la fuente y R3 se puede quitar al estar en circuito abierto",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R2 y R3 porque R1 se puede quitar al estar en paralelo con la fuente",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R3 porque R1 y R2 se pueden quitar al estar en paraleo con la fuente",
+    "tutor": "Ten en cuenta que R3 está conectada a un circuito abierto, ¿circulará corriente por ella?"
+  },
+  {
+    "student": "R1 y R2 porque están conectadas en serie con la fuente",
+    "tutor": "Las resistencias conectadas en serie comparten sólo un terminal. ¿Sucede esto en este circuito?"
+  },
+  {
+    "student": "No",
+    "tutor": "Razona tu respuesta. ¿De qué resistencias depende la corriente que sale de la fuente?"
+  },
+  {
+    "student": "Sí",
+    "tutor": "Razona tu respuesta. ¿De qué resistencias depende la corriente que sale de la fuente?"
+  },
+  {
+    "student": "R3 está en circuito abierto",
+    "tutor": "Correcto, entonces, ¿De qué resistencias depende la corriente que sale de la fuente?"
+  },
+  {
+    "student": "Por R3 no pasa corriente",
+    "tutor": "Correcto, entonces, ¿De qué resistencias depende la corriente que sale de la fuente?"
+  },
+  {
+    "student": "R1 porque está más cerca de la fuente",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R1 y R2 porque están conectadas a la fuente",
+    "tutor": "Correcto, pero ¿por qué no has tenido en cuenta R3?"
+  },
+  {
+    "student": "R1 y R3 porque están conectadas a la fuente",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R2 porque está conectada directamente a la fuente",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R2 porque está más cerca del nodo común",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R2 y R3 porque están en paralelo.",
+    "tutor": "Las resistencias conectadas en paralelo comparten los dos terminales. ¿Sucede esto en este circuito?"
+  },
+  {
+    "student": "R3 porque está más cerca del nodo N1",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "Depende de todas las resistencias porque todas están en el circuito",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R2 porque está en serie con la fuente",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R2 y R3 porque están conectadas directamente al nodo N1",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R1 porque está conectada directamente al nodo N1",
+    "tutor": "Revisa de nuevo el circuito ¿Por qué resistencias circulará corriente?"
+  },
+  {
+    "student": "R1 y R3 porque están en paralelo",
+    "tutor": "Ten en cuenta que R3 está conectada a un circuito abierto, ¿circulará corriente por ella?"
+  },
+  {
+    "student": "R3 porque está más lejos de la fuente.",
+    "tutor": "¿Cómo afecta un interruptor abierto a la corriente en una rama?"
+  },
+  {
+    "student": "Depende de todas porque todas tienen resistencia",
+    "tutor": "¿Cómo afecta un interruptor abierto a la corriente en una rama?"
+  },
+  {
+    "student": "Depende de R1 y R2 porque son las más importantes",
+    "tutor": "Has acertado pero tienes que justificar por qué no tienes en cuenta R3."
+  }
+]

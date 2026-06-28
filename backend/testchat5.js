@@ -1,22 +1,32 @@
+/*------------------------------------------------------------------------------
+            _________________________________________________________
+            |                       TESTCHAT 5                      |
+            |  Standalone test driver that POSTs a list of student  |
+            |  answers to the backend /api/ollama/chat/start-exercise|
+            |  endpoint, opening one new chat per question, and      |
+            |  saves the responses as JSON under test_conversations/.|
+            |                                                       |
+   Txt,Txt,Txt -> | startChat() | -> Promise<Obj>                   |
+        Txt,Txt -> | sendMessage() | -> Promise<Obj>                |
+   Txt,Obj,Txt -> | saveConversation() | -> Promise<void>          |
+            | runTestConversation() | -> Promise<void>             |
+            |_______________________________________________________|
+------------------------------------------------------------------------------*/
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
-require("dotenv").config(); // Load environment variables from .env file
+require("dotenv").config();
 
-// --- CONFIGURATION ---
-const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:9000"; // Ensure this matches your backend URL
-const MOCK_USER_ID = "681cd8217918fbc4fc7a626f"; // Use the same MOCK_USER_ID as in Interacciones.jsx
+const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:9000";
+const MOCK_USER_ID = "681cd8217918fbc4fc7a626f";
 
-// IMPORTANT: Replace this with the actual ID(s) of your exercise(s)
-// If you want to test one exercise, keep only one ID in the array.
 const TEST_EXERCISE_IDS = [
-  "6832f72534ce3d55267f86d1" // e.g., "60cdef1234567890abcdef" for Ejercicio 2, or Ejercicio 4, 5, 6, 7
+  "6832f72534ce3d55267f86d1"
 ];
 const titulo = [
   "Ejercicio 5"
 ]
 
-// Your list of questions (copy the desired list here)
 const QUESTIONS = [
   "R1 y R2 porque están conectadas en serie con la fuente",
   "R1 y R2 porque están conectadas en paralelo con la fuente",
@@ -32,8 +42,14 @@ const QUESTIONS = [
 ];
 
 const CONVERSATION_LOG_DIR = path.join(__dirname, 'test_conversations');
-// --- END CONFIGURATION ---
 
+/*
+   Txt,Txt,Txt -> ____|____________
+                 | startChat() | -> Promise<Obj>
+                  -------------
+      Opens a new exercise chat by POSTing the initial student message
+      to /api/ollama/chat/start-exercise and returns the response data.
+*/
 async function startChat(userId, exerciseId, initialMessage) {
   try {
     console.log(`Starting new chat for exercise ${exerciseId} with message: "${initialMessage}"`);
@@ -50,7 +66,6 @@ async function startChat(userId, exerciseId, initialMessage) {
       console.error("  Response status:", error.response.status);
       console.error("  Response data:", error.response.data);
     } else if (error.request) {
-      // This is a timeout or connection issue
       console.error("  No response received. Possible backend/Ollama timeout or connection issue.");
       console.error("  Request details (partial):", error.request.path, error.request.method, error.request._options?.port);
     } else {
@@ -60,8 +75,13 @@ async function startChat(userId, exerciseId, initialMessage) {
   }
 }
 
-// La función sendMessage ya no es necesaria para este modo de operación,
-// pero la mantenemos si decides reutilizarla en el futuro.
+/*
+   Txt,Txt -> ____|______________
+             | sendMessage() | -> Promise<Obj>
+              ---------------
+      Sends a follow-up message to an existing interaction via
+      /api/ollama/chat/message. Kept for potential future reuse.
+*/
 async function sendMessage(interaccionId, userMessage) {
   try {
     console.log(`Sending message to interaction ${interaccionId}: "${userMessage}"`);
@@ -86,6 +106,13 @@ async function sendMessage(interaccionId, userMessage) {
   }
 }
 
+/*
+   Txt,Obj,Txt -> ____|___________________
+                 | saveConversation() | -> Promise<void>
+                  --------------------
+      Ensures the log directory exists and writes the conversation data
+      as pretty-printed JSON to the given filename under it.
+*/
 async function saveConversation(exerciseId, conversationData, filename) {
   if (!fs.existsSync(CONVERSATION_LOG_DIR)) {
     fs.mkdirSync(CONVERSATION_LOG_DIR);
@@ -99,6 +126,13 @@ async function saveConversation(exerciseId, conversationData, filename) {
   }
 }
 
+/*
+       ____|________________________
+      | runTestConversation() | -> Promise<void>
+       -----------------------
+      Drives the test: for every exercise id, sends each question as a
+      fresh chat, collects the responses and saves them to a JSON log.
+*/
 async function runTestConversation() {
   const allTestResults = {};
 
@@ -106,18 +140,15 @@ async function runTestConversation() {
     console.log(`\n==== Testing Exercise ID: ${exerciseId} ====`);
     allTestResults[exerciseId] = [];
 
-    // Iteramos sobre cada pregunta y la tratamos como una nueva interacción
     for (let i = 0; i < QUESTIONS.length; i++) {
       const question = QUESTIONS[i];
       try {
-        // SIEMPRE llamamos a startChat para cada pregunta
         const responseData = await startChat(MOCK_USER_ID, exerciseId, question);
 
-        // Almacena solo la pregunta y la respuesta directa en el log
         allTestResults[exerciseId].push({
-          turn_number: i + 1, // Esto ahora es el número de pregunta en la lista para este ejercicio
+          turn_number: i + 1,
           user_message: question,
-          assistant_response: responseData.initialMessage // La primera respuesta del asistente en esta nueva interacción
+          assistant_response: responseData.initialMessage
         });
 
       } catch (error) {
@@ -130,13 +161,11 @@ async function runTestConversation() {
         });
       }
     }
-    // Guarda el log de conversación para este ejercicio
-    const fileName = `sinenunc_${titulo}_${exerciseId}}new_chats.json`; // Nombre de archivo más descriptivo
+    const fileName = `sinenunc_${titulo}_${exerciseId}}new_chats.json`;
     await saveConversation(exerciseId, allTestResults[exerciseId], fileName);
   }
 
   console.log("\n==== All Test Conversations Completed ====");
 }
 
-// Ejecuta la secuencia de prueba
 runTestConversation();

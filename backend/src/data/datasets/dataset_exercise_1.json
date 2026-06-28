@@ -1,0 +1,171 @@
+[
+  {
+    "student": "R1 y R2 dado que las dos resistencia forman un divisor de tensión",
+    "tutor": "En un divisor de tensión todos los componentes están conectados en serie y por todos ellos circula la misma corriente. ¿Se cumple esto en este circuito? ¿Por qué no has tenido en cuenta R4?"
+  },
+  {
+    "student": "R1 y R2 dado que se pide la tensión en R2",
+    "tutor": " Fíjate por donde circula la corriente que proporciona la fuente de alimentación. ¿Por qué no has tenido en cuenta R4?"
+  },
+  {
+    "student": "R1 y R2 por identificar un divisor de tensión",
+    "tutor": "En un divisor de tensión todos los componentes están conectados en serie y por todos ellos circula la misma corriente. ¿Se cumple esto en este circuito? ¿Por qué no has tenido en cuenta R4?"
+  },
+  {
+    "student": "R1 y R2 hacen un divisor de tensión",
+    "tutor": "En un divisor de tensión todos los componentes están conectados en serie y por todos ellos circula la misma corriente. ¿Se cumple esto en este circuito? ¿Por qué no has tenido en cuenta R4?"
+  },
+  {
+    "student": "R1, R2, R3 y R4 porque R5 está cortocircuitada",
+    "tutor": " ¿Puede circular corriente por R3 con el interruptor abierto?"
+  },
+  {
+    "student": "R1, R2, R3 y R4 porque por R5 no circula corriente",
+    "tutor": "¿Puede circular corriente por R3 con el interruptor abierto?"
+  },
+  {
+    "student": "R1, R2, R3 y R4 porque R5 se quita",
+    "tutor": "¿Puede circular corriente por R3 con el interruptor abierto?"
+  },
+  {
+    "student": "R1, R3 y R4 porque R2 está en paralelo con la fuente y R5 corctocircuitada",
+    "tutor": "¿Está R2 conectada en paralelo con la fuente?"
+  },
+  {
+    "student": "R1, R4 y R5 porque R2 se elimina y R3 también",
+    "tutor": "¿Por qué razón estás eliminando R2?"
+  },
+  {
+    "student": "R1 y R4 dado que R2 está en paralelo con la fuente, R3 en circuito abierto y R5 cortocircuitada",
+    "tutor": "¿Está R2 conectada en paralelo con la fuente?"
+  },
+  {
+    "student": "R1, R2 y R3 dado que R2 y R3 están en paralelo y forman un divisor de tensión con R1",
+    "tutor": "¿Circula corriente por R3?"
+  },
+  {
+    "student": "R1, R2, R4 y R5 dado que R3 está en circuito abierto",
+    "tutor": "¿Estás seguro/a de que circula corriente por R5?"
+  },
+  {
+    "student": "R1, R2, R4 y R5 dado que R3 sobra",
+    "tutor":  "¿Estás seguro/a de que circula corriente por R5?"
+  },
+  {
+    "student": "R1, R2, R4 y R5 dado que R3 no hace nada",
+    "tutor":  "¿Estás seguro/a de que circula corriente por R5?"
+  },
+  
+  {
+    "student": "R1, R2 y R4 dado que son las resistencias que forman parte del circuito.",
+    "tutor": "Tu respuesta es correcta pero necesito que la razones indicando por qué no tienes en cuenta el resto de resistencias."
+  },
+  {
+    "student": "R1, R2 y R4 dado que R2 y R4 están en paralelo y forma un divisor de tensión con R1.",
+    "tutor": "Tu respuesta es correcta pero necesito que la razones indicando por qué no tienes en cuenta el resto de resistencias."
+  },
+  {
+    "student": "R1, R2 y R4 dado que R3 está en abierto y R5 cortocircuitada",
+    "tutor": "Genial"
+  },
+  {
+    "student": "R1, R2 y R4 dado que solo por estas resistencias circula una corriente diferente de cero",
+    "tutor": "Tu respuesta es correcta pero necesito que la razones indicando por qué no tienes en cuenta el resto de resistencias."
+  },
+  {
+    "student": "R1, R2 y R4 dado que por R3 y por R5 no circula corriente",
+    "tutor": "Genial"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R3 y R5 se pueden quitar",
+    "tutor": "Tu respuesta es correcta pero necesito que la razones indicando por qué no tienes en cuenta el resto de resistencias."
+  },
+  {
+    "student": "R1, R2 y R4 dado que R3 y R5 no influyen para nada en la diferencia de potencial que se pide",
+    "tutor": "Genial, ¿por qué no influyen?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R3 y R5 sobran",
+    "tutor": "Genial, ¿por qué sobran?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R3 sobra",
+    "tutor": "¿Y qué sucede con R5, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R5 sobra",
+    "tutor": "¿Y qué sucede con R3, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R3 está en abierto",
+    "tutor": "¿Y qué sucede con R5, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que  R5 cortocircuitada",
+    "tutor": "¿Y qué sucede con R3, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que por R3 no circula corriente",
+    "tutor": "¿Y qué sucede con R5, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que por  R5 no circula corriente",
+    "tutor": "¿Y qué sucede con R3, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R3 se puede quitar",
+    "tutor": "¿Y qué sucede con R5, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R5 se puede quitar",
+    "tutor": "¿Y qué sucede con R3, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R3 no influye para nada en la diferencia de potencial que se pide",
+    "tutor": "¿Y qué sucede con R5, por qué no la consideras?"
+  },
+  {
+    "student": "R1, R2 y R4 dado que R5 no influye para nada en la diferencia de potencial que se pide",
+    "tutor": "¿Y qué sucede con R3, por qué no la consideras?"
+  },
+  {
+    "student": "No lo sé",
+    "tutor": "¿Por qué resistencias circula la corriente desde V1?"
+  },
+  {
+    "student": "Todas las resistencias",
+    "tutor": "¿Puede circular corriente por R3 si hay un interruptor abierto? ¿Qué ocurre con R5?"
+  },
+  {
+    "student": "R1 y R2",
+    "tutor": "Razona tu respuesta, para ello piensa por donde circula la corriente que proporciona la fuente de tensión. ¿Por qué no has tenido en cuenta R4?"
+  },
+  {
+    "student": "R1, R2 y R4",
+    "tutor": "Razona tu respuesta, para ello piensa por donde circula la corriente que proporciona la fuente de tensión. ¿Por qué no has tenido en cuenta R3 y R5?"
+  },
+  {
+    "student": "R1, R2, R4 y R5",
+    "tutor": "Razona tu respuesta, para ello piensa por donde circula la corriente que proporciona la fuente de tensión.¿Por dónde circula la corriente por R5?"
+  },
+  {
+    "student": "R1, R2, R3 y R4",
+    "tutor": "Razona tu respuesta, para ello piensa por donde circula la corriente que proporciona la fuente de tensión.¿Puede circular corriente por R3?"
+  },
+  {
+    "student": "R1 y R2 y R4 hacen un divisor de corriente",
+    "tutor": "En un divisor de corriente todas las resistencias están en paralelo. ¿Se cumple esto en este circuito?"
+  },
+  {
+    "student": "R1 y R2 y R4 hacen un divisor de tensión, r3 no cuenta por estar en corto",
+    "tutor": "Una resistencia está en cortocircuito cuando sus dos terminales están conectados al mismo punto. ¿Se cumple esto en R3?"
+  },
+  {
+    "student": "No tengo en cuenta R3 porque el interruptor está cerrado",
+    "tutor": "Revisa la posición del interruptor. ¿está realmente cerrado?"
+  },
+  {
+    "student": "No tengo en cuenta R5 porque está en circuito abierto",
+    "tutor": "Revisa la conexión de R5. ¿está realmente en circuito abierto o está en cortocircuito?"
+  }
+]

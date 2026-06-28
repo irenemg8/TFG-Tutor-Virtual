@@ -1,0 +1,93 @@
+{
+  "benchmark_id": "rag_benchmark_1779272406",
+  "method": "RAG",
+  "timestamp": "2026-05-20T12:20:06.873909",
+  "models_tested": [
+    "qwen2.5:latest"
+  ],
+  "exercises_covered": [
+    3,
+    5
+  ],
+  "total_evaluations": 2,
+  "results": [
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 3,
+      "sample_id": 1,
+      "student_answer": "R4 y R5 dado que las dos resistencia forman un divisor de tensión",
+      "expected_tutor": "Para que R4 y R5 formaran un divisor de tensión tendrían que estar conectadas en serie. Revisa de nuevo el circuito. ¿Por qué resistencias circula corriente?",
+      "expected_acs": [
+        "AC9"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 3 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la diferencia de potencial entre N2 y 0? Observa con atención la conexión de R2 y dónde queda R1 respecto a la fuente de tensión.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la diferencia de potencial pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R2 no contribuye porque está cortocircuitada. Se detecta que R1 no contribuye porque está en paralelo con la fuente de alimentación V1.\n\nLa solución correcta es que sólo las resistencias R3, R4 y R5 contribuyen a la diferencia de potencial entre N2 y 0.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC6 – Modelo del cortocircuito: No detecta que un cortocircuito evita el funcionamiento de componentes en paralelo\n    Error típico: Incluye R2 sin notar que tiene ambos terminales en 0 (cortocircuito)\n    Estrategia pedagógica: Pregunta qué tienen en común los dos terminales de R2 según el netlist\n  • AC13 – Confusión V/R/I — fuente en paralelo: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Incluye R1 sin reconocer que está en paralelo con la fuente V1, por lo que la diferencia de potencial entre N2 y 0 no depende de ella\n    Estrategia pedagógica: Pregunta qué función cumple R1 si está conectada directamente entre los dos terminales de la fuente\n  • AC9 – Razonamiento local: Analiza componentes aislados sin considerar la visión global del circuito\n    Error típico: Olvida alguno de los tres elementos R3, R4, R5 que sí contribuyen\n    Estrategia pedagógica: Pídele que enumere todas las resistencias conectadas al nudo N2 y rastree cómo cierran el circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR4 y R5 dado que las dos resistencia forman un divisor de tensión\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo se relaciona R2 con el nodo N2 y la fuente de tensión V1 según tu análisis?",
+      "think_content": "",
+      "tutor_response": "¿Cómo se relaciona R2 con el nodo N2 y la fuente de tensión V1 según tu análisis?",
+      "latencia": 106.50497531890869,
+      "tokens_generados": 26,
+      "detected_acs": [
+        "AC13"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC13"
+      ],
+      "false_negatives": [
+        "AC9"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 3,
+      "tasa_alucinacion": 5,
+      "score_total": 14,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T12:05:17.416358"
+    },
+    {
+      "model": "qwen2.5:latest",
+      "ejercicio": 5,
+      "sample_id": 6,
+      "student_answer": "R1 y R2 porque están conectadas en paralelo con la fuente",
+      "expected_tutor": "La conexión en paraleo se da cuando los dos terminales de los componentes se encuentran conectados a los mismos dos puntos. ¿Ocurre eso en este circuito?",
+      "expected_acs": [
+        "AC14"
+      ],
+      "retrieved_context": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito",
+      "rag_prompt": "=== CONTEXTO RECUPERADO: EJERCICIO 5 ===\n\nENUNCIADO:\nEn el circuito descrito en el siguiente netlist, ¿de qué resistencias depende el valor de la corriente que sale de la fuente de tensión V1? Existe un interruptor abierto entre N3 y N4.\n\nMODO DE PENSAR EXPERTO:\nUn experto analiza el circuito comenzando por identificar aquellas resistencias que no contribuyen a la corriente pedida, bien sea porque están en circuito abierto o porque están en cortocircuito.\n\nSe detecta que R3 no contribuye porque está en circuito abierto.\n\nLa solución correcta es que sólo las resistencias R1, R2 y R4 contribuyen a fijar la corriente que sale de la fuente de tensión. Estas resistencias están conectadas en serie.\n\nCONCEPCIONES ALTERNATIVAS POSIBLES EN ESTE EJERCICIO:\n  • AC1 – Modelo del circuito abierto: El estudiante cree que circula corriente en un circuito abierto\n    Error típico: Incluye R3 sin notar que la rama N4 está aislada por el interruptor abierto entre N3 y N4\n    Estrategia pedagógica: Pregunta si la corriente puede cruzar un interruptor abierto, sin nombrar R3\n  • AC13 – Confusión V/R/I: Confunde conceptos de voltaje y corriente en el análisis de circuitos\n    Error típico: Excluye R1 o R2 confundiendo corriente con diferencia de potencial\n    Estrategia pedagógica: Pídele que recorra el camino completo desde V1: N1 → N2 → N3 → 0\n  • AC14 – Topología serie/paralelo: Confunde configuraciones serie versus paralelo en circuitos complejos\n    Error típico: Cree que R1, R2 y R4 están en paralelo cuando comparten un único terminal cada par\n    Estrategia pedagógica: Pregunta cuántos terminales comparten dos resistencias consecutivas en este circuito\n\n------------------------------------------------------------\nRESPUESTA DEL ESTUDIANTE:\nR1 y R2 porque están conectadas en paralelo con la fuente\n\nGenera UNA pregunta socrática breve (máximo 2 frases) que guíe al estudiante sin revelar la respuesta correcta. La pregunta DEBE terminar en ?.",
+      "model_response": "¿Cómo se relacionan las resistencias R1 y R2 con el punto de conexión entre N3 y N4 a través del interruptor abierto?",
+      "think_content": "",
+      "tutor_response": "¿Cómo se relacionan las resistencias R1 y R2 con el punto de conexión entre N3 y N4 a través del interruptor abierto?",
+      "latencia": 136.84795784950256,
+      "tokens_generados": 33,
+      "detected_acs": [
+        "AC1"
+      ],
+      "true_positives": [],
+      "false_positives": [
+        "AC1"
+      ],
+      "false_negatives": [
+        "AC14"
+      ],
+      "ac_precision": 0.0,
+      "ac_recall": 0.0,
+      "ac_f1": 0.0,
+      "socraticidad": 3,
+      "precision_conceptual": 3,
+      "consistencia": 5,
+      "tasa_alucinacion": 5,
+      "score_total": 16,
+      "faithfulness": null,
+      "relevance": null,
+      "feedback_constructivo": "Socraticidad 3/5 (Clarificación): Pregunta genérica: pide clarificación sin atacar la raíz del error. Precisión Conceptual 3/5 (Suficiente): Suficiente: identifica que hay un error y usa conceptos correctos, pero el diagnóstico es algo vago. Buen desempeño general; hay margen de mejora en profundidad socrática.",
+      "timestamp": "2026-05-20T12:11:37.564401"
+    }
+  ]
+}
