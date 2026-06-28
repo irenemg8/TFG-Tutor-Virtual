@@ -1,527 +1,282 @@
 # Deployment Guide
 
-This guide walks you through deploying the entire application from scratch, assuming no prior knowledge of the project. By the end, you will have the backend server, frontend application, and workflow monitor all running locally.
+This guide walks you through deploying the virtual tutor from scratch: the backend (Node.js / Express, hexagonal), the React frontend, PostgreSQL, ChromaDB, and an LLM provider. By the end you will have the system running locally (or on the UPV server via the deployment script).
+
+> The chat model is referred to as **qwen2.5**. The real-time pipeline monitor is out of scope.
 
 ---
 
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
-2. [Step 1: Clone and Install](#step-1-clone-and-install)
-3. [Step 2: Environment Configuration](#step-2-environment-configuration)
-4. [Step 3: Database Setup](#step-3-database-setup)
-5. [Step 4: Verification](#step-4-verification)
-6. [Step 5: Start Services](#step-5-start-services)
-7. [Step 6: Using the Application](#step-6-using-the-application)
-8. [Troubleshooting](#troubleshooting)
+2. [Step 1 — Clone & Install](#step-1--clone--install)
+3. [Step 2 — PostgreSQL](#step-2--postgresql)
+4. [Step 3 — ChromaDB](#step-3--chromadb)
+5. [Step 4 — LLM Provider](#step-4--llm-provider)
+6. [Step 5 — Environment Configuration](#step-5--environment-configuration)
+7. [Step 6 — Start the Backend (migrations + warmup)](#step-6--start-the-backend-migrations--warmup)
+8. [Step 7 — Ingest Data into ChromaDB](#step-7--ingest-data-into-chromadb)
+9. [Step 8 — Frontend](#step-8--frontend)
+10. [One-Shot Windows Deployment](#one-shot-windows-deployment)
+11. [Verification](#verification)
+12. [Using the Application](#using-the-application)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Prerequisites
 
-Before starting, make sure you have the following installed:
-
-### Required Software
-
-| Software | Minimum Version | How to Check | Install From |
-|---|---|---|---|
-| **Node.js** | v18+ | `node --version` | [nodejs.org](https://nodejs.org) |
-| **npm** | v9+ | `npm --version` | Included with Node.js |
-| **Python** | 3.10+ | `python --version` | [python.org](https://python.org) |
-| **Git** | Any | `git --version` | [git-scm.com](https://git-scm.com) |
-
-### Required Services
-
-| Service | Description | Default URL |
+| Software / service | Min version | Notes |
 |---|---|---|
-| **MongoDB Atlas** | Cloud database for storing exercises, interactions, and users | Connection string in `.env` |
-| **Ollama** | Local or remote LLM inference server | `http://127.0.0.1:11434` or university server |
-| **ChromaDB** | Vector database for semantic search | `http://localhost:8000` |
+| **Node.js** | 18+ | Backend & frontend |
+| **npm** | 9+ | Ships with Node |
+| **PostgreSQL** | 14+ (server runs 18) | Primary database |
+| **ChromaDB** | recent | `pip install chromadb` |
+| **Python** | 3.10+ | ChromaDB + evaluation |
+| **An LLM provider** | — | Local/remote **Ollama** (with `qwen2.5` + `nomic-embed-text`) **or** **PoliGPT** (API key) |
 
-### Ollama Models
+The default services and ports:
 
-The system requires two models loaded in Ollama:
+| Service | Port |
+|---|---|
+| Backend (HTTP) | 3001 (behind nginx at `/v2/` in production) |
+| ChromaDB | 8000 |
+| PostgreSQL | 5432 |
+| Frontend (dev) | 5173 |
 
-1. **qwen2.5:latest** — The chat model used for generating tutor responses
-2. **nomic-embed-text:latest** — The embedding model used for semantic search
+---
 
-If using a local Ollama, pull the models:
+## Step 1 — Clone & Install
 
 ```bash
-ollama pull qwen2.5:latest
-ollama pull nomic-embed-text:latest
+git clone <repo-url> TFG-Tutor-Virtual
+cd TFG-Tutor-Virtual
+
+cd backend  && npm install
+cd ../frontend && npm install
+cd ..
 ```
 
-### ChromaDB Installation
+Backend dependencies of note: `express` 5, `pg` + `connect-pg-simple` (PostgreSQL & sessions), `chromadb`, `ws`, `simple-oauth2` (CAS), `axios`/`node-fetch`. There is **no** Mongoose.
 
-ChromaDB can be installed via pip:
+---
+
+## Step 2 — PostgreSQL
+
+1. Install PostgreSQL and start the service.
+2. Create a database (e.g. `tutorvirtual`) and a user:
+
+```sql
+CREATE DATABASE tutorvirtual;
+CREATE USER tutor WITH PASSWORD 'your-password';
+GRANT ALL PRIVILEGES ON DATABASE tutorvirtual TO tutor;
+```
+
+3. Put the connection string in `backend/.env` as `PG_CONNECTION_STRING`, e.g.
+   `postgresql://tutor:your-password@127.0.0.1:5432/tutorvirtual`.
+
+You do **not** create tables by hand — the backend runs all SQL migrations automatically on boot (see [Step 6](#step-6--start-the-backend-migrations--warmup)).
+
+### Seed exercises
+
+Exercises live in the `ejercicios` / `tutor_contexts` tables. A seed script is provided:
+
+```bash
+cd backend && node src/scripts/seed_ejercicios_local.js
+```
+
+Each exercise's `tutor_contexts.respuesta_correcta` (the correct element set) and `elementos_evaluables` are critical — they drive classification, guardrails and the deterministic finish.
+
+---
+
+## Step 3 — ChromaDB
+
+Install and run the vector store:
 
 ```bash
 pip install chromadb
-```
-
----
-
-## Step 1: Clone and Install
-
-### Clone the Repository
-
-```bash
-git clone https://github.com/irenemg8/TFG-Tutor-Virtual.git
-cd TFG-Tutor-Virtual
-```
-
-### Install Dependencies
-
-Install npm packages for each component:
-
-```bash
-# Backend
-cd backend
-npm install
-
-# Frontend
-cd ../frontend
-npm install
-
-# Workflow Monitor (optional, for debugging)
-cd ../workflow
-npm install
-
-# Return to project root
-cd ..
-```
-
-### Install Python Dependencies (for evaluation)
-
-```bash
-cd evaluation
-pip install -r requirements.txt
-cd ..
-```
-
----
-
-## Step 2: Environment Configuration
-
-### Backend Environment
-
-Create (or edit) the file `backend/.env` with the following variables:
-
-```env
-# ==========================================
-# Database
-# ==========================================
-MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<database>?retryWrites=true&w=majority
-
-# ==========================================
-# Ollama (LLM)
-# ==========================================
-# If using a remote Ollama server (e.g., university):
-OLLAMA_API_URL_UPV=https://your-ollama-server.example.com:443
-
-# If using a local Ollama:
-# OLLAMA_BASE_URL=http://127.0.0.1:11434
-
-# Model configuration
-OLLAMA_MODEL=qwen2.5:latest
-OLLAMA_TEMPERATURE=0.4
-OLLAMA_NUM_CTX=8192
-OLLAMA_NUM_PREDICT=120
-OLLAMA_KEEP_ALIVE=60m
-
-# ==========================================
-# RAG System
-# ==========================================
-RAG_ENABLED=true
-RAG_EMBEDDING_MODEL=nomic-embed-text:latest
-CHROMA_URL=http://localhost:8000
-RAG_HIGH_THRESHOLD=0.7
-RAG_MED_THRESHOLD=0.4
-HISTORY_MAX_MESSAGES=8
-RAG_MAX_WRONG_STREAK=4
-RAG_MAX_TOTAL_TURNS=16
-
-# ==========================================
-# Authentication
-# ==========================================
-SESSION_SECRET=your-random-secret-key-here
-
-# For development (skip CAS authentication):
-DEV_BYPASS_AUTH=true
-
-# For production (CAS OAuth2):
-# CAS_CLIENT_ID=your-cas-client-id
-# CAS_CLIENT_SECRET=your-cas-client-secret
-# CAS_REDIRECT_URI=http://localhost:3000/auth/callback
-
-# ==========================================
-# Application
-# ==========================================
-PORT=3000
-FRONTEND_BASE_URL=http://localhost:5173
-WORKFLOW_BASE_URL=http://localhost:5174
-```
-
-**Important notes:**
-
-- Replace `<username>`, `<password>`, `<cluster>`, and `<database>` with your MongoDB Atlas credentials
-- If using a university Ollama server, set `OLLAMA_API_URL_UPV` to its URL. If running Ollama locally, uncomment `OLLAMA_BASE_URL`
-- For development, keep `DEV_BYPASS_AUTH=true` to skip university CAS authentication
-- Generate a random string for `SESSION_SECRET` (e.g., `openssl rand -hex 32`)
-
-### Frontend Environment
-
-Create the file `frontend/.env`:
-
-```env
-VITE_API_BASE_URL=http://localhost:3000
-```
-
----
-
-## Step 3: Database Setup
-
-### MongoDB Atlas
-
-1. Create a free MongoDB Atlas account at [mongodb.com/atlas](https://www.mongodb.com/atlas)
-2. Create a new cluster
-3. Create a database user with read/write permissions
-4. Add your IP address to the network access whitelist (or use `0.0.0.0/0` for development)
-5. Copy the connection string and paste it as `MONGODB_URI` in `backend/.env`
-
-### Seed Exercise Data
-
-The MongoDB database needs exercise documents in the `ejercicios` collection. Each exercise should follow this structure:
-
-```json
-{
-  "titulo": "Ejercicio 1",
-  "enunciado": "Determine qué resistencias contribuyen al divisor de tensión...",
-  "imagen": "ejercicio1.png",
-  "asignatura": "Tecnología Electrónica",
-  "concepto": "Divisor de tensión",
-  "nivel": 1,
-  "tutorContext": {
-    "objetivo": "Identificar resistencias en el divisor de tensión",
-    "netlist": "R1(nodo1,nodo2) R2(nodo2,nodo3)...",
-    "modoExperto": "Socratic tutoring mode",
-    "ac_refs": ["AC_LOCAL_ATTENUATION"],
-    "respuestaCorrecta": ["R1", "R2", "R4"],
-    "version": 1
-  }
-}
-```
-
-The `tutorContext.respuestaCorrecta` field is critical — it tells the RAG system which resistances are correct for guardrail checking and classification.
-
-### Data Files
-
-Ensure the following data files exist in the project:
-
-```
-material-complementario/
-└── llm/
-    ├── datasets/
-    │   ├── dataset_exercise_1.json
-    │   ├── dataset_exercise_3.json
-    │   ├── dataset_exercise_4.json
-    │   ├── dataset_exercise_5.json
-    │   ├── dataset_exercise_6.json
-    │   └── dataset_exercise_7.json
-    └── knowledge-graph/
-        └── knowledge-graph-with-interactions-and-rewards.json
-```
-
-These files contain the student-tutor conversation pairs and knowledge graph entries used by the RAG system.
-
----
-
-## Step 4: Verification
-
-Before starting the services, run the verification script to check that everything is properly configured.
-
-### Terminal 1 — Verification Script
-
-```powershell
-.\verify.ps1
-```
-
-Or if PowerShell execution policy blocks it:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File verify.ps1
-```
-
-### What the Verification Script Checks
-
-The script runs through 5 phases:
-
-#### Phase 0: Prerequisites
-
-| Check | What It Verifies |
-|---|---|
-| 0.1 | Node.js is installed |
-| 0.2 | npm dependencies are installed (chromadb, axios, mongoose packages exist in node_modules) |
-| 0.3 | Python 3 is installed |
-| 0.4 | Ollama is reachable and has both required models (qwen2.5 + nomic-embed-text) |
-| 0.5 | ChromaDB is running at `http://localhost:8000` |
-| 0.6 | All 6 dataset files + knowledge graph file exist |
-| 0.7 | Environment files exist (backend/.env, frontend/.env) |
-
-#### Phase 1: RAG Modules
-
-| Check | What It Verifies |
-|---|---|
-| 1.1 | All 12 RAG modules exist in `backend/src/rag/` |
-| 1.2 | `verifyRag.js` passes all internal checks (module loading, ingestion, pipeline execution) |
-
-#### Phase 2: Server
-
-| Check | What It Verifies |
-|---|---|
-| 2.1 | Backend server responds to health check at `http://localhost:3000/api/health` |
-| 2.2 | RAG SSE endpoint works (sends a test query, receives response chunks + [DONE]) |
-| 2.3 | RAG logging is active (today's JSONL log file exists and contains valid entries) |
-
-#### Phase 3: Evaluation Scripts
-
-| Check | What It Verifies |
-|---|---|
-| 3.1 | `evaluation/config.py` loads correctly (7 datasets configured) |
-| 3.2 | `evaluateRetrieval.py` runs without errors |
-| 3.3 | `evaluateGeneration.py` runs without errors |
-| 3.4 | `runBenchmark.py` exists |
-
-#### Phase 4: Integration Check
-
-| Check | What It Verifies |
-|---|---|
-| 4.1 | RAG middleware is properly registered in `index.js` (require + app.use) |
-| 4.2 | ChromaDB has at least 7 collections (one per exercise + knowledge graph) |
-
-### Interpreting Results
-
-Each check shows `[PASS]`, `[FAIL]`, or `[SKIP]`:
-
-- **PASS** — Check succeeded
-- **FAIL** — Check failed. The error message explains what is wrong and how to fix it
-- **SKIP** — Check was skipped because a prerequisite check failed (e.g., server checks are skipped if the server is not running)
-
-The final summary shows total PASS/FAIL/SKIP counts. If all checks pass, the system is ready.
-
-**Note:** Some checks (Phase 2) require the backend server to be running. You may want to run the verification script in two passes — first to check prerequisites (Phase 0-1, 3-4), then again after starting the server to check Phase 2.
-
----
-
-## Step 5: Start Services
-
-The application requires multiple services running simultaneously. Open a separate terminal for each.
-
-### Terminal 2 — ChromaDB
-
-```bash
 chroma run --host localhost --port 8000
 ```
 
-Expected output:
-```
-                chroma 0.x.x
-Running Chroma
-Saving data to: ./chroma_data
-Anonymized telemetry enabled
-Running on http://localhost:8000
-```
-
-ChromaDB stores its data in the current directory by default. Keep this terminal open.
-
-### Terminal 3 — Backend
-
-```bash
-cd backend
-npm start
-```
-
-Expected output:
-```
-✅ BACKEND INDEX CARGADO: .../backend/src/index.js
-Conectado a MongoDB Atlas
-Knowledge graph loaded: 27 entries
-[RAG] Ready
-[Workflow] WebSocket server ready on /ws/workflow
-✅ Backend (HTTP interno) escuchando en puerto 3000
-[OLLAMA] Warmup OK (UPV)
-```
-
-Key things to verify:
-- "Conectado a MongoDB Atlas" — database connection successful
-- "[RAG] Ready" — RAG system initialized (KG + BM25 loaded)
-- "escuchando en puerto 3000" — server is accepting requests
-
-### Ingest Data into ChromaDB (first time only)
-
-If this is the first time running the application, you need to ingest the datasets into ChromaDB:
-
-```bash
-cd backend
-node src/rag/ingest.js
-```
-
-Expected output:
-```
-Starting ingestion...
-Ollama URL: http://...
-ChromaDB URL: http://localhost:8000
-Exercise 1: 150 pairs
-Exercise 1: ingested into ChromaDB + BM25
-Exercise 3: 120 pairs
-...
-Knowledge graph: 27 entries ingested into ChromaDB
-Ingestion complete!
-```
-
-This only needs to be done once. The ChromaDB data persists across restarts.
-
-### Terminal 4 — Frontend
-
-```bash
-cd frontend
-npm install    # first time only
-npm run dev
-```
-
-Expected output:
-```
-  VITE v6.x.x  ready in xxx ms
-
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: ...
-```
-
-The frontend is now available at **http://localhost:5173**.
-
-### Terminal 5 — Workflow Monitor (optional)
-
-```bash
-cd workflow
-npm install    # first time only
-npm run dev
-```
-
-Expected output:
-```
-  VITE v6.x.x  ready in xxx ms
-
-  ➜  Local:   http://localhost:5174/
-  ➜  Network: ...
-```
-
-The workflow monitor is now available at **http://localhost:5174**. This is optional and only needed for debugging/observing the RAG pipeline in real time.
+Keep this running. Collections are created later by the ingestion script and persist on disk across restarts. (Set `CHROMA_REQUIRED=false` to let the backend start in BM25-only mode if Chroma is empty.)
 
 ---
 
-## Step 6: Using the Application
+## Step 4 — LLM Provider
 
-### Student Interface (Frontend)
+Pick one provider; both satisfy the same interface and the docs call the model **qwen2.5**.
 
-1. Open **http://localhost:5173** in your browser
-2. Log in (in development mode with `DEV_BYPASS_AUTH=true`, authentication is bypassed)
-3. Select an exercise from the exercise list
-4. Read the circuit description and analyze the circuit diagram
-5. Type your answer in the chat box (e.g., "R1 y R2 porque forman un divisor de tensión")
-6. The tutor will respond with Socratic questions guiding you toward the correct answer
-7. The exercise ends when you identify the correct resistances with valid reasoning
+**Option A — Ollama (local or UPV).** Pull the models on a local Ollama:
 
-### Workflow Monitor (Developer Tool)
+```bash
+ollama pull qwen2.5
+ollama pull nomic-embed-text
+```
 
-1. Open **http://localhost:5174** in a separate browser tab
-2. Verify the connection indicator shows green (connected to backend WebSocket)
-3. Send a message in the student interface
-4. Watch the graph nodes light up in sequence as the RAG pipeline processes the message
-5. Click any node to see its full parameter detail in the bottom panel
-6. Check the event log (right sidebar) for the complete event stream
-7. Switch to the "Flow Diagram" tab for a sequential view of the pipeline
+Set `LLM_PROVIDER=ollama`. Use `LLM_MODE=local` for `http://127.0.0.1:11434`, or `LLM_MODE=upv` with `OLLAMA_API_URL_UPV` for the university server.
+
+**Option B — PoliGPT (UPV gateway).** Set `LLM_PROVIDER=poligpt`, `POLIGPT_BASE_URL=https://api.poligpt.upv.es`, `POLIGPT_API_KEY=…`, and `EMBEDDING_PROVIDER=openai` (embeddings via PoliGPT's OpenAI-compatible endpoint).
+
+---
+
+## Step 5 — Environment Configuration
+
+Copy `backend/.env.example` to `backend/.env` and fill it in. Minimum to run locally:
+
+```env
+# Database
+DATABASE_TYPE=postgresql
+PG_CONNECTION_STRING=postgresql://tutor:your-password@127.0.0.1:5432/tutorvirtual
+
+# Server
+PORT=3001
+NODE_ENV=development
+SESSION_SECRET=<random-long-string>
+FRONTEND_BASE_URL=http://localhost:5173
+
+# LLM (Ollama local example)
+LLM_PROVIDER=ollama
+LLM_MODE=local
+OLLAMA_API_URL_LOCAL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen2.5
+OLLAMA_CLASSIFIER_MODEL=qwen2.5
+
+# Vector store
+CHROMA_URL=http://localhost:8000
+
+# Pipeline
+USE_ORCHESTRATOR=1
+RAG_ENABLED=true
+
+# Auth (development): skip CAS
+DEV_BYPASS_AUTH=true
+```
+
+Notes:
+- `USE_ORCHESTRATOR=1` enables the 10-agent pipeline; with `0` the legacy linear pipeline handles chat.
+- `DEV_BYPASS_AUTH=true` skips CAS — the server **refuses to start** if this is on while `NODE_ENV=production`.
+- For production CAS, set `CAS_BASE_URL`, `OAUTH_CLIENT_ID/SECRET`, `OAUTH_REDIRECT_URI`, `OAUTH_SCOPES`, and a strong `SESSION_SECRET`.
+- See [backend.md](backend.md) for the full environment-variable reference.
+
+The frontend reads `VITE_BACKEND_URL` / `VITE_BASE_PATH` from `frontend/.env` (defaults target the dev proxy).
+
+---
+
+## Step 6 — Start the Backend (migrations + warmup)
+
+```bash
+cd backend && npm start          # nodemon src/index.js  (use start:prod in production)
+```
+
+On boot the backend:
+1. mounts middleware and routes, then listens on `PORT`;
+2. initializes the DI container — **runs all SQL migrations**, wires the repositories, the LLM adapter, the guardrail pipeline and the orchestrator;
+3. loads the knowledge graph and per-exercise BM25 indices, and checks ChromaDB;
+4. warms up the LLM (Ollama) in the background.
+
+Look for log lines confirming the container initialized, `USE_ORCHESTRATOR` state, KG loaded, and the server listening.
+
+---
+
+## Step 7 — Ingest Data into ChromaDB
+
+First time only (and whenever datasets change), embed the datasets and knowledge graph into ChromaDB:
+
+```bash
+cd backend && node src/infrastructure/vectordb/ingest.js
+```
+
+This creates the `exercise_{n}` collections (from `backend/src/data/datasets/`) and the `knowledge_graph` collection (from `backend/src/data/knowledge-graph/…json`). Requires the embedding model/endpoint to be reachable. Data persists on disk, so this is a one-time step per environment.
+
+---
+
+## Step 8 — Frontend
+
+```bash
+cd frontend && npm run dev       # → http://localhost:5173
+```
+
+For production, `npm run build` produces `frontend/dist`, which the backend serves with an SPA fallback (and nginx exposes under `/v2/`).
+
+---
+
+## One-Shot Windows Deployment
+
+`deploy-hexagonal.ps1` (project root) orchestrates the whole server-side deployment: it validates the PostgreSQL service, Node and nginx; auto-detects a ChromaDB launcher; patches `backend/.env` with the connection string if missing; optionally builds the frontend; and starts everything.
+
+```powershell
+.\deploy-hexagonal.ps1                 # full deploy
+.\deploy-hexagonal.ps1 -BuildFrontend  # also build frontend/dist
+.\deploy-hexagonal.ps1 -DebugPipeline  # enable [DEBUG_PIPELINE] logs
+.\deploy-hexagonal.ps1 -SkipEnvPatch   # don't touch .env
+.\deploy-hexagonal.ps1 -StopAll        # stop all services
+```
+
+Key parameters (override at the top of the script or via `-Param`): `ProjectRoot`, `NginxDir`, `PgServiceName`, `BackendPort` (3001), `ChromaPort` (8000), `PgPort` (5432), `ChromaCmd` (auto-detected if empty), `PgConnectionString`. The backend runs on `127.0.0.1:3001` and nginx exposes it at `/v2/`.
+
+To benchmark different LLMs, see the per-model `.env` presets in [evaluation.md](evaluation.md).
+
+---
+
+## Verification
+
+`verify.ps1` runs a prerequisites/health checklist (Node, npm dependencies incl. `pg`, Python, the LLM endpoint with `qwen2.5` + `nomic-embed-text`, ChromaDB heartbeat, dataset/KG files, server and backend health). Run it before/after starting services:
+
+```powershell
+.\verify.ps1
+# or, if execution policy blocks it:
+powershell -ExecutionPolicy Bypass -File verify.ps1
+```
+
+Each check prints `[PASS]`, `[FAIL]` or `[SKIP]`, with a final summary. Some checks require the backend to be up.
+
+A quick manual health check: `GET http://localhost:3001/api/health`.
+
+---
+
+## Using the Application
+
+1. Open `http://localhost:5173`.
+2. Sign in. In development (`DEV_BYPASS_AUTH=true`) the dev login is used; in production you authenticate through CAS.
+3. Pick an exercise, read the circuit, and type your answer in the chat.
+4. The tutor replies with Socratic questions — it never reveals the answer.
+5. The exercise ends when you identify the correct elements with sound reasoning (the response carries an `<END_EXERCISE>` token). The result (analysis, advice, detected alternative conceptions) is then computed and stored.
+6. View your progress on the dashboard.
 
 ---
 
 ## Troubleshooting
 
-### MongoDB Connection Issues
+### PostgreSQL connection
+- Verify `PG_CONNECTION_STRING` (user, password, host, port, database).
+- Confirm the PostgreSQL service is running and the database exists.
+- The backend runs migrations on boot — check the startup logs for migration errors.
 
-**Error:** "Error al conectar a MongoDB"
+### LLM not responding
+- **Ollama (local):** ensure `ollama serve` is running and `ollama list` shows `qwen2.5` and `nomic-embed-text`. Check `LLM_MODE`/`OLLAMA_API_URL_*`.
+- **Ollama (UPV) / PoliGPT:** verify the URL/API key and network/VPN. Watch for `BudgetExhaustedError` (timeouts) — the tutor returns a localized "taking too long" fallback.
 
-- Verify `MONGODB_URI` in `backend/.env` is correct
-- Check that your IP is whitelisted in MongoDB Atlas Network Access
-- Ensure the database user has read/write permissions
-- Test the connection string with MongoDB Compass
+### ChromaDB
+- "ChromaDB not available": start `chroma run --host localhost --port 8000`; confirm `CHROMA_URL`.
+- Empty collections: run the ingestion script (Step 7); the embedding endpoint must be reachable. To start anyway in BM25-only mode, set `CHROMA_REQUIRED=false`.
 
-### Ollama Not Responding
+### Auth
+- `401` on `/api/*`: no session — sign in, or set `DEV_BYPASS_AUTH=true` for local dev.
+- Server refuses to start: `DEV_BYPASS_AUTH=true` with `NODE_ENV=production` is forbidden.
 
-**Error:** "Ollama not available" or timeout errors
+### CORS
+- Browser CORS errors: set `FRONTEND_BASE_URL` to the actual frontend origin and restart the backend.
 
-- If using local Ollama: make sure it is running (`ollama serve`)
-- Check the URL in `.env` matches your Ollama instance
-- Verify models are pulled: `ollama list` should show `qwen2.5:latest` and `nomic-embed-text:latest`
-- For remote Ollama: check firewall/VPN settings
+### Slow responses
+- The LLM call is the bottleneck. Reduce `OLLAMA_NUM_PREDICT`, raise `OLLAMA_KEEP_ALIVE`, or check provider latency. The orchestrator's per-stage budget (`ORCHESTRATOR_BUDGET_MS`) bounds total time.
 
-### ChromaDB Connection Issues
-
-**Error:** "ChromaDB not available at http://localhost:8000"
-
-- Make sure ChromaDB is running in a terminal: `chroma run --host localhost --port 8000`
-- Check if port 8000 is available: `netstat -ano | findstr :8000` (Windows) or `lsof -i :8000` (Linux/Mac)
-- If port is in use, stop the conflicting process or change the ChromaDB port and update `CHROMA_URL` in `.env`
-
-### ChromaDB Has No Collections
-
-**Error:** Verification check 4.2 fails with "0 collections"
-
-- Run the ingestion script: `cd backend && node src/rag/ingest.js`
-- Make sure Ollama is running (ingestion needs the embedding model)
-- Check that dataset files exist in `material-complementario/llm/datasets/`
-
-### CORS Errors
-
-**Error:** "Access-Control-Allow-Origin" errors in browser console
-
-- Verify `FRONTEND_BASE_URL` and `WORKFLOW_BASE_URL` in `backend/.env` match the actual URLs
-- Default: frontend at `http://localhost:5173`, workflow at `http://localhost:5174`
-- Restart the backend after changing `.env`
-
-### Port Conflicts
-
-**Error:** "EADDRINUSE: address already in use"
-
-- Backend (3000): `netstat -ano | findstr :3000` → kill the process using that port
-- Frontend (5173): Vite will automatically try the next available port
-- ChromaDB (8000): Stop other services on port 8000
-- Workflow (5174): Vite will automatically try the next available port
-
-### RAG Not Working
-
-**Symptom:** Chat responses are generic and do not seem to use RAG
-
-- Check that `RAG_ENABLED=true` in `backend/.env`
-- Check backend logs for "[RAG] Ready" at startup
-- Verify the exercise has `tutorContext.respuestaCorrecta` set in MongoDB
-- Check backend logs for "[RAG] Error:" messages
-
-### Slow Responses
-
-**Symptom:** Chat takes more than 30 seconds to respond
-
-- Check Ollama response times: the LLM call is typically the bottleneck
-- Reduce `OLLAMA_NUM_PREDICT` (e.g., from 120 to 80) for shorter responses
-- Increase `OLLAMA_KEEP_ALIVE` to keep the model loaded in memory
-- If using a remote Ollama, network latency may be a factor
-
-### Log Files
-
-For debugging, check these log locations:
-
+### Logs
 | Log | Location | Content |
 |---|---|---|
-| Backend console | Terminal running `npm start` | Server startup, RAG events, errors |
-| RAG interaction logs | `backend/logs/rag/YYYY-MM-DD.jsonl` | Full RAG pipeline data for each interaction |
-| Browser console | F12 → Console | Frontend errors, WebSocket connection status |
-| Workflow monitor | Browser console at localhost:5174 | WebSocket events, rendering errors |
+| Backend console | terminal running `npm start` | startup, container init, pipeline traces |
+| Audit log | `backend/logs/audit/YYYY-MM-DD.jsonl` (when `AUDIT_LOG=1`) | per-event pipeline audit |
+| Pipeline trace | console `[TRACE]` (when `DEBUG_PIPELINE=1`) | per-request budget, LLM calls, guardrails |
+| Browser console | F12 | frontend / SSE errors |
+
+For architecture and internals, see [architecture-diagrams.md](architecture-diagrams.md), [backend.md](backend.md) and [rag-system.md](rag-system.md).
+```

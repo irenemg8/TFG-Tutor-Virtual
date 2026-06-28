@@ -1,365 +1,232 @@
 # Evaluation System
 
-The evaluation system measures the quality of the RAG pipeline through automated metrics. It reads JSONL interaction logs produced by the backend and computes both retrieval quality metrics (how well the search engine finds relevant documents) and generation quality metrics (how well the tutor's responses follow Socratic pedagogy).
+The evaluation system measures the **pedagogical quality** of the tutor by driving the *real* backend pipeline with realistic multi-turn conversations and scoring every tutor turn. It is the empirical backbone of the TFG: it lets several LLMs (and architecture variants) be compared on the same exercises with the same metrics.
 
-All evaluation scripts are written in Python and located in the `evaluation/` directory.
+All evaluation code is Python, under `evaluation/`.
+
+> The chat model is referred to as **qwen2.5**.
 
 ---
 
 ## Table of Contents
 
-1. [Architecture](#architecture)
-2. [Configuration](#configuration)
-3. [Data Flow](#data-flow)
-4. [Retrieval Metrics](#retrieval-metrics)
-5. [Generation Metrics](#generation-metrics)
-6. [End-to-End Benchmark](#end-to-end-benchmark)
-7. [Results Format](#results-format)
-8. [How to Run](#how-to-run)
-9. [Interpreting Results](#interpreting-results)
+1. [What It Measures](#what-it-measures)
+2. [Layout](#layout)
+3. [How the Benchmark Works](#how-the-benchmark-works)
+4. [Ground Truth](#ground-truth)
+5. [Per-Turn Metrics](#per-turn-metrics)
+6. [Efficiency Thresholds](#efficiency-thresholds)
+7. [Outputs](#outputs)
+8. [Comparing Models](#comparing-models)
+9. [PCA — Architecture Comparison](#pca--architecture-comparison)
+10. [How to Run](#how-to-run)
+11. [Interpreting Results](#interpreting-results)
 
 ---
 
-## Architecture
+## What It Measures
 
-```
-backend/logs/rag/*.jsonl   ─── (interaction logs) ───┐
-                                                      ▼
-material-complementario/llm/datasets/*.json ──► evaluateRetrieval.py ──► results/retrievalMetrics.json
-                                              ► evaluateGeneration.py ──► results/generationMetricsBasic.json
-                                              ► runBenchmark.py ──────── results/benchmarkResults.json
-                                                      ▲
-                                                      │
-                              backend server ◄── (live queries) ── runBenchmark.py
-```
-
-The evaluation system has two modes:
-
-1. **Offline evaluation** (`evaluateRetrieval.py`, `evaluateGeneration.py`): Reads existing interaction logs and computes metrics. No server required.
-
-2. **Live benchmark** (`runBenchmark.py`): Sends test queries to the running server, collects responses, then runs both evaluation scripts on the collected data.
+Unlike a classic RAG evaluation that parses offline logs for Precision@K / Recall@K, this benchmark is **end-to-end and live**: it talks to the running backend over HTTP/SSE, so what it scores is the *whole* system — orchestrator, classification, retrieval, guardrails and the LLM together — exactly as a student would experience it. The focus is pedagogy: is the tutor Socratic, conceptually precise, consistent with the student, and free of hallucinations, while addressing the right alternative conceptions?
 
 ---
 
-## Configuration
+## Layout
 
-**File:** `evaluation/config.py`
+```
+evaluation/
+├── rag_benchmark/
+│   ├── script/
+│   │   ├── benchmark_rag.py        # main benchmark (drives the backend, scores turns)
+│   │   └── prepare_pca_data.py     # flattens benchmark output into PCA-ready tables
+│   ├── env_templates/              # per-model backend/.env presets
+│   │   ├── qwen25.env
+│   │   ├── llama.env
+│   │   ├── llama31_8b.env
+│   │   ├── phi4.env
+│   │   └── tutor_eda.env
+│   ├── results/                    # rag_benchmark_<timestamp>.json / .xlsx
+│   ├── Datos_spider.xlsx           # benchmark conversation dataset
+│   └── data2.xlsx
+└── pca/
+    ├── pca_1_resultados_buenos_550.ipynb   # PCA analysis notebook
+    └── data/                                # combined per-architecture datasets
+```
 
-Centralizes all evaluation parameters:
-
-| Parameter | Value | Description |
-|---|---|---|
-| `LOG_DIR` | `backend/logs/rag` | Where to read JSONL interaction logs |
-| `DATASETS_DIR` | `material-complementario/llm/datasets` | Path to ground truth datasets |
-| `RESULTS_DIR` | `evaluation/results` | Where to write evaluation output |
-| `DATASET_MAP` | `{1: "dataset_exercise_1.json", ...}` | Maps exercise numbers to dataset files (7 exercises, 6 unique files) |
-| `DEFAULT_K` | `3` | K value for Precision@K, Recall@K, MAP@K |
-| `BASE_URL` | `http://localhost:3000` | Backend server URL for live benchmark |
-| `STREAM_ENDPOINT` | `/api/ollama/chat/stream` | Chat endpoint path |
-| `TEST_SAMPLES_PER_EXERCISE` | `5` | Number of test queries per exercise in benchmark |
-| `QUESTION_WORDS` | `["por qué", "cómo", "qué", ...]` | Spanish question words for Socratic detection |
-| `REVEAL_PHRASES` | `["la respuesta es", "las resistencias son", ...]` | Phrases indicating solution leaks |
+(There is also a generated `evaluation/architecture_report.html`.)
 
 ---
 
-## Data Flow
+## How the Benchmark Works
 
-### Input: JSONL Interaction Logs
+**File:** `evaluation/rag_benchmark/script/benchmark_rag.py`
 
-Every RAG interaction is logged by the backend as a JSON line in `backend/logs/rag/YYYY-MM-DD.jsonl`. Each entry contains:
+It exercises the real backend rather than mocking anything:
 
-```json
-{
-  "timestamp": "2024-03-14T10:30:00.000Z",
-  "exerciseNum": 3,
-  "userId": "64a1b2c3d4e5f6a7b8c9d0e1",
-  "classification": "wrong_answer",
-  "decision": "rag_examples",
-  "query": "R5 porque está conectada",
-  "retrievedDocs": [
-    { "student": "R5", "tutor": "¿Por qué piensas que R5...?", "score": 0.4231 },
-    ...
-  ],
-  "augmentation": "[RESPONSE MODE]\n...",
-  "response": "¿Qué observas en el circuito alrededor de R5?",
-  "guardrailTriggered": false,
-  "correctAnswer": ["R1", "R2", "R4"],
-  "timing": { "pipeline": 342, "total": 1523 }
-}
+```
+benchmark_rag.py
+   │
+   ├─ BackendClient.login()              → POST /api/auth/dev-login  (needs DEV_BYPASS_AUTH=true)
+   ├─ BackendClient.load_exercises()     → GET /api/ejercicios; map each benchmark
+   │                                        exercise number to its DB id by statement prefix
+   │                                        (or pass --exercise-map manually)
+   │
+   └─ for each exercise in [1,3,4,5,6,7]:
+        for each sample conversation:
+          for each turn:
+            stream_chat() → POST /api/ollama/chat/stream (SSE), continued via interaccionId
+            └─ parse the streamed tutor response (+ latency, token estimate)
+            └─ score the turn (see Per-Turn Metrics) → EvalResult
 ```
 
-### Ground Truth: Exercise Datasets
+- `BACKEND_URL` defaults to `http://localhost:3030` (override via env). TLS verification is disabled for the UPV self-signed endpoints.
+- The conversation is multi-turn: each turn passes the previous `interaccionId` so the backend treats it as one continuing session — which is what exercises the loop-prevention, cumulative-answer and guardrail logic realistically.
+- `<think>…</think>` blocks (when a model emits chain-of-thought) are split out from the clean tutor response before scoring.
 
-The ground truth for retrieval evaluation comes from the exercise datasets — the same JSON files used for ingestion. Each dataset is an array of student-tutor pairs:
-
-```json
-[
-  { "student": "R5", "tutor": "¿Por qué piensas que R5 contribuye al divisor de tensión?" },
-  { "student": "R1, R2 y R4", "tutor": "¡Correcto! ¿Puedes explicar por qué?" },
-  ...
-]
-```
-
-A retrieved document is considered "relevant" if the query matches the student text from the dataset (exact match or substring containment).
+The key classes are `RagKnowledgeBase` (ground truth), `BackendClient` (HTTP/SSE), `RagBenchmark` (the run loop), and `EvalResult` (the per-turn record).
 
 ---
 
-## Retrieval Metrics
+## Ground Truth
 
-**File:** `evaluation/evaluateRetrieval.py`
+**Class:** `RagKnowledgeBase`
 
-This script evaluates how well the hybrid search engine retrieves relevant documents for each query.
+Loads two files from `backend/src/data/`:
 
-### Metrics Computed
+- `contextos-ejercicios/tutorContext_por_ejercicio.json` — per-exercise statement, expert mode, and `acPatterns` (each with `id`, `name`, `misconception`, `strategy`, and `match` rules).
+- `alternative_conceptions.json` — the global AC catalogue (descriptions).
 
-#### Precision@K
-
-The fraction of the top K retrieved documents that are relevant.
-
-```
-Precision@K = (relevant documents in top K) / K
-```
-
-With `K = 3`, if 2 out of the 3 retrieved documents are relevant, Precision@3 = 0.667.
-
-#### Recall@K
-
-The fraction of all relevant documents that appear in the top K results.
-
-```
-Recall@K = (relevant documents in top K) / (total relevant documents)
-```
-
-If there are 5 relevant documents in the dataset and 2 appear in the top 3, Recall@3 = 0.4.
-
-#### MAP@K (Mean Average Precision)
-
-Average Precision considers the order of relevant documents — finding a relevant document at rank 1 is better than at rank 3.
-
-```
-AP = (1/|relevant|) × Σ (precision at rank_i, for each relevant doc at rank_i)
-```
-
-MAP@K is the mean of AP values across all queries.
-
-#### MRR (Mean Reciprocal Rank)
-
-How high the first relevant document appears in the results.
-
-```
-RR = 1 / (rank of first relevant document)
-```
-
-If the first relevant document is at rank 1, RR = 1.0. If at rank 3, RR = 0.333. MRR is the mean across all queries.
-
-### How Relevance Is Determined
-
-For each logged query, the script finds "relevant" documents in the ground truth dataset using text matching:
-
-1. **Exact match**: The query text exactly equals a student message in the dataset
-2. **Substring containment**: The query is a substring of a dataset entry, or vice versa
-
-Then it compares the retrieved document indices (from the log's `retrievedDocs` field) against these relevant indices to compute the metrics.
+From these it provides:
+- `retrieve(exercise_id)` — a structured context string (statement + expert mode + possible ACs).
+- `expected_acs_for(exercise_id, student_answer)` — the ACs a given student answer *should* exhibit, computed from the `match` rules (`includes` → mentions a wrong component; `missesAny` → omits a correct one). This is the ground-truth label for AC-detection scoring.
 
 ---
 
-## Generation Metrics
+## Per-Turn Metrics
 
-**File:** `evaluation/evaluateGeneration.py`
+Every metric is **deterministic and heuristic** (regex + keyword scoring in Python) — no external judge LLM — so runs are reproducible and cheap. Each tutor turn produces an `EvalResult` with:
 
-This script evaluates the quality of the LLM's responses from a pedagogical perspective.
+### Efficiency
+- **Latency** (seconds) of the SSE response.
+- **Token estimate / throughput** (≈ `words × 1.3`), compared against the thresholds below.
 
-### Two Evaluation Modes
+### AC detection — `detect_acs_in_response(response, ac_patterns)`
+An AC is counted as *addressed* when at least **2** of its keywords appear in the response. Keywords are a fixed per-AC list (`AC_KEYWORDS`) plus dynamic keywords mined from the AC's `strategy`/`misconception` text. Detected ACs are compared against `expected_acs_for(...)` to measure coverage.
 
-#### RAGAS Mode (when `ragas` library is installed)
+### Socraticity — `evaluate_socraticidad(response)` → 1–5
+Rewards questioning over telling:
+- **1** — instructive (doesn't end with a question) or gives the answer/confirmation directly.
+- **2** — closed question (answer implicit in the question).
+- **3** — clarification question ("¿por qué crees…?").
+- **4** — scaffolding that pinpoints the error area with circuit terms.
+- **5** — induction to contradiction (counterexample / reductio ad absurdum).
 
-Uses the RAGAS framework to compute:
+### Conceptual precision — `evaluate_precision_conceptual(response, expected_acs, ac_patterns, student_answer)` → 1–5
+- **1** — validates a wrong answer or commits a physics error (e.g. "current flows through an open circuit").
+- **2** — generic, little/no technical vocabulary.
+- **3** — sufficient: correct concepts but a vague diagnosis.
+- **4** — good: clearly names the AC with precise language.
+- **5** — excellent: names the specific AC **and** ties it to the circuit topology (nodes, resistors).
 
-| Metric | Description |
+### Consistency — `evaluate_consistencia(response, student_answer)` → 1–5
+How well the response is calibrated to what the student actually said, from the tutor/student length ratio and shared resistor mentions. **5** = references exactly the student's elements with a proportionate length; **2** = disproportionate (way too long/short).
+
+### Hallucination rate — `evaluate_tasa_alucinacion(...)`
+Flags statements unsupported by the exercise context / topology.
+
+### Chain-of-thought (when a model emits `<think>`)
+- `compute_cot_faithfulness()` — how well the visible answer follows the model's own reasoning.
+- `compute_cot_relevance()` — how relevant that reasoning is to the turn.
+
+---
+
+## Efficiency Thresholds
+
+Defined in `benchmark_rag.py` (`THRESHOLDS`):
+
+| Threshold | Value |
 |---|---|
-| **Faithfulness** | How much the response is grounded in the provided context (retrieved documents + augmentation). Higher is better — the tutor should not hallucinate facts. |
-| **Answer Relevancy** | How relevant the response is to the student's question. Higher is better. |
-| **Context Precision** | How much of the provided context is actually useful. Higher means less noise in the retrieval. |
-| **Context Recall** | How much of the ground truth information is covered by the provided context. Higher means better retrieval coverage. |
-
-RAGAS requires an LLM to evaluate the responses, so it is slower but more comprehensive.
-
-#### Basic Mode (fallback when RAGAS is not installed)
-
-Computes simpler heuristic metrics:
-
-| Metric | Description |
-|---|---|
-| **Socratic Rate** | Percentage of responses containing at least one question mark (`?`). A good Socratic tutor should ask questions, not give statements. |
-| **Average Question Words** | Average number of question-starting words ("por qué", "cómo", "qué", etc.) per response. Higher suggests more active questioning. |
-| **Guardrail Safe Rate** | Percentage of responses that do not contain any reveal phrases ("la respuesta es", "las resistencias son", etc.). Should be very close to 1.0 — the tutor should almost never reveal the answer. |
-| **Average Response Length** | Mean character length of responses. Too short might mean the tutor is not engaging enough. Too long might mean it is being verbose instead of asking focused questions. |
-
-### Ground Truth for Generation
-
-The best matching ground truth response is found by word overlap — the dataset student-tutor pair whose student message shares the most words with the query is selected. The ground truth tutor response serves as the reference for what an ideal response looks like.
+| Optimal latency | ≤ 3.0 s |
+| Acceptable latency | ≤ 5.0 s |
+| Minimum throughput | ≥ 20 tokens/s |
+| Minimum Socratic score | ≥ 0.8 (normalized) |
 
 ---
 
-## End-to-End Benchmark
+## Outputs
 
-**File:** `evaluation/runBenchmark.py`
+`save_json()` and `save_xlsx()` write, per run, to `evaluation/rag_benchmark/results/`:
 
-The benchmark script automates the entire evaluation process:
-
-1. **Check prerequisites**: Verify the server is running and test user/exercise IDs are configured
-2. **Select test samples**: For each exercise, pick `TEST_SAMPLES_PER_EXERCISE` (5) evenly spaced entries from the dataset
-3. **Send queries**: POST each student message to the chat endpoint, parse the SSE response
-4. **Collect results**: Save query, expected response, actual response, and timing for each test
-5. **Run evaluations**: Automatically call `evaluateRetrieval.py` and `evaluateGeneration.py` on the resulting logs
-
-### Required Environment Variables
-
-```bash
-export TEST_USER_ID="64a1b2c3d4e5f6a7b8c9d0e1"  # MongoDB ObjectId of a test user
-export TEST_EXERCISE_IDS='{"1":"objectid1","3":"objectid3",...}'  # Exercise IDs per number
-```
-
-### Output
-
-The benchmark produces three files:
-- `results/benchmarkResults.json` — Raw query-response pairs with timing
-- `results/retrievalMetrics.json` — Retrieval quality metrics (from evaluateRetrieval)
-- `results/generationMetricsBasic.json` — Generation quality metrics (from evaluateGeneration)
+- `rag_benchmark_<timestamp>.json` — every `EvalResult` (identification, test data, retrieved context, model output, efficiency, AC detection, pedagogy, CoT).
+- `rag_benchmark_<timestamp>.xlsx` — a **7-sheet** comparison workbook: an overview, per-model statistics (`compute_model_stats`), per-turn detail, and the formulas/aggregations used.
 
 ---
 
-## Results Format
+## Comparing Models
 
-### retrievalMetrics.json
+The same benchmark is run against several generators to compare them on identical exercises and metrics. Each model has a ready-made backend preset in `env_templates/` (e.g. `qwen25.env`, `llama.env`, `llama31_8b.env`, `phi4.env`). The constants that must stay fixed across runs (`USE_ORCHESTRATOR=1`, `PORT=3030`, `CHROMA_URL`, `PG_CONNECTION_STRING`, `DEV_BYPASS_AUTH=true`) are documented in each template; only the **generator** variables change:
 
-```json
-{
-  "numQueries": 42,
-  "k": 3,
-  "meanPrecisionAtK": 0.7143,
-  "meanRecallAtK": 0.5238,
-  "mapAtK": 0.6429,
-  "mrr": 0.8571,
-  "perQuery": [
-    {
-      "query": "R5 porque está conectada",
-      "exerciseNum": 3,
-      "classification": "wrong_answer",
-      "precisionAtK": 0.6667,
-      "recallAtK": 0.5,
-      "averagePrecision": 0.75,
-      "reciprocalRank": 1.0,
-      "numRetrieved": 3,
-      "numRelevant": 4
-    },
-    ...
-  ]
-}
+```env
+LLM_PROVIDER=ollama
+LLM_MODE=upv
+OLLAMA_API_URL_UPV=https://ollama.gti-ia.upv.es:443
+OLLAMA_MODEL=qwen2.5
+OLLAMA_CLASSIFIER_MODEL=qwen2.5
+# embeddings stay constant (nomic-embed-text via PoliGPT) so retrieval is comparable
+EMBEDDING_PROVIDER=openai
+POLIGPT_EMBED_MODEL=nomic-embed-text
 ```
 
-### generationMetricsBasic.json
+Procedure per model: copy the template's generator block into `backend/.env`, restart the backend, run `benchmark_rag.py`, and keep the timestamped results.
 
-```json
-{
-  "numQueries": 42,
-  "avgResponseLength": 187.3,
-  "socraticRate": 0.9048,
-  "avgQuestionWords": 1.57,
-  "guardrailSafeRate": 0.9762
-}
-```
+---
 
-### benchmarkResults.json
+## PCA — Architecture Comparison
 
-```json
-[
-  {
-    "exerciseNum": 3,
-    "query": "R5 porque está conectada",
-    "expected": "¿Por qué piensas que R5 contribuye?",
-    "response": "¿Qué observas en el circuito alrededor de R5?",
-    "timeSeconds": 2.34
-  },
-  ...
-]
-```
+**Folder:** `evaluation/pca/`
+
+The benchmark results across models/architectures are flattened by `prepare_pca_data.py` and analyzed with **Principal Component Analysis** in `pca_1_resultados_buenos_550.ipynb`. This projects the multi-metric scores (Socraticity, conceptual precision, consistency, hallucination, CoT, efficiency) into 2D to visualize how the architectures separate — including the rule-based variant versus the qwen2.5-driven variants (the combined datasets under `pca/data/`, e.g. `Datos_spider_rulebase.xlsx`, `Datos_spider_qwen25_combined.xlsx`). The output feeds the architecture comparison report.
 
 ---
 
 ## How to Run
 
 ### Prerequisites
+- The backend must be running and reachable at `BACKEND_URL` (default `http://localhost:3030`), with `DEV_BYPASS_AUTH=true`, PostgreSQL, ChromaDB ingested, and the chosen generator configured.
+- Python deps: `pip install numpy pandas requests openpyxl urllib3`.
 
+### Run the benchmark
 ```bash
-cd evaluation
-pip install -r requirements.txt
+cd evaluation/rag_benchmark/script
+# optional: BACKEND_URL=http://localhost:3030
+python benchmark_rag.py
+# if exercise auto-mapping fails, pass DB ids explicitly:
+python benchmark_rag.py --exercise-map '{"1":"<db_id>","3":"<db_id>", ...}'
 ```
 
-The `requirements.txt` includes dependencies for both basic and RAGAS evaluation modes.
-
-### Offline Evaluation (no server needed)
-
-Run these after the system has been used and JSONL logs exist:
-
+### Prepare PCA data + analyze
 ```bash
-# Retrieval metrics (reads logs, compares against datasets)
-python evaluateRetrieval.py
-
-# Generation metrics (reads logs, analyzes responses)
-python evaluateGeneration.py
-
-# Custom K value for retrieval
-python evaluateRetrieval.py 5
+python prepare_pca_data.py            # build PCA-ready tables from results/
+# then open evaluation/pca/pca_1_resultados_buenos_550.ipynb
 ```
-
-### Live Benchmark (server must be running)
-
-```bash
-# Set required environment variables
-export TEST_USER_ID="your_test_user_objectid"
-export TEST_EXERCISE_IDS='{"1":"exercise1_id","3":"exercise3_id",...}'
-
-# Run full benchmark
-python runBenchmark.py
-```
-
-This sends test queries to the server, then runs both evaluation scripts automatically.
 
 ---
 
 ## Interpreting Results
 
-### Retrieval Metrics — What Good Looks Like
-
-| Metric | Good | Acceptable | Poor |
-|---|---|---|---|
-| Mean Precision@3 | > 0.7 | 0.4 - 0.7 | < 0.4 |
-| Mean Recall@3 | > 0.5 | 0.3 - 0.5 | < 0.3 |
-| MAP@3 | > 0.6 | 0.3 - 0.6 | < 0.3 |
-| MRR | > 0.8 | 0.5 - 0.8 | < 0.5 |
-
-**High Precision, Low Recall**: The retrieved documents are relevant, but the system misses many relevant documents. This is acceptable for this use case — we only need 3 good examples, not all possible examples.
-
-**Low Precision, High Recall**: The system retrieves too many irrelevant documents. This could pollute the LLM context with unhelpful examples.
-
-### Generation Metrics — What Good Looks Like
-
-| Metric | Target | Concern |
+| Metric | Good | Concern |
 |---|---|---|
-| Socratic Rate | > 0.85 | Below 0.7 means the tutor is making statements instead of asking questions |
-| Avg Question Words | > 1.0 | Below 0.5 suggests responses lack genuine questioning |
-| Guardrail Safe Rate | > 0.95 | Below 0.9 means the tutor frequently leaks answers |
-| Avg Response Length | 100-300 chars | Below 50 is too terse; above 500 is too verbose for a Socratic question |
+| Socraticity (1–5) | ≥ 4 average | ≤ 2 means the tutor tells instead of asks |
+| Conceptual precision (1–5) | ≥ 4 average | ≤ 2 means vague or physically wrong diagnoses |
+| Consistency (1–5) | ≥ 4 average | ≤ 2 means responses ignore what the student said |
+| AC coverage | high (detected ≈ expected) | low means the tutor misses the student's misconception |
+| Hallucination rate | near 0 | any non-trivial rate is a safety concern |
+| Latency | ≤ 3 s optimal, ≤ 5 s acceptable | above 5 s hurts the interactive experience |
 
-### When Metrics Are Low
+When scores are low, likely causes and fixes:
 
-Common causes and fixes:
+1. **Low Socraticity** — the LLM is confirming or explaining. Strengthen the `[RESPONSE MODE]` hint, lower temperature, or rely more on the pedagogical reviewer/guardrails.
+2. **Low conceptual precision** — retrieval isn't surfacing the right AC; check the knowledge graph and per-exercise `acPatterns`, or the CRAG threshold.
+3. **AC coverage gaps** — the AC keyword lists or patterns may need to match how the model actually phrases the concept.
+4. **High latency** — the LLM call dominates; reduce `OLLAMA_NUM_PREDICT`, increase `OLLAMA_KEEP_ALIVE`, or check the provider.
 
-1. **Low retrieval scores**: The datasets may not contain examples similar enough to real student queries. Solution: add more diverse student-tutor pairs to the dataset files.
-
-2. **Low Socratic rate**: The LLM prompt may not be strict enough about asking questions. Solution: strengthen the `[RESPONSE MODE]` hint in the pipeline or lower `OLLAMA_TEMPERATURE` to make responses more focused.
-
-3. **Low guardrail safe rate**: The guardrail patterns may be too narrow, missing some reveal phrases. Solution: add more patterns to `guardrails.js` or reduce `OLLAMA_NUM_PREDICT` to limit response length.
-
-4. **CRAG triggering too often**: If many queries have low retrieval scores, the `MED_THRESHOLD` may be too high. Solution: lower the threshold (e.g., from 0.4 to 0.3) to be less aggressive about reformulation.
+For the pipeline internals that produce these responses, see [rag-system.md](rag-system.md).

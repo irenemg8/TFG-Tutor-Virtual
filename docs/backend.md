@@ -1,60 +1,78 @@
 # Backend Architecture
 
-The backend is a Node.js/Express server that provides the API for the virtual tutor application. It handles exercise management, user interactions, chat with the LLM (augmented by the RAG system), progress tracking, and result analysis.
+The backend is a Node.js / Express 5 server built with a **hexagonal architecture** (ports & adapters). It exposes the API for the virtual tutor: exercise management, authenticated conversations, the Socratic chat pipeline (agent orchestrator + RAG + guardrails), progress analytics, result analysis and data export.
+
+> The chat model is referred to as **qwen2.5**. The real-time pipeline monitor is out of scope for this documentation.
 
 ---
 
 ## Table of Contents
 
-1. [Project Structure](#project-structure)
+1. [Hexagonal Layout](#hexagonal-layout)
 2. [Entry Point](#entry-point)
-3. [Data Models](#data-models)
-4. [API Routes](#api-routes)
-5. [Authentication](#authentication)
-6. [SSE Streaming](#sse-streaming)
-7. [RAG Middleware Integration](#rag-middleware-integration)
-8. [Static File Serving](#static-file-serving)
-9. [Environment Variables](#environment-variables)
+3. [Dependency-Injection Container](#dependency-injection-container)
+4. [Domain Entities](#domain-entities)
+5. [Repository Ports](#repository-ports)
+6. [PostgreSQL Schema](#postgresql-schema)
+7. [API Routes](#api-routes)
+8. [Authentication & Authorization](#authentication--authorization)
+9. [The Chat Middleware Chain](#the-chat-middleware-chain)
+10. [SSE Streaming](#sse-streaming)
+11. [Static Files & SPA](#static-files--spa)
+12. [Environment Variables](#environment-variables)
 
 ---
 
-## Project Structure
+## Hexagonal Layout
 
 ```
-backend/
-├── src/
-│   ├── index.js                  # Server entry point
-│   ├── authRoutes.js             # CAS + demo authentication
-│   ├── utils/
-│   │   ├── promptBuilder.js      # System prompt construction
-│   │   └── languageManager.js    # Multi-language support (es, val, en)
-│   ├── models/
-│   │   ├── ejercicio.js          # Exercise schema
-│   │   ├── interaccion.js        # Conversation schema
-│   │   ├── resultado.js          # Exercise results schema
-│   │   └── usuario.js            # User schema
-│   ├── routes/
-│   │   ├── ejercicios.js         # Exercise CRUD
-│   │   ├── interacciones.js      # Conversation management
-│   │   ├── ollamaChatRoutes.js   # LLM chat (non-RAG fallback)
-│   │   ├── resultados.js         # Exercise results + AC classification
-│   │   ├── progresoRoutes.js     # Progress analytics
-│   │   ├── exportRoutes.js       # Data export (JSON/CSV)
-│   │   └── usuarios.js           # User CRUD
-│   ├── rag/                      # RAG system (see rag-system.md)
-│   │   ├── config.js
-│   │   ├── ragMiddleware.js
-│   │   ├── ragPipeline.js
-│   │   ├── ... (12 modules total)
-│   └── static/                   # Exercise images
-├── logs/
-│   └── rag/                      # JSONL interaction logs
-├── tests/
-│   ├── verifyRag.js              # RAG verification script
-│   └── VERIFICATION_REPORT.md
-├── .env                          # Environment configuration
-└── package.json
+backend/src/
+├── index.js                      # Server bootstrap (middleware, routes, listen, migrations)
+├── container.js                  # Dependency-injection composition root
+│
+├── config/
+│   ├── environment.js            # All env vars, validated, single source of truth
+│   └── database.js               # PostgreSQL connection helper
+│
+├── domain/                       # ── CORE: no framework imports ──
+│   ├── entities/                 # Usuario, Ejercicio, TutorContext, Interaccion,
+│   │                             #   Message, MessageMetadata, Resultado, ErrorEntry
+│   ├── ports/
+│   │   ├── repositories/         # IUsuarioRepository, IEjercicioRepository,
+│   │   │                         #   IInteraccionRepository, IMessageRepository,
+│   │   │                         #   IResultadoRepository
+│   │   └── services/             # ILlmService, IEmbeddingService, IVectorSearchService,
+│   │                             #   IGuardrail, ISecurityService
+│   ├── agents/                   # orchestrator.js + 10 agents + base/
+│   └── services/                 # rag/ (classifier, pipeline, guardrails, cumulativeAnswer,
+│                                 #   elementStates), text/ utilities, GuardrailPipeline,
+│                                 #   promptBuilder, languageManager, historySummarizer,
+│                                 #   acRegistry, kgRegistry
+│
+├── infrastructure/               # ── ADAPTERS: implement domain ports ──
+│   ├── persistence/postgresql/   # PgConnection + 5 Pg*Repository + migrations/*.sql
+│   ├── llm/                      # OllamaLlmAdapter, PoliGptLlmAdapter, config.js, logger.js
+│   ├── guardrails/               # 11 guardrail adapters + index.js (profiles)
+│   ├── search/                   # bm25.js, hybridSearch.js, knowledgeGraph.js
+│   ├── vectordb/                 # chromaClient.js, embeddings.js, ingest.js
+│   ├── security/                 # HeuristicSecurityAdapter.js
+│   ├── events/                   # ragEventBus.js, jsonAuditLogger.js, pipelineDebugLogger.js
+│   └── auth/                     # roles.js
+│
+├── interfaces/
+│   ├── http/
+│   │   ├── middleware/           # orchestratorMiddleware, ragMiddleware, authMiddleware,
+│   │   │                         #   publicRoutes
+│   │   └── routes/               # auth, ejercicios, interacciones, resultados, progreso,
+│   │                             #   export, usuarios, ollamaChatRoutes
+│   └── sse/                      # event-streaming helpers
+│
+├── data/                         # datasets, knowledge-graph, exercise contexts, ACs
+├── prompts/                      # prompt_base.md
+└── static/                       # exercise circuit images
 ```
+
+> **Legacy code, kept on purpose.** `backend/src/rag/` and `backend/src/utils/promptBuilder.js` are the pre-refactor implementations. They are disconnected from the default flow but retained for A/B comparison.
 
 ---
 
@@ -62,397 +80,301 @@ backend/
 
 **File:** `backend/src/index.js`
 
-The server initializes in this order:
+Startup order:
 
-1. **Load environment variables** from `.env` using `dotenv`
-2. **Configure CORS** to accept requests from both the frontend (`localhost:5173`) and the workflow monitor (`localhost:5174`)
-3. **Set up middleware**: JSON body parser, static file serving for exercise images
-4. **Connect to MongoDB Atlas** via Mongoose
-5. **Configure sessions** with `express-session` + `connect-mongo` (sessions stored in MongoDB)
-6. **Mount routes** under `/api/` prefixes
-7. **Mount RAG middleware** — intercepts chat requests before the standard handler
-8. **Serve the frontend build** as static files with SPA fallback
-9. **Start HTTP server** on port 3000
-10. **Set up WebSocket server** for the workflow monitor
-11. **Warm up Ollama** with a minimal request to pre-load the model into memory
-
-### Route Mounting Order
-
-The RAG middleware is mounted **before** the standard chat routes:
-
-```javascript
-app.use("/api/ollama", ragMiddleware);    // RAG intercepts first
-app.use("/api/ollama", ollamaChatRoutes); // Fallback if RAG doesn't handle
-```
-
-This means every chat request goes through the RAG middleware first. If the RAG decides to handle it (non-greeting, valid exercise), it responds directly. If not (greetings, RAG disabled, invalid inputs), it calls `next()` and the standard `ollamaChatRoutes` handler takes over.
+1. **Guard** — if `DEV_BYPASS_AUTH=true` while `NODE_ENV=production`, abort (refuse to start insecurely).
+2. **Express app + `trust proxy`** (the server runs behind nginx in production).
+3. **CORS** — allow `FRONTEND_BASE_URL` (default `http://localhost:5173`) with credentials.
+4. **JSON body parser.**
+5. **Static files** at `/static/` (exercise images).
+6. **Session middleware** — `express-session` backed by `connect-pg-simple` (PostgreSQL `sessions` table); cookie `httpOnly`, `sameSite=lax`, 24 h `maxAge`, `secure` in production.
+7. **Health check** at `/api/health`.
+8. **Auth router** mounted, then **`globalAuth`** applied to `/api/*` (public routes and the export token bypass it).
+9. **API routes mounted** (see [API Routes](#api-routes)). The chat endpoint is wired as `orchestratorMiddleware → ragMiddleware → ollamaChatRoutes`.
+10. **SPA serving** — the built frontend from `frontend/dist` with an SPA fallback for non-API paths.
+11. **`server.listen()`** on `PORT` (`0.0.0.0`).
+12. **`container.initialize()`** — async, non-blocking; logs whether `USE_ORCHESTRATOR` is on. Runs DB migrations and wires all adapters.
+13. **LLM warmup** — async, non-blocking; pings the provider to pre-load the model (skipped unless the provider is Ollama).
+14. **WebSocket setup** for internal pipeline observability.
 
 ---
 
-## Data Models
+## Dependency-Injection Container
 
-### Ejercicio (Exercise)
+**File:** `backend/src/container.js`
 
-**File:** `backend/src/models/ejercicio.js`
+The container is the only place where concrete adapters are constructed and bound to domain ports. `initialize()`:
 
-Represents a circuit analysis exercise that students solve.
+1. Validates `DATABASE_TYPE === "postgresql"` (throws otherwise).
+2. Creates the PostgreSQL pool, runs migrations, and builds the five `Pg*Repository` adapters.
+3. Selects the LLM adapter from `LLM_PROVIDER` (`poligpt` → `PoliGptLlmAdapter`, else `OllamaLlmAdapter`).
+4. Builds `securityService = HeuristicSecurityAdapter`.
+5. Loads the knowledge graph and per-exercise BM25 indices into memory; checks ChromaDB health (`CHROMA_REQUIRED`).
+6. Builds `guardrailPipeline = new GuardrailPipeline({ guardrails: createGuardrailsForProfile(GUARDRAIL_PROFILE), llmService, budgetMs, minRetryBudgetMs, emitEvent })`.
+7. Builds `historySummarizer` (or a `NullHistorySummarizer`).
+8. Builds the agent registry and the `TutoringOrchestrator`.
+9. Sets `_initialized = true` — which is what `orchestratorMiddleware` checks before handling a request.
 
-| Field | Type | Description |
+Exposed members include: `usuarioRepo`, `ejercicioRepo`, `interaccionRepo`, `messageRepo`, `resultadoRepo`, `llmService`, `securityService`, `guardrailPipeline`, `historySummarizer`, `agents`, `orchestrator`, `kgConceptPatterns`, `_initialized`.
+
+---
+
+## Domain Entities
+
+Plain classes under `domain/entities/` — no ORM, no decorators. The `Pg*Repository` adapters map database rows (Spanish columns) into these (English fields).
+
+### Usuario
+`id`, `upvLogin`, `email`, `firstName`, `lastName`, `nationalId`, `groups[]`, `role` (`alumno`|`profesor`|`admin`), `lastLoginAt`, `createdAt`, `updatedAt`.
+
+### Ejercicio
+`id`, `title`, `statement`, `image`, `subject`, `concept`, `level`, `ac`, `tutorContext` (`TutorContext`|null), `createdAt`, `updatedAt`.
+
+### TutorContext
+`objective`, `netlist`, `expertMode`, `acRefs[]`, `correctAnswer[]`, `evaluableElements[]`, `version`.
+
+- `correctAnswer` — the set of correct elements (e.g. `["R1","R2","R4"]`); drives classification and guardrails.
+- `evaluableElements` — all elements that count as a valid answer for the exercise.
+- `netlist` — circuit topology; the prompt builder parses it into an internal topology summary.
+
+### Interaccion
+`id`, `userId`, `exerciseId`, `startTime`, `endTime`, `createdAt`. One conversation session for a (user, exercise) pair. Messages live in their own table.
+
+### Message
+`id`, `interactionId`, `sequenceNum`, `role` (`user`|`assistant`), `content`, `timestamp`, `metadata` (`MessageMetadata`|null).
+
+### MessageMetadata
+Attached to assistant messages produced by the pipeline:
+`classification`, `decision`, `isCorrectAnswer`, `sourcesCount`, `studentResponseMs`, `concepts[]`, `guardrails` (per-guardrail booleans), `timing` (`pipelineMs`, `ollamaMs`, `totalMs`, `firstTokenMs`), `detectedACs[]`, `guardrailPath`, `guardrailLlmRetries`, `guardrailSurgicalFixes[]`, `guardrailSurgicalFixDetails[]`, `llmResponseOriginal`, `fallbackUsed`, `deterministicFinish`.
+
+### Resultado
+`id`, `userId`, `exerciseId`, `interactionId`, `messageCount`, `solvedOnFirstAttempt`, `aiAnalysis`, `aiAdvice`, `date`, `errors[]` (`ErrorEntry`).
+
+### ErrorEntry
+`id`, `label` (the AC tag), `text`.
+
+---
+
+## Repository Ports
+
+Interfaces under `domain/ports/repositories/`. The PostgreSQL adapters implement them; the domain depends only on the interface.
+
+| Port | Key methods |
+|---|---|
+| **IUsuarioRepository** | `findById`, `findByUpvLogin`, `upsertByUpvLogin`, `create`, `updateById`, `findAll`, `findByIds` |
+| **IEjercicioRepository** | `findById`, `findAll`, `create`, `updateById`, `deleteById`, `findOneByConcept`, `findByIds` |
+| **IInteraccionRepository** | `findById`, `create`, `deleteById`, `exists`, `existsForUser`, `updateEndTime`, `findByUserId`, `findLatestByExerciseAndUser`, `findRecent`, `findByFilter` |
+| **IMessageRepository** | `appendMessage`, `getLastMessages`, `getAllMessages`, `countConsecutiveFromEnd`, `countAssistantMessages`, `getLastAssistantMessages`, `getLastMessage`, `getAcEvidenceByUserId` |
+| **IResultadoRepository** | `create`, `findByUserId`, `findByUserIdWithExercise`, `findCompletedExerciseIds`, `findByFilter`, `getErrorTagsByUserId` |
+
+There are also **service ports** under `domain/ports/services/`: `ILlmService` (with a `BudgetExhaustedError` sentinel), `IEmbeddingService`, `IVectorSearchService`, `IGuardrail`, `ISecurityService`.
+
+---
+
+## PostgreSQL Schema
+
+Eight idempotent migrations in `infrastructure/persistence/postgresql/migrations/`, executed in filename order by `runMigrations()` on boot.
+
+| # | File | Creates / changes |
 |---|---|---|
-| `titulo` | String (required) | Exercise title, e.g., "Ejercicio 1" |
-| `enunciado` | String (required) | Problem statement describing the circuit |
-| `imagen` | String | Filename of the circuit diagram image |
-| `asignatura` | String (required) | Subject name |
-| `concepto` | String (required) | Main concept being tested |
-| `nivel` | Number (required) | Difficulty level |
-| `tutorContext` | Object | Nested object with tutor-specific data |
-| `tutorContext.objetivo` | String | Learning objective for this exercise |
-| `tutorContext.netlist` | String | Circuit netlist description |
-| `tutorContext.modoExperto` | String | Expert mode instructions |
-| `tutorContext.ac_refs` | [String] | References to relevant alternative conceptions |
-| `tutorContext.respuestaCorrecta` | [String] | Correct answer as array of resistance names, e.g., `["R1", "R2", "R4"]` |
-| `tutorContext.version` | Number | Prompt version for tracking changes |
+| 001 | `create_usuarios` | `usuarios` (+ indexes on `upv_login`, `rol`) |
+| 002 | `create_ejercicios` | `ejercicios` + `tutor_contexts` (1:1) |
+| 003 | `create_interacciones` | `interacciones` |
+| 004 | `create_messages` | `messages` (replaces the old embedded conversation array) |
+| 005 | `create_resultados` | `resultados` + `error_entries` |
+| 006 | `create_sessions` | `sessions` (for `connect-pg-simple`) |
+| 007 | `add_concepts_to_messages` | `messages.concepts JSONB` (+ GIN index) |
+| 008 | `add_extra_metadata_to_messages` | `messages.extra_metadata JSONB` (+ GIN index) |
 
-### Interaccion (Interaction)
+Selected columns:
 
-**File:** `backend/src/models/interaccion.js`
+```sql
+usuarios(id PK, upv_login UNIQUE, loguin_usuario, email, nombre, apellidos, dni,
+         grupos TEXT[], rol DEFAULT 'alumno', last_login_at, created_at, updated_at)
 
-Stores the complete conversation between a student and the tutor for one exercise session.
+ejercicios(id PK, titulo, enunciado, imagen, asignatura, concepto, nivel, ca,
+           created_at, updated_at)
 
-| Field | Type | Description |
-|---|---|---|
-| `usuario_id` | ObjectId (ref: Usuario) | The student |
-| `ejercicio_id` | ObjectId (ref: Ejercicio) | The exercise being worked on |
-| `inicio` | Date | Conversation start time |
-| `fin` | Date | Last activity time (updated on each message) |
-| `conversacion` | [Message] | Array of messages in chronological order |
+tutor_contexts(id PK, ejercicio_id FK UNIQUE → ejercicios ON DELETE CASCADE,
+               objetivo, netlist, modo_experto, ac_refs TEXT[],
+               respuesta_correcta TEXT[], elementos_evaluables TEXT[], version)
 
-Each message in the `conversacion` array has:
+interacciones(id PK, usuario_id FK → usuarios, ejercicio_id FK → ejercicios,
+              inicio, fin, created_at)
 
-| Field | Type | Description |
-|---|---|---|
-| `role` | String (enum: user, assistant) | Who sent the message |
-| `content` | String | The message text |
-| `timestamp` | Date | When the message was sent |
-| `metadata` | Object (default: null) | Per-message metadata (present on assistant messages from the RAG pipeline) |
+messages(id PK, interaccion_id FK → interacciones, sequence_num,
+         role CHECK ('user'|'assistant'), content, timestamp,
+         classification, decision, is_correct_answer, sources_count, student_response_ms,
+         guardrail_solution_leak, guardrail_false_confirmation,
+         guardrail_premature_confirmation, guardrail_state_reveal,
+         timing_pipeline_ms, timing_ollama_ms, timing_total_ms,
+         concepts JSONB, extra_metadata JSONB,
+         UNIQUE(interaccion_id, sequence_num))
 
-The `metadata` object (when present) contains:
+resultados(id PK, usuario_id FK, ejercicio_id FK, interaccion_id FK,
+           num_mensajes, resuelto_a_la_primera, analisis_ia, consejo_ia, fecha)
 
-| Field | Type | Description |
-|---|---|---|
-| `classification` | String | Query classification type (e.g., "correct_no_reasoning") |
-| `decision` | String | Pipeline routing decision (e.g., "rag_examples", "deterministic_finish") |
-| `guardrails.solutionLeak` | Boolean | Whether the solution leak guardrail triggered |
-| `guardrails.falseConfirmation` | Boolean | Whether the false confirmation guardrail triggered |
-| `guardrails.prematureConfirmation` | Boolean | Whether the premature confirmation guardrail triggered |
-| `guardrails.stateReveal` | Boolean | Whether the state reveal guardrail triggered |
-| `timing.pipelineMs` | Number | RAG pipeline duration in milliseconds |
-| `timing.ollamaMs` | Number | LLM call duration in milliseconds |
-| `timing.totalMs` | Number | Total request duration in milliseconds |
-| `sourcesCount` | Number | Number of retrieved documents used |
-| `isCorrectAnswer` | Boolean | Whether the student's answer was correct |
-| `studentResponseMs` | Number | Time since last assistant message (on user messages only) |
+error_entries(id PK, resultado_id FK → resultados ON DELETE CASCADE, etiqueta, texto)
 
-### Resultado (Result)
+sessions(sid PK, sess JSONB, expire)
+```
 
-**File:** `backend/src/models/resultado.js`
-
-Captures the final analysis when a student completes (or abandons) an exercise.
-
-| Field | Type | Description |
-|---|---|---|
-| `usuario_id` | ObjectId (ref: Usuario) | The student |
-| `ejercicio_id` | ObjectId (ref: Ejercicio) | The exercise |
-| `interaccion_id` | ObjectId (ref: Interaccion) | The associated conversation |
-| `respuestaFinal` | String | The student's final answer |
-| `esCorrecta` | Boolean | Whether the final answer was correct |
-| `analisis` | String | LLM-generated analysis of the student's performance |
-| `consejo` | String | LLM-generated personalized advice |
-| `errores` | [Object] | Array of identified errors, each with `etiqueta` (error tag/AC name), `descripcion` (description), and `consejo` (advice) |
-| `puntuacion` | Number | Score (0-10) |
-| `tiempoTotal` | Number | Total time spent in seconds |
-| `numIntercambios` | Number | Number of message exchanges |
-| `completado` | Boolean | Whether the exercise was fully completed |
-
-### Usuario (User)
-
-**File:** `backend/src/models/usuario.js`
-
-User account information.
-
-| Field | Type | Description |
-|---|---|---|
-| `upvLogin` | String (unique) | University login identifier |
-| `email` | String (unique) | Email address |
-| `nombre` | String | Display name |
-| `rol` | String (enum: alumno, profesor, admin) | User role |
+The four `guardrail_*` boolean columns are legacy (the first four guardrails); the full guardrail map and newer signals (`firstTokenMs`, `detectedACs`, `guardrailPath`, surgical fixes, `fallbackUsed`, `deterministicFinish`) are stored in `extra_metadata`.
 
 ---
 
 ## API Routes
 
+All `/api/*` routes require an authenticated session except the public whitelist and the export token (see [Authentication](#authentication--authorization)).
+
+### Auth — `/api/auth`
+`GET /cas/login` · `GET /cas/callback` · `GET /me` · `GET /logout` · `POST /dev-login` · `POST /dev-logout`.
+
 ### Exercises — `/api/ejercicios`
-
-**File:** `backend/src/routes/ejercicios.js`
-
-Standard CRUD for exercises:
-
-| Method | Path | Description |
-|---|---|---|
-| `GET /` | List all exercises (sorted by `_id`) |
-| `POST /` | Create a new exercise |
-| `GET /:id` | Get a single exercise by ID |
-| `PUT /:id` | Update an exercise |
-| `DELETE /:id` | Delete an exercise |
+`GET /` (list) · `GET /:id` · `POST /` · `PUT /:id` · `DELETE /:id`. Create/update/delete require `profesor`/`admin`. `GET` is on the public whitelist.
 
 ### Interactions — `/api/interacciones`
-
-**File:** `backend/src/routes/interacciones.js`
-
-Manages conversation sessions. All routes require authentication.
-
-| Method | Path | Description |
-|---|---|---|
-| `GET /` | List all interactions (admin/profesor only) |
-| `GET /usuario/:userId` | List all interactions for a specific user |
-| `GET /usuario/:userId/ejercicio/:ejercicioId` | Get interaction for a specific user + exercise |
-| `POST /` | Create a new interaction |
-| `PUT /:id` | Update an interaction |
-| `DELETE /:id` | Delete an interaction |
+`GET /mine` · `GET /user/:userId` (ownership-gated) · `GET /byExercise/:exerciseId` · `GET /byExerciseAndUser/:exerciseId/:userId` (gated) · `GET /:id` (full conversation) · `DELETE /:id` (owner).
 
 ### Chat — `/api/ollama/chat/stream`
+The Socratic chat endpoint. Served by the middleware chain (`orchestratorMiddleware → ragMiddleware → ollamaChatRoutes`). Request body:
 
-**File:** `backend/src/routes/ollamaChatRoutes.js`
-
-The main chat endpoint. This is the **fallback handler** — the RAG middleware intercepts most requests before they reach this route.
-
-**Request body:**
 ```json
-{
-  "userId": "MongoDB ObjectId",
-  "exerciseId": "MongoDB ObjectId",
-  "userMessage": "Student's message text",
-  "interaccionId": "MongoDB ObjectId (optional, for continuing a conversation)"
-}
+{ "userId": "…", "exerciseId": "…", "userMessage": "…", "interaccionId": "… (optional)" }
 ```
 
-**Response:** Server-Sent Events (SSE) stream.
-
-This handler:
-1. Loads or creates the interaction document
-2. Saves the user message to MongoDB
-3. Checks for deterministic correct answer (without RAG)
-4. Builds the system prompt from exercise context
-5. Loads conversation history
-6. Calls Ollama with streaming enabled
-7. Forwards chunks to the client via SSE
-8. Saves the assistant response to MongoDB
+Response: an SSE stream. `ollamaChatRoutes` also exposes `POST /warmup`, `GET /health`, and `POST /chat/start-exercise`.
 
 ### Results — `/api/resultados`
-
-**File:** `backend/src/routes/resultados.js`
-
-Handles exercise completion and result analysis.
-
-| Method | Path | Description |
-|---|---|---|
-| `POST /finalizar` | Finalize an exercise — triggers LLM analysis of the conversation to identify errors and alternative conceptions |
-| `GET /usuario/:userId` | Get all results for a user |
-| `GET /usuario/:userId/ejercicio/:ejercicioId` | Get result for a specific exercise |
-
-The `/finalizar` endpoint is notable because it uses the LLM (Ollama) to analyze the student's conversation and classify their errors into Alternative Conception categories. It sends the conversation history to the LLM with a structured JSON output prompt, asking it to identify misconceptions, provide scores, and generate personalized advice.
+`GET /completed` · `GET /completed/:userId` (gated) · `POST /finalizar`. `/finalizar` sends the conversation to the LLM (`temperature 0`, JSON output) to classify the student's errors into a **closed list of AC ids** (from `data/alternative_conceptions.json`, max 3), then stores the analysis and advice.
 
 ### Progress — `/api/progreso`
-
-**File:** `backend/src/routes/progresoRoutes.js`
-
-Analytics endpoint that computes student progress metrics.
-
-| Method | Path | Description |
-|---|---|---|
-| `GET /:userId` | Get comprehensive progress data for a student |
-
-Returns:
-- **Per-exercise stats**: completion status, score, time spent, error count, efficiency rating
-- **Streak data**: current consecutive day streak, longest streak ever
-- **Aggregate metrics**: total exercises, average score, total time, overall efficiency
-- **Personalized recommendations**: Generated based on identified weak areas
+`GET /` (current user) · `GET /:userId` (gated). Returns average messages per interaction, efficiency per concept, a weekly summary, the last session's analysis/advice, the top recurring AC errors, and a next-exercise recommendation.
 
 ### Export — `/api/export`
-
-**File:** `backend/src/routes/exportRoutes.js`
-
-Data export endpoints for interactions and results. Supports JSON and CSV formats with filtering.
-
-| Method | Path | Description |
-|---|---|---|
-| `GET /interacciones` | Export interactions. One row per message in CSV mode, with full metadata |
-| `GET /resultados` | Export exercise results with error analysis and scores |
-
-**Query parameters** (all optional):
-
-| Parameter | Description | Example |
-|---|---|---|
-| `userId` | Filter by student (MongoDB ObjectId) | `64a1b2c3d4e5f6a7b8c9d0e1` |
-| `exerciseId` | Filter by exercise (MongoDB ObjectId) | `64a1b2c3d4e5f6a7b8c9d0e2` |
-| `from` | Start date (ISO 8601) | `2024-01-01` |
-| `to` | End date (ISO 8601) | `2024-12-31` |
-| `format` | Output format: `json` (default) or `csv` | `csv` |
-
-The CSV format for interactions flattens one row per message, including: session start/end, user info, message index, role, content, classification, decision, guardrail violations, timing breakdown (pipelineMs, ollamaMs, totalMs), sources count, and student response timing.
+Router-level `requireRole("profesor","admin")`. `GET /interacciones` and `GET /resultados`, both JSON or `?format=csv`, with optional `userId`, `exerciseId`, `from`, `to` filters. The interactions CSV flattens one row per message, including classification, decision, guardrail flags, detected ACs and timing.
 
 ### Users — `/api/usuarios`
-
-**File:** `backend/src/routes/usuarios.js`
-
-Standard CRUD for user accounts:
-
-| Method | Path | Description |
-|---|---|---|
-| `GET /` | List all users |
-| `POST /` | Create a new user |
-| `GET /:id` | Get user by ID |
-| `PUT /:id` | Update user |
-| `DELETE /:id` | Delete user |
+Admin-only: `POST /` · `GET /` · `GET /:id` · `PUT /:id`.
 
 ---
 
-## Authentication
+## Authentication & Authorization
 
-**File:** `backend/src/authRoutes.js`
+**Files:** `interfaces/http/routes/auth.js`, `interfaces/http/middleware/authMiddleware.js`, `publicRoutes.js`, `infrastructure/auth/roles.js`.
 
-The system supports two authentication modes:
+Two sign-in modes:
 
-1. **CAS (Central Authentication Service)** — OAuth2-based SSO used by the university. The flow: redirect to CAS login → receive authorization code → exchange for token → fetch user info → create or update local user → set session.
+1. **CAS OAuth2** (`simple-oauth2`) — the university SSO. Flow: `/cas/login` redirects to CAS → `/cas/callback` exchanges the code, fetches the profile, `upsertByUpvLogin`, and sets the session.
+2. **Dev bypass** (`DEV_BYPASS_AUTH=true`) — `POST /dev-login` creates/finds a known user and sets the session. The server refuses to start if this is on in production.
 
-2. **Demo mode** (`DEV_BYPASS_AUTH=true`) — For development, authentication can be bypassed. A demo endpoint creates or finds a user with a known upvLogin and sets the session directly.
+**`globalAuth`** protects `/api/*`:
+- **Public routes** (`publicRoutes.js`) bypass it: health, auth endpoints, and the exercise reads (`GET /api/ejercicios`, `GET /api/ejercicios/:id`).
+- **Export token** bypass: a request to `/api/export/*` with `?token=` matching `EXPORT_TOKEN` is treated as `profesor`.
+- Otherwise a valid session is required (`401` if missing). The user id and role are attached to the request.
 
-Sessions are stored in MongoDB via `connect-mongo`, so they persist across server restarts.
+**`requireRole(...roles)`** guards privileged routes (`403` if the role is insufficient). **`canAccessUserData(resourceUserId, req)`** allows access when the requester owns the resource or is `profesor`/`admin`.
 
-The `requireAuth` middleware checks for a valid session and can be applied to any route that needs protection.
+Sessions are stored in PostgreSQL, so they survive restarts.
+
+---
+
+## The Chat Middleware Chain
+
+`POST /api/ollama/chat/stream` is offered to three handlers in order; the first that accepts it serves the whole response, the rest are skipped via `next()`:
+
+```javascript
+app.use("/api/ollama/chat/stream", orchestratorMiddleware); // USE_ORCHESTRATOR=1 + container ready
+app.use("/api/ollama/chat/stream", ragMiddleware);          // legacy linear pipeline (A/B)
+app.use("/api/ollama", ollamaChatRoutes);                   // plain LLM fallback
+```
+
+- **orchestratorMiddleware** handles the request only if `USE_ORCHESTRATOR=1`, the container is initialized, and inputs validate. Greetings/off-topic take a deterministic fast path; everything else goes through `container.orchestrator.process()`.
+- **ragMiddleware** is the legacy linear pipeline (classify → security → retrieve → LLM → guardrails → persist), kept connected as a fallback and for comparison. It handles the request unless `RAG_ENABLED=false`, it isn't ready, or the turn classifies as a greeting (`no_rag`).
+- **ollamaChatRoutes** is a plain LLM call with no RAG and no guardrails — the last resort.
+
+See [rag-system.md](rag-system.md) for what each path does internally.
 
 ---
 
 ## SSE Streaming
 
-The chat endpoint uses **Server-Sent Events (SSE)** to stream the LLM response to the frontend in real time.
+The chat endpoint streams via **Server-Sent Events**.
 
-### How It Works
+1. Headers: `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, `X-Accel-Buffering: no`.
+2. Open with a comment frame `: ok`.
+3. A heartbeat `: ping` every ~15 s keeps the connection alive through proxies.
+4. Data frames are JSON: `{ interaccionId?, chunk?, phase?, status?, done?, fullText?, timing?, error? }`.
+5. Close with `data: [DONE]`.
 
-1. The server sets SSE headers:
-   ```
-   Content-Type: text/event-stream; charset=utf-8
-   Cache-Control: no-cache, no-transform
-   Connection: keep-alive
-   X-Accel-Buffering: no
-   ```
+The `<END_EXERCISE>` token within a response tells the frontend the exercise is complete.
 
-2. Each data event is sent as:
-   ```
-   data: {"chunk": "partial response text"}\n\n
-   ```
+**Why non-streaming LLM calls for guardrails?** The pipeline calls the LLM in non-streaming mode so the full draft can be inspected before sending — a streamed token can't be retracted once it leaks the solution. The orchestrator can optionally stream tokens for latency (`ORCHESTRATOR_STREAM_TOKENS`) and then emit a correction frame if a guardrail rewrites the text.
 
-3. The stream ends with:
-   ```
-   data: [DONE]\n\n
-   ```
-
-4. A heartbeat (`: ping\n\n`) is sent every 15 seconds to keep the connection alive through proxies and load balancers.
-
-### Why SSE Over WebSocket for Chat?
-
-- **Simpler**: SSE is a one-way channel (server → client), which is exactly what streaming a chat response needs. WebSocket's bidirectional capability is unnecessary for this use case.
-- **HTTP-native**: SSE works over standard HTTP, so it passes through proxies, CDNs, and reverse proxies (Nginx) without special configuration.
-- **Automatic reconnection**: The browser's `EventSource` API handles reconnection automatically if the connection drops.
-- **Request/response model**: Each chat message is a separate HTTP POST request that returns an SSE stream. This fits naturally into REST semantics.
-
-WebSocket is used separately for the workflow monitor, where bidirectional communication and persistent connections are more appropriate.
+**Why SSE over WebSocket for chat?** Chat is one-way (server → client) request/response, SSE is HTTP-native (passes through nginx without special config), and the browser's `EventSource` reconnects automatically.
 
 ---
 
-## RAG Middleware Integration
+## Static Files & SPA
 
-The RAG system integrates as an Express middleware that intercepts `POST /chat/stream` requests:
-
-```javascript
-app.use("/api/ollama", ragMiddleware);    // Intercepts chat/stream
-app.use("/api/ollama", ollamaChatRoutes); // Fallback handler
-```
-
-The middleware decides whether to handle the request based on:
-- Is `RAG_ENABLED` true?
-- Is the RAG system initialized?
-- Is the `userId` a valid MongoDB ObjectId?
-- Is the `exerciseId` a valid MongoDB ObjectId?
-- Does the exercise exist and have a correct answer configured?
-
-If any check fails, the middleware calls `next()` and the standard chat handler processes the request without RAG augmentation.
-
-When the RAG middleware handles the request, it takes full control of the response — setting up SSE, calling the LLM, running guardrails, and closing the connection. The standard chat handler is never reached.
-
-For a complete description of the RAG system, see [rag-system.md](rag-system.md).
-
----
-
-## Static File Serving
-
-Exercise circuit diagram images are served from `backend/src/static/` at the `/static` endpoint. The server also serves the built frontend from `frontend/dist/` with:
-
-- **Immutable caching** for static assets (JS, CSS, images) — cached for 365 days since filenames include content hashes
-- **No caching** for `index.html` — ensures users always get the latest version
-- **SPA fallback** — any path that doesn't match `/api/` or `/static/` returns `index.html`, allowing client-side routing to work
+- Exercise circuit images are served from `backend/src/static/` at `/static/`.
+- The built frontend (`frontend/dist`) is served with immutable caching for hashed assets, no-cache for `index.html`, and an SPA fallback so any non-`/api/`, non-`/static/` path returns `index.html`.
 
 ---
 
 ## Environment Variables
 
-All configuration is done through `backend/.env`. The following variables are used:
+All configuration is read through `config/environment.js` and `infrastructure/llm/config.js`. Copy `backend/.env.example` to `backend/.env`.
 
-### Database
+### Database & server
 
-| Variable | Description | Example |
+| Variable | Default | Description |
 |---|---|---|
-| `MONGODB_URI` | MongoDB Atlas connection string | `mongodb+srv://user:pass@cluster.mongodb.net/dbname` |
+| `DATABASE_TYPE` | `postgresql` | Only `postgresql` is supported |
+| `PG_CONNECTION_STRING` | — | PostgreSQL DSN (required) |
+| `PORT` | `3001` | HTTP port |
+| `NODE_ENV` | `development` | `production` enables secure cookies |
+| `SESSION_SECRET` | — | Session signing secret |
+| `SERVER_BASE_URL` / `FRONTEND_BASE_URL` | `""` | Base URLs (CORS, redirects) |
 
-### LLM (Ollama)
+### LLM provider
 
-| Variable | Description | Example |
+| Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_API_URL_UPV` | Ollama URL (university server, takes priority) | `https://ollama.gti-ia.upv.es:443` |
-| `OLLAMA_BASE_URL` | Ollama URL (local fallback) | `http://127.0.0.1:11434` |
-| `OLLAMA_MODEL` | Chat model name | `qwen2.5:latest` |
-| `OLLAMA_TEMPERATURE` | Generation temperature | `0.4` |
-| `OLLAMA_NUM_CTX` | Context window size | `8192` |
-| `OLLAMA_NUM_PREDICT` | Max tokens to generate | `120` |
-| `OLLAMA_KEEP_ALIVE` | Model keep-alive duration | `60m` |
+| `LLM_PROVIDER` | `ollama` | `ollama` or `poligpt` |
+| `LLM_MODE` | `local` | `upv` selects the UPV Ollama URL, else local |
+| `OLLAMA_API_URL_UPV` / `OLLAMA_API_URL_LOCAL` | — / `http://127.0.0.1:11434` | Ollama endpoints |
+| `OLLAMA_MODEL` | qwen2.5 | Chat model |
+| `OLLAMA_TEMPERATURE` | `0.4` | Sampling temperature |
+| `OLLAMA_NUM_CTX` | `8192` | Context window (LLM config) |
+| `OLLAMA_NUM_PREDICT` | `220` | Max tokens (LLM config) |
+| `OLLAMA_KEEP_ALIVE` | `60m` | Keep the model resident |
+| `OLLAMA_TIMEOUT_MS` / `OLLAMA_STREAM_MAX_MS` | `60000` / `1800000` | Request / stream timeouts |
+| `OLLAMA_CLASSIFIER_MODEL` | qwen2.5 | Model for the result-finalization classifier |
+| `POLIGPT_BASE_URL` / `POLIGPT_API_KEY` / `POLIGPT_MODEL` | `https://api.poligpt.upv.es` / — / qwen2.5 | PoliGPT settings |
+| `EMBEDDING_PROVIDER` / `POLIGPT_EMBED_MODEL` | — / `nomic-embed-text` | Embedding provider/model |
 
-### RAG
+### RAG, search & orchestrator
 
-| Variable | Description | Example |
+| Variable | Default | Description |
 |---|---|---|
-| `RAG_ENABLED` | Enable/disable RAG system | `true` |
-| `RAG_EMBEDDING_MODEL` | Embedding model name | `nomic-embed-text:latest` |
-| `RAG_HIGH_THRESHOLD` | High quality score threshold | `0.7` |
-| `RAG_MED_THRESHOLD` | Medium quality / CRAG trigger threshold | `0.4` |
-| `CHROMA_URL` | ChromaDB server URL | `http://localhost:8000` |
-| `HISTORY_MAX_MESSAGES` | Max conversation messages in LLM context | `8` |
-| `RAG_MAX_WRONG_STREAK` | Max consecutive wrong classifications before injecting stuck hint | `4` |
-| `RAG_MAX_TOTAL_TURNS` | Max total assistant turns before injecting stuck hint | `16` |
+| `RAG_ENABLED` | `true` | Disable the legacy RAG middleware with `false` |
+| `CHROMA_URL` | `http://localhost:8000` | ChromaDB endpoint |
+| `CHROMA_REQUIRED` | `true` | Fail startup if collections are empty |
+| `HISTORY_MAX_MESSAGES` | `20` | Conversation window sent to the LLM |
+| `USE_ORCHESTRATOR` | `0` | `1` enables the 10-agent orchestrator path |
+| `ORCHESTRATOR_BUDGET_MS` | `30000` | Total per-request budget (split per stage) |
+| `ORCHESTRATOR_STREAM_TOKENS` | `1` | `0` = single chunk after guardrails |
+| `GUARDRAIL_PROFILE` | `default` | `default` (8) or `legacy` (11) |
+| `GUARDRAIL_BUDGET_MS` / `GUARDRAIL_MIN_RETRY_BUDGET_MS` | — / — | Guardrail pipeline budgets |
 
-### Authentication
+### Auth & observability
 
-| Variable | Description | Example |
+| Variable | Default | Description |
 |---|---|---|
-| `SESSION_SECRET` | Express session secret | `your-secret-key` |
-| `DEV_BYPASS_AUTH` | Skip authentication in development | `true` |
-| `CAS_CLIENT_ID` | CAS OAuth2 client ID | `your-client-id` |
-| `CAS_CLIENT_SECRET` | CAS OAuth2 client secret | `your-client-secret` |
-| `CAS_REDIRECT_URI` | OAuth2 callback URL | `http://localhost:3000/auth/callback` |
+| `CAS_BASE_URL`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_REDIRECT_URI`, `OAUTH_SCOPES` | — | CAS OAuth2 |
+| `DEV_BYPASS_AUTH` | `false` | Dev sign-in bypass (forbidden in production) |
+| `EXPORT_TOKEN` | — | Token for `/api/export/*?token=` |
+| `AUDIT_LOG` / `AUDIT_LOG_DIR` | `0` / `logs/audit` | JSONL audit logging |
+| `DEBUG_PIPELINE`, `DEBUG_OLLAMA`, `DEBUG_DUMP_CONTEXT`, `DEBUG_DUMP_PATH` | `0` / `0` / `0` / `""` | Tracing & prompt dumps |
 
-### Application
-
-| Variable | Description | Example |
-|---|---|---|
-| `PORT` | Server port | `3000` |
-| `FRONTEND_BASE_URL` | Frontend URL for CORS | `http://localhost:5173` |
-| `WORKFLOW_BASE_URL` | Workflow monitor URL for CORS | `http://localhost:5174` |
+For the deep dive into the agent orchestrator and every domain service, see [rag-system.md](rag-system.md). For diagrams, see [architecture-diagrams.md](architecture-diagrams.md).
